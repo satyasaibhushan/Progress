@@ -1,0 +1,276 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// NextAuth.js Models
+// ============================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  accounts Account[]
+  sessions Session[]
+  groups   Group[]
+  goals    Goal[]
+  tasks    Task[]
+  habits   Habit[]
+  labels   Label[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================================================
+// Application Models
+// ============================================================================
+
+model Group {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  color       String? // hex color for UI
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goals  Goal[]
+  habits Habit[]
+
+  @@index([userId])
+  @@map("groups")
+}
+
+model Goal {
+  id          String    @id @default(cuid())
+  title       String
+  description String?   @db.Text
+  deadline    DateTime?
+  progress    Float     @default(0) // 0-100, calculated
+  userId      String
+  groupId     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group         Group?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  tasks         Task[]
+  labels        GoalLabel[]
+  linkedHabits  GoalHabit[]
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([deadline])
+  @@index([createdAt])
+  @@map("goals")
+}
+
+model Task {
+  id               String    @id @default(cuid())
+  title            String
+  description      String?   @db.Text
+  importance       Int       @default(33) // 33 (green), 66 (yellow), 100 (red)
+  progress         Float     @default(0) // 0-100, auto from subtasks or manual
+  isManualProgress Boolean   @default(true) // true if no subtasks
+  deadline         DateTime?
+  goalId           String
+  userId           String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relations
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal     Goal        @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  subtasks Subtask[]
+  labels   TaskLabel[]
+
+  @@index([userId])
+  @@index([goalId])
+  @@index([deadline])
+  @@map("tasks")
+}
+
+model Subtask {
+  id          String    @id @default(cuid())
+  title       String
+  description String?   @db.Text
+  importance  Int       @default(33) // 33 (green), 66 (yellow), 100 (red)
+  progress    Float     @default(0) // 0-100, manual
+  deadline    DateTime?
+  taskId      String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@map("subtasks")
+}
+
+enum HabitType {
+  DAILY
+  N_PER_DAY
+  WEEKLY
+  MONTHLY
+}
+
+model Habit {
+  id          String    @id @default(cuid())
+  title       String
+  description String?   @db.Text
+  type        HabitType @default(DAILY)
+  targetCount Int? // for N_PER_DAY type
+  endDate     DateTime?
+  userId      String
+  groupId     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group       Group?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  labels      HabitLabel[]
+  linkedGoals GoalHabit[]
+  habitLogs   HabitLog[]
+
+  @@index([userId])
+  @@index([groupId])
+  @@map("habits")
+}
+
+model HabitLog {
+  id        String   @id @default(cuid())
+  habitId   String
+  date      DateTime @db.Date // day level, no time
+  count     Int      @default(1) // number of times logged that day
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  habit Habit @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  @@unique([habitId, date])
+  @@index([habitId])
+  @@index([date])
+  @@map("habit_logs")
+}
+
+model Label {
+  id        String   @id @default(cuid())
+  name      String
+  color     String? // hex color
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goals  GoalLabel[]
+  tasks  TaskLabel[]
+  habits HabitLabel[]
+
+  @@index([userId])
+  @@map("labels")
+}
+
+// ============================================================================
+// Many-to-Many Join Tables
+// ============================================================================
+
+model GoalLabel {
+  goalId  String
+  labelId String
+  goal    Goal   @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  label   Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([goalId, labelId])
+  @@map("goal_labels")
+}
+
+model TaskLabel {
+  taskId  String
+  labelId String
+  task    Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  label   Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, labelId])
+  @@map("task_labels")
+}
+
+model HabitLabel {
+  habitId String
+  labelId String
+  habit   Habit  @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  label   Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([habitId, labelId])
+  @@map("habit_labels")
+}
+
+model GoalHabit {
+  goalId  String
+  habitId String
+  goal    Goal   @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  habit   Habit  @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  @@id([goalId, habitId])
+  @@map("goal_habits")
+}
