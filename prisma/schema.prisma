@@ -109,11 +109,11 @@ model Goal {
   updatedAt   DateTime  @updatedAt
 
   // Relations
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  group         Group?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  tasks         Task[]
-  labels        GoalLabel[]
-  linkedHabits  GoalHabit[]
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group        Group?      @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  tasks        Task[]
+  labels       GoalLabel[]
+  linkedHabits GoalHabit[]
 
   @@index([userId])
   @@index([groupId])
