@@ -95,7 +95,7 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 - Configure Google provider in NextAuth
 
 ### Task 3.3: Create Auth UI Components
-**Status:** Pending
+**Status:** ✅ Completed
 **Description:** Build login/logout UI.
 **What to do:**
 - Create login page with Google sign-in button
