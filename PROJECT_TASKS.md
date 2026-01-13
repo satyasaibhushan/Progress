@@ -63,7 +63,7 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 - Add indexes for common queries
 
 ### Task 2.3: Create and Run Migrations
-**Status:** Pending
+**Status:** ✅ Completed
 **Description:** Generate and apply database migrations.
 **What to do:**
 - Run `npx prisma migrate dev --name init`
@@ -76,7 +76,7 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 ## Phase 3: Authentication
 
 ### Task 3.1: Install NextAuth.js
-**Status:** Pending
+**Status:** ✅ Completed
 **Description:** Set up NextAuth.js for authentication.
 **What to do:**
 - Install NextAuth: `npm install next-auth`
@@ -84,7 +84,7 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 - Configure NextAuth with Prisma adapter
 
 ### Task 3.2: Configure Google OAuth
-**Status:** Pending
+**Status:** ✅ Completed
 **Description:** Set up Google OAuth provider.
 **What to do:**
 - Create Google Cloud project
