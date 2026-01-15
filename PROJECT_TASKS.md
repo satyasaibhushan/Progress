@@ -109,7 +109,7 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 ## Phase 4: Core Data Management
 
 ### Task 4.1: Groups/Categories API
-**Status:** Pending
+**Status:** ✅ Completed
 **Description:** Create CRUD operations for groups/categories.
 **What to do:**
 - Create API routes: `/api/groups` (GET, POST, PUT, DELETE)
@@ -117,49 +117,34 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 - Add validation with Zod
 - Test with API client (Postman/Insomnia)
 
-### Task 4.2: Goals API
-**Status:** Pending
-**Description:** Create CRUD operations for goals.
-**What to do:**
-- Create API routes: `/api/goals` (GET, POST, PUT, DELETE)
-- Implement progress calculation logic
-- Handle labels association
-- Handle habit linking
-- Test all endpoints
-
-### Task 4.3: Tasks API
-**Status:** Pending
-**Description:** Create CRUD operations for tasks.
+### Task 4.2: Tasks API
+**Status:** ✅ Completed
+**Description:** Create CRUD operations for tasks with hierarchical support.
 **What to do:**
 - Create API routes: `/api/tasks` (GET, POST, PUT, DELETE)
-- Implement importance levels (red/yellow/green as %)
+- Implement hierarchy support (parentId for infinite nesting)
+- Root tasks (parentId = null) are effectively "goals"
+- Implement importance as 1-100 weightage
+- Progress as 0-100 percentage slider
 - Handle labels association
-- Implement progress calculation (auto from subtasks or manual)
-- Validate deadline within goal's deadline
-- Test all endpoints
+- Support groupId (category)
+- Support habits as children of tasks
+- Test all endpoints including nested tasks
 
-### Task 4.4: Subtasks API
-**Status:** Pending
-**Description:** Create CRUD operations for subtasks.
-**What to do:**
-- Create API routes: `/api/subtasks` (GET, POST, PUT, DELETE)
-- Implement importance and manual progress
-- Update parent task progress automatically
-- Test all endpoints
-
-### Task 4.5: Habits API
-**Status:** Pending
+### Task 4.3: Habits API
+**Status:** ✅ Completed
 **Description:** Create CRUD operations for habits.
 **What to do:**
 - Create API routes: `/api/habits` (GET, POST, PUT, DELETE)
 - Implement habit types (daily, n-per-day, weekly, monthly)
 - Handle labels association
+- Support parentTaskId (habit can be child of a task)
 - Create habit logging endpoint `/api/habits/[id]/log`
 - Implement calendar query for habit completion
 - Test all endpoints
 
-### Task 4.6: Labels API
-**Status:** Pending
+### Task 4.4: Labels API
+**Status:** ✅ Completed
 **Description:** Create label management system.
 **What to do:**
 - Create API routes: `/api/labels` (GET, POST, PUT, DELETE)

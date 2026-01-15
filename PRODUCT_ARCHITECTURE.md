@@ -26,8 +26,8 @@
 │  │                                                       │   │
 │  │  Components:                                         │   │
 │  │  - Dashboard                                         │   │
-│  │  - Goals/Tasks/Habits Management                    │   │
-│  │  - Calendar View                                     │   │
+│  │  - Hierarchical Tasks Management                    │   │
+│  │  - Habits Management & Calendar View                │   │
 │  │  - Analytics & Charts                               │   │
 │  │  - Suggestion Widget                                │   │
 │  └─────────────────────────────────────────────────────┘   │
@@ -40,9 +40,7 @@
 │  │                                                       │   │
 │  │  - /api/auth/[...nextauth]  (Authentication)       │   │
 │  │  - /api/groups              (CRUD)                  │   │
-│  │  - /api/goals               (CRUD)                  │   │
 │  │  - /api/tasks               (CRUD)                  │   │
-│  │  - /api/subtasks            (CRUD)                  │   │
 │  │  - /api/habits              (CRUD + Logging)        │   │
 │  │  - /api/labels              (CRUD)                  │   │
 │  │  - /api/suggestions         (Algorithm)             │   │
@@ -72,8 +70,9 @@
                               ↕
 ┌─────────────────────────────────────────────────────────────┐
 │                      PostgreSQL Database                     │
-│  - Users, Groups, Goals, Tasks, Subtasks                    │
+│  - Users, Groups, Tasks (hierarchical)                      │
 │  - Habits, HabitLogs, Labels                                │
+│  - TaskLabel, HabitLabel (join tables)                      │
 │  - Sessions, Accounts                                        │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -141,35 +140,33 @@
      │                 │                  │
      ▼                 │                  ▼
 ┌──────────┐           │            ┌──────────────┐
-│   Goal   │◄──────────┼────────────│  HabitLog    │
-└────┬─────┘           │            └──────────────┘
-     │                 │
-     │ 1:N             │
-     │                 │
-     ▼                 │
-┌──────────┐           │
-│   Task   │◄──────────┤
-└────┬─────┘           │
-     │                 │
-     │ 1:N             │
-     │                 │
-     ▼                 │
-┌──────────┐           │
-│ Subtask  │           │
-└──────────┘           │
+│   Task   │◄──────────┼────────────│  HabitLog    │
+│ (Self-   │           │            └──────────────┘
+│ Ref: ∞   │           │
+│ Hierarchy│           │                    ▲
+│ via      │           │                    │
+│ parentId)│           │                    │ N:1
+└────┬─────┘           │                    │
+     │                 │            ┌───────┴──────┐
+     │ 1:N             │            │    Habit     │
+     │                 │            │ (can have    │
+     │                 │            │ parentTaskId)│
+     └─────────────────┼───────────>└──────────────┘
                        │
      ┌─────────────────┘
-     │ N:M (Labels applied to Goals, Tasks, Habits)
+     │ N:M (Labels applied to Tasks and Habits)
      └────────────────────────────────────┐
                                           ▼
                               ┌──────────────────────┐
-                              │  GoalLabel           │
                               │  TaskLabel           │
                               │  HabitLabel          │
                               └──────────────────────┘
 
-Additional Relations:
-- Goal ←→ Habit (N:M): Habits can be linked to goals
+Key Changes:
+- Goal model removed - root tasks (parentId = null) are "goals"
+- Subtask model removed - tasks have infinite nesting via parentId
+- Tasks are self-referential with parent-child relationships
+- Habits can be children of tasks via parentTaskId
 ```
 
 ### Entity Specifications
@@ -186,7 +183,6 @@ Additional Relations:
 
   // Relations
   groups: Group[]
-  goals: Goal[]
   habits: Habit[]
   labels: Label[]
   accounts: Account[] (OAuth)
@@ -207,73 +203,41 @@ Additional Relations:
 
   // Relations
   user: User
-  goals: Goal[]
+  tasks: Task[]
   habits: Habit[]
 }
 ```
 
-#### **Goal**
+#### **Task** (Hierarchical - replaces Goal + Task + Subtask)
 ```typescript
 {
   id: string (UUID)
   title: string
   description: string?
+  importance: int (1-100 weightage)
+  progress: float (0-100 percentage, manual entry)
   deadline: DateTime?
-  progress: float (0-100, calculated)
+  groupId: string? (category)
+  parentId: string? (null = root task/"goal", else = child task)
   userId: string
-  groupId: string?
   createdAt: DateTime
   updatedAt: DateTime
 
   // Relations
   user: User
   group: Group?
-  tasks: Task[]
-  labels: Label[] (many-to-many)
-  linkedHabits: Habit[] (many-to-many)
+  parent: Task? (parent task)
+  children: Task[] (child tasks, infinite nesting)
+  labels: TaskLabel[] (many-to-many)
+  habits: Habit[] (habits can be children of tasks)
 }
 ```
 
-#### **Task**
-```typescript
-{
-  id: string (UUID)
-  title: string
-  description: string?
-  importance: int (33, 66, 100 for green/yellow/red)
-  progress: float (0-100, auto from subtasks or manual)
-  isManualProgress: boolean (true if no subtasks)
-  deadline: DateTime?
-  goalId: string
-  userId: string
-  createdAt: DateTime
-  updatedAt: DateTime
-
-  // Relations
-  user: User
-  goal: Goal
-  subtasks: Subtask[]
-  labels: Label[] (many-to-many)
-}
-```
-
-#### **Subtask**
-```typescript
-{
-  id: string (UUID)
-  title: string
-  description: string?
-  importance: int (33, 66, 100)
-  progress: float (0-100, manual)
-  deadline: DateTime?
-  taskId: string
-  createdAt: DateTime
-  updatedAt: DateTime
-
-  // Relations
-  task: Task
-}
-```
+**Note:**
+- Root tasks (`parentId = null`) effectively serve as "goals"
+- Child tasks can have their own child tasks (infinite nesting)
+- No separate Subtask model - just tasks with a parentId
+- Importance is now 1-100 range (not fixed values)
 
 #### **Habit**
 ```typescript
@@ -282,19 +246,20 @@ Additional Relations:
   title: string
   description: string?
   type: enum (DAILY, N_PER_DAY, WEEKLY, MONTHLY)
-  targetCount: int? (for N_PER_DAY type)
+  targetPerDay: int? (for N_PER_DAY type)
   endDate: DateTime?
   userId: string
   groupId: string?
+  parentTaskId: string? (habit can be child of a task)
   createdAt: DateTime
   updatedAt: DateTime
 
   // Relations
   user: User
   group: Group?
-  labels: Label[] (many-to-many)
-  linkedGoals: Goal[] (many-to-many)
-  habitLogs: HabitLog[]
+  parentTask: Task? (parent task if this habit belongs to a task)
+  labels: HabitLabel[] (many-to-many)
+  logs: HabitLog[]
 }
 ```
 
@@ -303,15 +268,15 @@ Additional Relations:
 {
   id: string (UUID)
   habitId: string
-  date: Date (day level, no time)
-  count: int (number of times logged that day)
+  completedAt: DateTime (timestamp when logged)
+  count: int (for N_PER_DAY habits, increments daily)
   createdAt: DateTime
-  updatedAt: DateTime
 
   // Relations
   habit: Habit
 
-  // Unique constraint on (habitId, date)
+  // Note: For N_PER_DAY, multiple logs on same day
+  // increment count on existing log for that day
 }
 ```
 
@@ -327,9 +292,8 @@ Additional Relations:
 
   // Relations
   user: User
-  goals: Goal[] (many-to-many)
-  tasks: Task[] (many-to-many)
-  habits: Habit[] (many-to-many)
+  tasks: TaskLabel[] (many-to-many)
+  habits: HabitLabel[] (many-to-many)
 }
 ```
 
@@ -377,43 +341,42 @@ Additional Relations:
 │   ├── route.ts              (GET all, POST)
 │   └── [id]
 │       └── route.ts          (GET, PUT, DELETE)
-├── goals
-│   ├── route.ts              (GET all, POST)
+├── tasks                      (Hierarchical - includes "goals")
+│   ├── route.ts              (GET all with filters, POST)
+│   │                         (Filters: ?parentId=null for roots/"goals")
+│   │                         (         ?parentId={id} for children)
+│   │                         (         ?groupId={id} for category)
+│   │                         (         ?include=children for nested)
 │   └── [id]
 │       ├── route.ts          (GET, PUT, DELETE)
-│       └── progress
-│           └── route.ts      (GET calculated progress)
-├── tasks
-│   ├── route.ts              (GET all, POST)
-│   └── [id]
-│       ├── route.ts          (GET, PUT, DELETE)
-│       └── progress
-│           └── route.ts      (PUT manual progress)
-├── subtasks
-│   ├── route.ts              (GET all, POST)
-│   └── [id]
-│       └── route.ts          (GET, PUT, DELETE)
+│       └── labels
+│           └── route.ts      (POST add, DELETE remove label)
 ├── habits
-│   ├── route.ts              (GET all, POST)
+│   ├── route.ts              (GET all with filters, POST)
+│   │                         (Filters: ?type={type}, ?groupId={id})
+│   │                         (         ?parentTaskId={id})
 │   └── [id]
 │       ├── route.ts          (GET, PUT, DELETE)
 │       ├── log
-│       │   └── route.ts      (POST log entry)
-│       └── stats
-│           └── route.ts      (GET habit statistics)
+│       │   └── route.ts      (POST log, GET logs, DELETE log)
+│       │                     (GET filters: ?startDate=, ?endDate=)
+│       └── labels
+│           └── route.ts      (POST add, DELETE remove label)
 ├── labels
 │   ├── route.ts              (GET all, POST)
 │   └── [id]
-│       └── route.ts          (GET, PUT, DELETE)
+│       ├── route.ts          (GET, PUT, DELETE)
+│       └── items
+│           └── route.ts      (GET all tasks & habits with this label)
 ├── suggestions
-│   └── route.ts              (GET suggestion)
+│   └── route.ts              (GET suggestion - to be implemented)
 └── analytics
     ├── overview
-    │   └── route.ts          (GET dashboard stats)
+    │   └── route.ts          (GET dashboard stats - to be implemented)
     ├── by-label
-    │   └── route.ts          (GET progress by label)
+    │   └── route.ts          (GET progress by label - to be implemented)
     └── by-group
-        └── route.ts          (GET progress by group)
+        └── route.ts          (GET progress by group - to be implemented)
 ```
 
 ### API Conventions
@@ -522,56 +485,60 @@ Additional Relations:
 
 ## Progress Calculation Logic
 
-### Task Progress Calculation
+**Note:** With the simplified structure, progress is now manually entered for all tasks (leaf and parent). Future enhancements can implement automatic calculation.
 
-#### When Task Has Subtasks:
+### Task Progress (Current Implementation)
+
+#### Manual Entry:
+- All tasks have manual progress entry (0-100%)
+- User updates via slider or input
+- Progress is stored directly in the `progress` field
+
+### Future: Automatic Progress Calculation
+
+#### When Task Has Child Tasks:
 ```typescript
 taskProgress = (
-  Σ(subtask.progress × subtask.importance) /
-  Σ(subtask.importance)
+  Σ(childTask.progress × childTask.importance) /
+  Σ(childTask.importance)
 )
 
 Where:
-- subtask.progress: 0-100
-- subtask.importance: 33 (green), 66 (yellow), or 100 (red)
+- childTask.progress: 0-100
+- childTask.importance: 1-100 weightage
 ```
 
 **Example:**
 ```
-Task has 3 subtasks:
-- Subtask 1: 50% complete, Red importance (100)
-- Subtask 2: 100% complete, Yellow importance (66)
-- Subtask 3: 0% complete, Green importance (33)
+Task has 3 child tasks:
+- Child 1: 50% complete, importance 80
+- Child 2: 100% complete, importance 60
+- Child 3: 0% complete, importance 40
 
-Task Progress = (50×100 + 100×66 + 0×33) / (100 + 66 + 33)
-              = (5000 + 6600 + 0) / 199
-              = 11600 / 199
-              = 58.29%
+Task Progress = (50×80 + 100×60 + 0×40) / (80 + 60 + 40)
+              = (4000 + 6000 + 0) / 180
+              = 10000 / 180
+              = 55.56%
 ```
 
-#### When Task Has No Subtasks:
-- Manual progress entry (0-100%)
-- User updates via slider
-
-### Goal Progress Calculation
-
+#### Root Task ("Goal") Progress with Linked Habits:
 ```typescript
-goalProgress = (
-  (Σ(task.progress × task.importance) / Σ(task.importance)) × taskWeight +
+rootTaskProgress = (
+  (Σ(childTask.progress × childTask.importance) / Σ(childTask.importance)) × taskWeight +
   (habitCompletionRate × habitWeight)
 )
 
 Where:
-- taskWeight: 0.7 (70% weight to tasks)
-- habitWeight: 0.3 (30% weight to linked habits)
+- taskWeight: 0.7 (70% weight to child tasks)
+- habitWeight: 0.3 (30% weight to linked habits via parentTaskId)
 - habitCompletionRate: percentage of linked habits meeting their targets
 ```
 
 **Habit Completion Rate Calculation:**
 ```typescript
-For each linked habit:
+For each linked habit (habit.parentTaskId = task.id):
   - DAILY: completed if logged today
-  - N_PER_DAY: (logsToday / targetCount) × 100
+  - N_PER_DAY: (logsToday / targetPerDay) × 100
   - WEEKLY: completed if logged ≥ 1 day this week
   - MONTHLY: completed if logged ≥ 1 day this month
 
@@ -580,23 +547,22 @@ habitCompletionRate = Σ(habitCompletion) / numberOfLinkedHabits
 
 **Example:**
 ```
-Goal has:
-- 2 Tasks: Task1 (60%, Red), Task2 (80%, Green)
+Root Task ("Goal") has:
+- 2 Child Tasks: Task1 (60%, importance 80), Task2 (80%, importance 40)
 - 2 Linked Habits: Habit1 (100% - done today), Habit2 (50% - 1/2 daily targets)
 
-Task Progress = (60×100 + 80×33) / (100 + 33) = 8640/133 = 64.96%
+Task Progress = (60×80 + 80×40) / (80 + 40) = 8000/120 = 66.67%
 Habit Progress = (100 + 50) / 2 = 75%
 
-Goal Progress = (64.96 × 0.7) + (75 × 0.3)
-              = 45.47 + 22.5
-              = 67.97%
+Root Task Progress = (66.67 × 0.7) + (75 × 0.3)
+                   = 46.67 + 22.5
+                   = 69.17%
 ```
 
-### Update Triggers
-- **Subtask update** → Recalculate parent Task
-- **Task update** → Recalculate parent Goal
-- **Habit log** → Recalculate linked Goals
-- Calculations happen in API route before response
+### Update Triggers (Future Implementation)
+- **Child task update** → Recalculate parent Task progress
+- **Habit log** → Recalculate parent Task (if parentTaskId set)
+- Calculations will happen in API route or via database triggers
 
 ---
 
@@ -607,7 +573,7 @@ Goal Progress = (64.96 × 0.7) + (75 × 0.3)
 #### Step 1: Identify Leaf Nodes
 ```typescript
 LeafNodes = {
-  - Tasks with no incomplete subtasks
+  - Tasks with no child tasks (task.children.length === 0)
   - All habits
 }
 ```
@@ -638,8 +604,8 @@ Where:
     gap = max(0, expectedProgress - actualProgress)
   }
 
-  labelGoalUnderachievement = {
-    Average progress gap of all goals/labels this item belongs to
+  labelTaskUnderachievement = {
+    Average progress gap of all root tasks/labels this item belongs to
   }
 
   randomFactor = random(0.8, 1.2) // 20% randomness
@@ -653,7 +619,8 @@ Where:
 ### Suggestion Context
 Return suggestion with:
 - Leaf node (task/habit) details
-- Parent goal information
+- Parent task information (if applicable)
+- Root task ("goal") information
 - Group/category
 - Labels
 - Reason for suggestion
@@ -674,12 +641,12 @@ Return suggestion with:
 ├── (dashboard)
 │   ├── layout.tsx              # Main layout with sidebar
 │   ├── page.tsx                # Dashboard/Overview
-│   ├── goals
-│   │   ├── page.tsx            # Goals list
+│   ├── tasks
+│   │   ├── page.tsx            # Tasks list (can filter for roots/"goals")
 │   │   ├── [id]
-│   │   │   └── page.tsx        # Goal detail
+│   │   │   └── page.tsx        # Task detail with hierarchy
 │   │   └── new
-│   │       └── page.tsx        # Create goal
+│   │       └── page.tsx        # Create task
 │   ├── habits
 │   │   ├── page.tsx            # Habits list
 │   │   ├── [id]
@@ -703,16 +670,12 @@ Return suggestion with:
 │   ├── sidebar.tsx
 │   ├── header.tsx
 │   └── navigation.tsx
-├── goals
-│   ├── goal-card.tsx
-│   ├── goal-form.tsx
-│   ├── goal-list.tsx
-│   └── goal-progress.tsx
 ├── tasks
-│   ├── task-item.tsx
+│   ├── task-card.tsx
 │   ├── task-form.tsx
 │   ├── task-list.tsx
-│   └── subtask-list.tsx
+│   ├── task-tree.tsx           # Hierarchical task display
+│   └── task-progress.tsx
 ├── habits
 │   ├── habit-card.tsx
 │   ├── habit-form.tsx
@@ -762,20 +725,24 @@ Return suggestion with:
 #### Server Components (Default)
 ```typescript
 // Fetch data directly in server component
-async function GoalsPage() {
-  const goals = await prisma.goal.findMany({
-    where: { userId: session.user.id }
+async function TasksPage() {
+  const tasks = await prisma.task.findMany({
+    where: {
+      userId: session.user.id,
+      parentId: null  // Get root tasks ("goals")
+    }
   })
-  return <GoalsList goals={goals} />
+  return <TasksList tasks={tasks} />
 }
 ```
 
 #### Client Components (Interactive)
 ```typescript
 // Fetch via API route
-async function GoalsPage() {
-  const { data } = await fetch('/api/goals')
-  return <GoalsList goals={data} />
+async function TasksPage() {
+  // Get root tasks ("goals")
+  const { data } = await fetch('/api/tasks?parentId=null')
+  return <TasksList tasks={data} />
 }
 ```
 
@@ -809,7 +776,6 @@ model User {
   accounts Account[]
   sessions Session[]
   groups   Group[]
-  goals    Goal[]
   tasks    Task[]
   habits   Habit[]
   labels   Label[]
@@ -823,29 +789,32 @@ model User {
 ### Indexes for Performance
 
 ```prisma
-model Goal {
-  // ... fields
-
-  @@index([userId])
-  @@index([groupId])
-  @@index([deadline])
-  @@index([createdAt])
-}
-
 model Task {
   // ... fields
 
   @@index([userId])
-  @@index([goalId])
+  @@index([groupId])
+  @@index([parentId])      // For hierarchical queries
   @@index([deadline])
+  @@index([createdAt])
+  @@map("tasks")
+}
+
+model Habit {
+  // ... fields
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([parentTaskId])  // For task-habit relationships
+  @@map("habits")
 }
 
 model HabitLog {
   // ... fields
 
-  @@unique([habitId, date])
   @@index([habitId])
-  @@index([date])
+  @@index([completedAt])
+  @@map("habit_logs")
 }
 ```
 
@@ -854,11 +823,15 @@ model HabitLog {
 - **Foreign Keys:** Cascade delete on user deletion
 - **Unique Constraints:**
   - User email
-  - HabitLog (habitId, date) combination
+  - TaskLabel (taskId, labelId) combination
+  - HabitLabel (habitId, labelId) combination
 - **Check Constraints:**
   - Progress values between 0-100
-  - Importance values in [33, 66, 100]
-  - Target count > 0 for N_PER_DAY habits
+  - Importance values between 1-100
+  - targetPerDay > 0 for N_PER_DAY habits
+- **Self-Referential Constraint:**
+  - Task.parentId references Task.id (allows infinite nesting)
+  - Prevents circular references via application logic
 
 ---
 

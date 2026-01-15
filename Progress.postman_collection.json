@@ -1,0 +1,854 @@
+{
+	"info": {
+		"_postman_id": "progress-app-collection",
+		"name": "Progress App API",
+		"description": "Complete API collection for Progress tracking application with hierarchical tasks, habits, and labels",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "apikey",
+		"apikey": [
+			{
+				"key": "value",
+				"value": "authjs.session-token={{sessionToken}}",
+				"type": "string"
+			},
+			{
+				"key": "key",
+				"value": "Cookie",
+				"type": "string"
+			},
+			{
+				"key": "in",
+				"value": "header",
+				"type": "string"
+			}
+		]
+	},
+	"item": [
+		{
+			"name": "Groups",
+			"item": [
+				{
+					"name": "Get All Groups",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/groups",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "groups"]
+						},
+						"description": "Get all groups/categories for the authenticated user"
+					}
+				},
+				{
+					"name": "Create Group",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Work\",\n  \"description\": \"Work related tasks and habits\",\n  \"color\": \"#3b82f6\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/groups",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "groups"]
+						},
+						"description": "Create a new group/category"
+					}
+				},
+				{
+					"name": "Get Group by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/groups/{{groupId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "groups", "{{groupId}}"]
+						},
+						"description": "Get a specific group with task and habit counts"
+					}
+				},
+				{
+					"name": "Update Group",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Work Projects\",\n  \"description\": \"Updated description\",\n  \"color\": \"#10b981\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/groups/{{groupId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "groups", "{{groupId}}"]
+						},
+						"description": "Update a group's details"
+					}
+				},
+				{
+					"name": "Delete Group",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/groups/{{groupId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "groups", "{{groupId}}"]
+						},
+						"description": "Delete a group"
+					}
+				}
+			],
+			"description": "Group/Category management endpoints"
+		},
+		{
+			"name": "Tasks",
+			"item": [
+				{
+					"name": "Get All Tasks",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks"]
+						},
+						"description": "Get all tasks for the user"
+					}
+				},
+				{
+					"name": "Get Root Tasks (Goals)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks?parentId=null",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks"],
+							"query": [
+								{
+									"key": "parentId",
+									"value": "null",
+									"description": "Filter for root tasks (goals)"
+								}
+							]
+						},
+						"description": "Get root tasks (parentId = null), which are effectively 'goals'"
+					}
+				},
+				{
+					"name": "Get Child Tasks",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks?parentId={{taskId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks"],
+							"query": [
+								{
+									"key": "parentId",
+									"value": "{{taskId}}",
+									"description": "Get children of a specific task"
+								}
+							]
+						},
+						"description": "Get child tasks of a specific parent task"
+					}
+				},
+				{
+					"name": "Get Tasks by Group",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks?groupId={{groupId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks"],
+							"query": [
+								{
+									"key": "groupId",
+									"value": "{{groupId}}",
+									"description": "Filter by group/category"
+								}
+							]
+						},
+						"description": "Get all tasks in a specific group"
+					}
+				},
+				{
+					"name": "Get Tasks with Children",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks?parentId=null&include=children",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks"],
+							"query": [
+								{
+									"key": "parentId",
+									"value": "null"
+								},
+								{
+									"key": "include",
+									"value": "children",
+									"description": "Include nested children"
+								}
+							]
+						},
+						"description": "Get tasks with their child tasks included"
+					}
+				},
+				{
+					"name": "Create Root Task (Goal)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Launch Product\",\n  \"description\": \"Complete product launch by Q2\",\n  \"importance\": 90,\n  \"progress\": 0,\n  \"deadline\": \"2024-06-30T23:59:59Z\",\n  \"groupId\": \"{{groupId}}\",\n  \"parentId\": null\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks"]
+						},
+						"description": "Create a root task (goal) with parentId = null"
+					}
+				},
+				{
+					"name": "Create Child Task",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Design UI\",\n  \"description\": \"Create mockups and user flows\",\n  \"importance\": 75,\n  \"progress\": 30,\n  \"deadline\": \"2024-05-15T23:59:59Z\",\n  \"groupId\": \"{{groupId}}\",\n  \"parentId\": \"{{taskId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks"]
+						},
+						"description": "Create a child task under a parent task"
+					}
+				},
+				{
+					"name": "Get Task by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks/{{taskId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks", "{{taskId}}"]
+						},
+						"description": "Get a specific task with all relations"
+					}
+				},
+				{
+					"name": "Get Task with Children",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks/{{taskId}}?include=children",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks", "{{taskId}}"],
+							"query": [
+								{
+									"key": "include",
+									"value": "children"
+								}
+							]
+						},
+						"description": "Get task with its nested children"
+					}
+				},
+				{
+					"name": "Update Task",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Design UI - Updated\",\n  \"progress\": 50,\n  \"importance\": 80\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks/{{taskId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks", "{{taskId}}"]
+						},
+						"description": "Update task details (prevents circular references)"
+					}
+				},
+				{
+					"name": "Delete Task",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks/{{taskId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks", "{{taskId}}"]
+						},
+						"description": "Delete a task (cascades to children)"
+					}
+				},
+				{
+					"name": "Add Label to Task",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"labelId\": \"{{labelId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks/{{taskId}}/labels",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks", "{{taskId}}", "labels"]
+						},
+						"description": "Associate a label with a task"
+					}
+				},
+				{
+					"name": "Remove Label from Task",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"labelId\": \"{{labelId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/tasks/{{taskId}}/labels",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "tasks", "{{taskId}}", "labels"]
+						},
+						"description": "Remove a label association from a task"
+					}
+				}
+			],
+			"description": "Hierarchical task management (root tasks are 'goals')"
+		},
+		{
+			"name": "Habits",
+			"item": [
+				{
+					"name": "Get All Habits",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/habits",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits"]
+						},
+						"description": "Get all habits for the user"
+					}
+				},
+				{
+					"name": "Get Habits by Type",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/habits?type=DAILY",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits"],
+							"query": [
+								{
+									"key": "type",
+									"value": "DAILY",
+									"description": "DAILY, N_PER_DAY, WEEKLY, MONTHLY"
+								}
+							]
+						},
+						"description": "Filter habits by type"
+					}
+				},
+				{
+					"name": "Get Habits by Group",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/habits?groupId={{groupId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits"],
+							"query": [
+								{
+									"key": "groupId",
+									"value": "{{groupId}}"
+								}
+							]
+						},
+						"description": "Get habits in a specific group"
+					}
+				},
+				{
+					"name": "Get Habits by Parent Task",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/habits?parentTaskId={{taskId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits"],
+							"query": [
+								{
+									"key": "parentTaskId",
+									"value": "{{taskId}}",
+									"description": "Get habits linked to a task"
+								}
+							]
+						},
+						"description": "Get habits that are children of a specific task"
+					}
+				},
+				{
+					"name": "Create Daily Habit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Morning Exercise\",\n  \"description\": \"30 minutes of exercise\",\n  \"type\": \"DAILY\",\n  \"groupId\": \"{{groupId}}\",\n  \"endDate\": \"2024-12-31T23:59:59Z\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/habits",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits"]
+						},
+						"description": "Create a daily habit"
+					}
+				},
+				{
+					"name": "Create N-Per-Day Habit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Drink Water\",\n  \"description\": \"Stay hydrated throughout the day\",\n  \"type\": \"N_PER_DAY\",\n  \"targetPerDay\": 8,\n  \"groupId\": \"{{groupId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/habits",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits"]
+						},
+						"description": "Create an N-per-day habit with target count"
+					}
+				},
+				{
+					"name": "Create Habit Linked to Task",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Daily Standup\",\n  \"description\": \"Attend daily team standup\",\n  \"type\": \"DAILY\",\n  \"parentTaskId\": \"{{taskId}}\",\n  \"groupId\": \"{{groupId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/habits",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits"]
+						},
+						"description": "Create a habit that is a child of a task"
+					}
+				},
+				{
+					"name": "Get Habit by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/habits/{{habitId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits", "{{habitId}}"]
+						},
+						"description": "Get habit with last 30 logs"
+					}
+				},
+				{
+					"name": "Update Habit",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Morning Exercise - Updated\",\n  \"targetPerDay\": 10\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/habits/{{habitId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits", "{{habitId}}"]
+						},
+						"description": "Update habit details"
+					}
+				},
+				{
+					"name": "Delete Habit",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/habits/{{habitId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits", "{{habitId}}"]
+						},
+						"description": "Delete habit (cascades to logs)"
+					}
+				},
+				{
+					"name": "Log Habit Completion",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"count\": 1\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/habits/{{habitId}}/log",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits", "{{habitId}}", "log"]
+						},
+						"description": "Log habit completion (auto-increments for N_PER_DAY)"
+					}
+				},
+				{
+					"name": "Log Habit at Specific Time",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"completedAt\": \"2024-01-15T14:30:00Z\",\n  \"count\": 2\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/habits/{{habitId}}/log",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits", "{{habitId}}", "log"]
+						},
+						"description": "Log habit with specific timestamp and count"
+					}
+				},
+				{
+					"name": "Get Habit Logs",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/habits/{{habitId}}/log",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits", "{{habitId}}", "log"]
+						},
+						"description": "Get all logs for a habit"
+					}
+				},
+				{
+					"name": "Get Habit Logs (Date Range)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/habits/{{habitId}}/log?startDate=2024-01-01T00:00:00Z&endDate=2024-01-31T23:59:59Z",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits", "{{habitId}}", "log"],
+							"query": [
+								{
+									"key": "startDate",
+									"value": "2024-01-01T00:00:00Z"
+								},
+								{
+									"key": "endDate",
+									"value": "2024-01-31T23:59:59Z"
+								}
+							]
+						},
+						"description": "Get habit logs within date range"
+					}
+				},
+				{
+					"name": "Delete Habit Log",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"logId\": \"{{logId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/habits/{{habitId}}/log",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits", "{{habitId}}", "log"]
+						},
+						"description": "Delete a specific habit log"
+					}
+				},
+				{
+					"name": "Add Label to Habit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"labelId\": \"{{labelId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/habits/{{habitId}}/labels",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits", "{{habitId}}", "labels"]
+						},
+						"description": "Associate a label with a habit"
+					}
+				},
+				{
+					"name": "Remove Label from Habit",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"labelId\": \"{{labelId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/habits/{{habitId}}/labels",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "habits", "{{habitId}}", "labels"]
+						},
+						"description": "Remove a label association from a habit"
+					}
+				}
+			],
+			"description": "Habit tracking with daily logging and calendar support"
+		},
+		{
+			"name": "Labels",
+			"item": [
+				{
+					"name": "Get All Labels",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/labels",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "labels"]
+						},
+						"description": "Get all labels with usage counts"
+					}
+				},
+				{
+					"name": "Create Label",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"urgent\",\n  \"color\": \"#ef4444\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/labels",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "labels"]
+						},
+						"description": "Create a new label/tag"
+					}
+				},
+				{
+					"name": "Get Label by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/labels/{{labelId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "labels", "{{labelId}}"]
+						},
+						"description": "Get label with all associated tasks and habits"
+					}
+				},
+				{
+					"name": "Update Label",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"high-priority\",\n  \"color\": \"#dc2626\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/labels/{{labelId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "labels", "{{labelId}}"]
+						},
+						"description": "Update label details"
+					}
+				},
+				{
+					"name": "Delete Label",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/labels/{{labelId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "labels", "{{labelId}}"]
+						},
+						"description": "Delete label (removes all associations)"
+					}
+				},
+				{
+					"name": "Get Items by Label",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/labels/{{labelId}}/items",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "labels", "{{labelId}}", "items"]
+						},
+						"description": "Get all tasks and habits tagged with this label"
+					}
+				}
+			],
+			"description": "Label/tag system for organizing tasks and habits"
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:3000",
+			"type": "string"
+		},
+		{
+			"key": "sessionToken",
+			"value": "YOUR_SESSION_TOKEN_HERE",
+			"type": "string"
+		},
+		{
+			"key": "groupId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "taskId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "habitId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "labelId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "logId",
+			"value": "",
+			"type": "string"
+		}
+	]
+}

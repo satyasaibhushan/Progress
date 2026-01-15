@@ -28,7 +28,6 @@ model User {
   accounts Account[]
   sessions Session[]
   groups   Group[]
-  goals    Goal[]
   tasks    Task[]
   habits   Habit[]
   labels   Label[]
@@ -90,36 +89,11 @@ model Group {
 
   // Relations
   user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  goals  Goal[]
+  tasks  Task[]
   habits Habit[]
 
   @@index([userId])
   @@map("groups")
-}
-
-model Goal {
-  id          String    @id @default(cuid())
-  title       String
-  description String?   @db.Text
-  deadline    DateTime?
-  progress    Float     @default(0) // 0-100, calculated
-  userId      String
-  groupId     String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  // Relations
-  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  group        Group?      @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  tasks        Task[]
-  labels       GoalLabel[]
-  linkedHabits GoalHabit[]
-
-  @@index([userId])
-  @@index([groupId])
-  @@index([deadline])
-  @@index([createdAt])
-  @@map("goals")
 }
 
 model Task {
@@ -129,22 +103,22 @@ model Task {
   importance  Int       @default(50) // 1-100 weightage
   progress    Float     @default(0) // 0-100 percentage
   deadline    DateTime?
-  goalId      String
-  parentId    String? // Self-referential for infinite nesting
+  groupId     String? // Category/Group
+  parentId    String? // Self-referential for infinite nesting (null = root/"goal")
   userId      String
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   // Relations
   user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  goal     Goal        @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  group    Group?      @relation(fields: [groupId], references: [id], onDelete: SetNull)
   parent   Task?       @relation("TaskHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
   children Task[]      @relation("TaskHierarchy")
   labels   TaskLabel[]
-  habits   Habit[] // Habits can be children of tasks
+  habits   Habit[]     // Habits can be children of tasks
 
   @@index([userId])
-  @@index([goalId])
+  @@index([groupId])
   @@index([parentId])
   @@index([deadline])
   @@map("tasks")
@@ -171,12 +145,11 @@ model Habit {
   updatedAt    DateTime  @updatedAt
 
   // Relations
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  group       Group?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  parentTask  Task?        @relation(fields: [parentTaskId], references: [id], onDelete: Cascade)
-  labels      HabitLabel[]
-  linkedGoals GoalHabit[]
-  habitLogs   HabitLog[]
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group      Group?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  parentTask Task?        @relation(fields: [parentTaskId], references: [id], onDelete: Cascade)
+  labels     HabitLabel[]
+  habitLogs  HabitLog[]
 
   @@index([userId])
   @@index([groupId])
@@ -211,7 +184,6 @@ model Label {
 
   // Relations
   user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  goals  GoalLabel[]
   tasks  TaskLabel[]
   habits HabitLabel[]
 
@@ -222,16 +194,6 @@ model Label {
 // ============================================================================
 // Many-to-Many Join Tables
 // ============================================================================
-
-model GoalLabel {
-  goalId  String
-  labelId String
-  goal    Goal   @relation(fields: [goalId], references: [id], onDelete: Cascade)
-  label   Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
-
-  @@id([goalId, labelId])
-  @@map("goal_labels")
-}
 
 model TaskLabel {
   taskId  String
@@ -251,14 +213,4 @@ model HabitLabel {
 
   @@id([habitId, labelId])
   @@map("habit_labels")
-}
-
-model GoalHabit {
-  goalId  String
-  habitId String
-  goal    Goal   @relation(fields: [goalId], references: [id], onDelete: Cascade)
-  habit   Habit  @relation(fields: [habitId], references: [id], onDelete: Cascade)
-
-  @@id([goalId, habitId])
-  @@map("goal_habits")
 }
