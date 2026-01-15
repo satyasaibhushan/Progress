@@ -123,46 +123,31 @@ model Goal {
 }
 
 model Task {
-  id               String    @id @default(cuid())
-  title            String
-  description      String?   @db.Text
-  importance       Int       @default(33) // 33 (green), 66 (yellow), 100 (red)
-  progress         Float     @default(0) // 0-100, auto from subtasks or manual
-  isManualProgress Boolean   @default(true) // true if no subtasks
-  deadline         DateTime?
-  goalId           String
-  userId           String
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-
-  // Relations
-  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  goal     Goal        @relation(fields: [goalId], references: [id], onDelete: Cascade)
-  subtasks Subtask[]
-  labels   TaskLabel[]
-
-  @@index([userId])
-  @@index([goalId])
-  @@index([deadline])
-  @@map("tasks")
-}
-
-model Subtask {
   id          String    @id @default(cuid())
   title       String
   description String?   @db.Text
-  importance  Int       @default(33) // 33 (green), 66 (yellow), 100 (red)
-  progress    Float     @default(0) // 0-100, manual
+  importance  Int       @default(50) // 1-100 weightage
+  progress    Float     @default(0) // 0-100 percentage
   deadline    DateTime?
-  taskId      String
+  goalId      String
+  parentId    String? // Self-referential for infinite nesting
+  userId      String
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   // Relations
-  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal     Goal        @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  parent   Task?       @relation("TaskHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children Task[]      @relation("TaskHierarchy")
+  labels   TaskLabel[]
+  habits   Habit[] // Habits can be children of tasks
 
-  @@index([taskId])
-  @@map("subtasks")
+  @@index([userId])
+  @@index([goalId])
+  @@index([parentId])
+  @@index([deadline])
+  @@map("tasks")
 }
 
 enum HabitType {
@@ -173,26 +158,29 @@ enum HabitType {
 }
 
 model Habit {
-  id          String    @id @default(cuid())
-  title       String
-  description String?   @db.Text
-  type        HabitType @default(DAILY)
-  targetCount Int? // for N_PER_DAY type
-  endDate     DateTime?
-  userId      String
-  groupId     String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           String    @id @default(cuid())
+  title        String
+  description  String?   @db.Text
+  type         HabitType @default(DAILY)
+  targetCount  Int? // for N_PER_DAY type
+  endDate      DateTime?
+  userId       String
+  groupId      String?
+  parentTaskId String? // Habit can be a child of a task
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   // Relations
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   group       Group?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  parentTask  Task?        @relation(fields: [parentTaskId], references: [id], onDelete: Cascade)
   labels      HabitLabel[]
   linkedGoals GoalHabit[]
   habitLogs   HabitLog[]
 
   @@index([userId])
   @@index([groupId])
+  @@index([parentTaskId])
   @@map("habits")
 }
 
