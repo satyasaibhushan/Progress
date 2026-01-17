@@ -137,6 +137,7 @@ export async function PUT(
     }
 
     // If parentId is being updated, verify it exists and belongs to user
+    let newParentTask = null
     if (validatedData.parentId !== undefined && validatedData.parentId !== null) {
       // Prevent circular references (task can't be its own parent or ancestor)
       if (validatedData.parentId === id) {
@@ -146,14 +147,18 @@ export async function PUT(
         )
       }
 
-      const parentTask = await prisma.task.findFirst({
+      newParentTask = await prisma.task.findFirst({
         where: {
           id: validatedData.parentId,
           userId,
         },
+        select: {
+          id: true,
+          deadline: true,
+        },
       })
 
-      if (!parentTask) {
+      if (!newParentTask) {
         return NextResponse.json(
           { error: "Parent task not found" },
           { status: 404 }
@@ -167,6 +172,37 @@ export async function PUT(
           { error: "Cannot set a descendant task as parent (circular reference)" },
           { status: 400 }
         )
+      }
+    }
+
+    // Validate deadline against parent (if parent exists or is being set)
+    const finalParentId = validatedData.parentId !== undefined 
+      ? validatedData.parentId 
+      : existingTask.parentId
+
+    if (finalParentId) {
+      const parentToCheck = newParentTask || await prisma.task.findFirst({
+        where: { id: finalParentId, userId },
+        select: { id: true, deadline: true },
+      })
+
+      if (parentToCheck) {
+        const taskDeadline = validatedData.deadline !== undefined
+          ? (validatedData.deadline ? new Date(validatedData.deadline) : null)
+          : existingTask.deadline
+
+        // If both task and parent have deadlines, child must be before parent
+        if (taskDeadline && parentToCheck.deadline) {
+          const childDeadline = new Date(taskDeadline)
+          const parentDeadline = new Date(parentToCheck.deadline)
+
+          if (childDeadline >= parentDeadline) {
+            return NextResponse.json(
+              { error: "Child task deadline must be before parent task deadline" },
+              { status: 400 }
+            )
+          }
+        }
       }
     }
 

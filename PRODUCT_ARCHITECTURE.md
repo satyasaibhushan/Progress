@@ -377,7 +377,8 @@ Key Changes:
 │       └── items
 │           └── route.ts      (GET all tasks & habits with this label)
 ├── suggestions
-│   └── route.ts              (GET suggestion - to be implemented)
+│   └── route.ts              (GET suggestion - implemented)
+│                             (Query params: ?limit=N, ?randomize=false)
 └── analytics
     ├── overview
     │   └── route.ts          (GET dashboard stats - to be implemented)
@@ -586,63 +587,84 @@ Root Task Progress = (66.67 × 0.7) + (75 × 0.3)
 
 ## Suggestion Algorithm
 
-### Algorithm Logic
+### Algorithm Logic (Implemented)
 
 #### Step 1: Identify Leaf Nodes
 ```typescript
 LeafNodes = {
-  - Tasks with no child tasks (task.children.length === 0)
-  - All habits
+  - Tasks with no child tasks and no habits (task._count.children === 0 && task._count.habits === 0)
+  - All habits (habits are always leaf nodes)
 }
 ```
+
+**Filtering:**
+- Only includes items with deadlines (tasks) or endDate (habits)
+- Excludes completed items (progress >= 100%)
 
 #### Step 2: Calculate Under-Achievement Score
 
 ```typescript
 For each leaf node:
-  underAchievementScore = (
-    deadlineUrgency × 0.4 +
-    progressGap × 0.4 +
-    labelGoalUnderachievement × 0.2
-  ) × randomFactor
+  score = importance × (expectedProgress - currentProgress) × randomFactor
 
 Where:
-  deadlineUrgency = {
-    No deadline: 0
-    Overdue: 100
-    Due today: 90
-    Due this week: 70
-    Due this month: 50
-    Due later: 30
-  }
-
-  progressGap = {
-    expectedProgress = (daysPassed / totalDays) × 100
-    actualProgress = current progress
-    gap = max(0, expectedProgress - actualProgress)
-  }
-
-  labelTaskUnderachievement = {
-    Average progress gap of all root tasks/labels this item belongs to
-  }
-
-  randomFactor = random(0.8, 1.2) // 20% randomness
+  expectedProgress = (daysPassed / totalDays) × 100
+    - daysPassed = currentDate - createdAt
+    - totalDays = deadline/endDate - createdAt
+  
+  progressGap = max(0, expectedProgress - currentProgress)
+  
+  randomFactor = random(0.8, 1.2) // 20% randomness (optional, can be disabled)
 ```
 
-#### Step 3: Sort and Return
-- Sort all leaf nodes by `underAchievementScore` (descending)
-- Return top result
-- Track dismissed suggestions to avoid repeating
+**Implementation Details:**
+- Uses `createdAt` as start date for both tasks and habits
+- Uses `deadline` for tasks, `endDate` for habits as end date
+- Progress gap ensures only under-achieved items get positive scores
+- Randomness adds variety but can be disabled for deterministic results
 
-### Suggestion Context
-Return suggestion with:
-- Leaf node (task/habit) details
-- Parent task information (if applicable)
-- Root task ("goal") information
-- Group/category
-- Labels
-- Reason for suggestion
-- Expected vs actual progress visualization
+#### Step 3: Sort and Return
+- Sort all leaf nodes by `score` (descending)
+- Return top N results (default: 1)
+- No dismissed tracking (as per requirements)
+
+### Suggestion Context (API Response)
+Returns suggestion with:
+- **Item details:** id, type, title, progress, expectedProgress, progressGap, importance, score
+- **Parent task information** (if item is a child)
+- **Root goal** (traverses up hierarchy to find root task)
+- **Group/category** information
+- **Labels** associated with the item
+- **Deadline/endDate** for reference
+
+### API Endpoint
+
+**GET /api/suggestions**
+
+**Query Parameters:**
+- `limit` (optional): Number of suggestions to return (default: 1)
+- `randomize` (optional): Enable/disable randomness (default: true, set to "false" to disable)
+
+**Response:**
+```json
+{
+  "data": {
+    "id": "task_id",
+    "type": "task",
+    "title": "Task Title",
+    "progress": 30,
+    "expectedProgress": 50,
+    "progressGap": 20,
+    "importance": 80,
+    "score": 1600,
+    "deadline": "2024-12-31T23:59:59Z",
+    "parent": { "id": "...", "title": "...", "progress": 45 },
+    "rootGoal": { "id": "...", "title": "..." },
+    "group": { "id": "...", "name": "...", "color": "#..." },
+    "labels": [...]
+  }
+}
+```
 
 ---
 

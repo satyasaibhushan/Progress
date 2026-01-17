@@ -223,26 +223,36 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 ## Phase 6: Suggestion Algorithm
 
 ### Task 6.1: Implement Suggestion Logic
-**Status:** Pending
+**Status:** ✅ Completed
 **Description:** Create algorithm to suggest under-achieved leaf nodes.
-**What to do:**
-- Identify leaf nodes (tasks with no incomplete subtasks, or habits)
-- Calculate "under-achievement score" based on:
-  - Deadline urgency
-  - Current progress vs expected progress by date
-  - Label/goal under-achievement
-- Add randomness factor
-- Return prioritized suggestions
+**What was done:**
+- Created `lib/suggestion-algorithm.ts` with core suggestion logic
+- Identifies leaf nodes (tasks with no children/habits, and all habits)
+- Calculates "under-achievement score" using formula: `importance × (expectedProgress - currentProgress) × randomFactor`
+- Expected progress calculated as: `(daysPassed / totalDays) × 100` using `createdAt` to `deadline/endDate`
+- Progress gap: `max(0, expectedProgress - currentProgress)`
+- Randomness factor: 20% (multiplier between 0.8 and 1.2)
+- Excludes completed items (progress >= 100%)
+- Excludes items without deadlines/endDate
+- Returns items sorted by score (descending)
 
 ### Task 6.2: Create Suggestion API
-**Status:** Pending
+**Status:** ✅ Completed
 **Description:** Build API endpoint for suggestions.
-**What to do:**
-- Create `/api/suggestions` endpoint
-- Implement query logic
-- Return task/habit with context (goal, group, labels)
-- Add ability to dismiss/snooze suggestions
-- Test algorithm with various data scenarios
+**What was done:**
+- Created `/api/suggestions` endpoint (`app/api/suggestions/route.ts`)
+- Supports query parameters:
+  - `?limit=N` - Get top N suggestions (default: 1)
+  - `?randomize=false` - Disable randomness for deterministic results
+- Returns suggestion with full context:
+  - Item details (task/habit with progress, expected progress, score)
+  - Parent task information (if applicable)
+  - Root goal (traverses up hierarchy to find root)
+  - Group/category information
+  - Labels
+  - Score breakdown (importance, progress gap, calculated score)
+- Comprehensive test suite created (`tests/test-suggestions.sh`)
+- Tested with various scenarios (under-achieved, well-achieved, completed items, etc.)
 
 ---
 

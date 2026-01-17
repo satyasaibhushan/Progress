@@ -18,7 +18,11 @@ export async function GET(request: Request) {
     const includeChildren = searchParams.get("include") === "children"
 
     // Build where clause
-    const where: any = { userId }
+    const where: {
+      userId: string
+      groupId?: string
+      parentId?: string | null
+    } = { userId }
 
     // Filter by parentId (use "null" string to get root tasks)
     if (parentId !== null) {
@@ -105,11 +109,16 @@ export async function POST(request: Request) {
     )
 
     // If parentId is provided, verify it exists and belongs to user
+    let parentTask = null
     if (validatedData.parentId) {
-      const parentTask = await prisma.task.findFirst({
+      parentTask = await prisma.task.findFirst({
         where: {
           id: validatedData.parentId,
           userId,
+        },
+        select: {
+          id: true,
+          deadline: true,
         },
       })
 
@@ -118,6 +127,19 @@ export async function POST(request: Request) {
           { error: "Parent task not found" },
           { status: 404 }
         )
+      }
+
+      // Validate: child deadline must be before parent deadline (if both have deadlines)
+      if (validatedData.deadline && parentTask.deadline) {
+        const childDeadline = new Date(validatedData.deadline)
+        const parentDeadline = new Date(parentTask.deadline)
+
+        if (childDeadline >= parentDeadline) {
+          return NextResponse.json(
+            { error: "Child task deadline must be before parent task deadline" },
+            { status: 400 }
+          )
+        }
       }
     }
 
@@ -139,8 +161,14 @@ export async function POST(request: Request) {
     }
 
     // Convert deadline string to Date if provided
-    const taskData: any = {
-      ...validatedData,
+    const taskData = {
+      title: validatedData.title,
+      description: validatedData.description ?? null,
+      importance: validatedData.importance,
+      progress: validatedData.progress ?? 0,
+      deadline: validatedData.deadline ? new Date(validatedData.deadline) : null,
+      groupId: validatedData.groupId ?? null,
+      parentId: validatedData.parentId ?? null,
       userId,
     }
 

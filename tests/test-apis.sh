@@ -221,6 +221,15 @@ if [ -n "$LABEL_ID" ]; then
     echo ""
 fi
 
+# Source comprehensive suggestion tests
+# This will run all suggestion-related tests including algorithm verification
+if [ -f "$(dirname "$0")/test-suggestions.sh" ]; then
+    source "$(dirname "$0")/test-suggestions.sh"
+else
+    echo "⚠️  Warning: test-suggestions.sh not found, skipping comprehensive suggestion tests"
+    echo ""
+fi
+
 echo "========================================="
 echo "Testing Complete"
 echo "========================================="
