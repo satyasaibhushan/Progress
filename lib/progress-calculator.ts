@@ -9,6 +9,15 @@ import { prisma } from './prisma';
 import { HabitType } from './generated/prisma';
 
 /**
+ * Round a number to 2 decimal places
+ * @param value - The number to round
+ * @returns The rounded number
+ */
+function roundToTwoDecimals(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/**
  * Calculate task progress from its child tasks weighted by importance
  *
  * Formula:
@@ -57,8 +66,8 @@ export async function calculateTaskProgress(taskId: string): Promise<number | nu
 
   const calculatedProgress = totalWeightedProgress / totalImportance;
 
-  // Ensure the result is within 0-100 range
-  return Math.max(0, Math.min(100, calculatedProgress));
+  // Ensure the result is within 0-100 range and round to 2 decimal places
+  return roundToTwoDecimals(Math.max(0, Math.min(100, calculatedProgress)));
 }
 
 /**
@@ -99,7 +108,7 @@ export async function calculateHabitCompletionToday(habitId: string): Promise<nu
         return 0;
       }
       const count = todayLog?.count || 0;
-      return Math.min(100, (count / habit.targetCount) * 100);
+      return roundToTwoDecimals(Math.min(100, (count / habit.targetCount) * 100));
 
     case HabitType.WEEKLY:
       // Check if logged at least once this week
@@ -179,7 +188,7 @@ export async function calculateHabitsCompletionRate(habitIds: string[]): Promise
     return 0;
   }
 
-  return totalWeightedCompletion / totalImportance;
+  return roundToTwoDecimals(totalWeightedCompletion / totalImportance);
 }
 
 /**
@@ -230,7 +239,7 @@ export async function calculateGoalProgress(taskId: string): Promise<number> {
 
   // If no children or habits, use manual progress
   if (task.children.length === 0 && task.habits.length === 0) {
-    return task.progress;
+    return roundToTwoDecimals(task.progress);
   }
 
   let totalWeightedProgress = 0;
@@ -251,11 +260,11 @@ export async function calculateGoalProgress(taskId: string): Promise<number> {
 
   // Avoid division by zero
   if (totalImportance === 0) {
-    return task.progress;
+    return roundToTwoDecimals(task.progress);
   }
 
   const goalProgress = totalWeightedProgress / totalImportance;
-  return Math.max(0, Math.min(100, goalProgress));
+  return roundToTwoDecimals(Math.max(0, Math.min(100, goalProgress)));
 }
 
 /**
@@ -422,9 +431,9 @@ export async function calculateLabelProgress(labelId: string): Promise<{
   }
 
   return {
-    overallProgress: Math.max(0, Math.min(100, overallProgress)),
-    taskProgress: Math.max(0, Math.min(100, taskProgress)),
-    habitCompletionRate: Math.max(0, Math.min(100, habitCompletionRate)),
+    overallProgress: roundToTwoDecimals(Math.max(0, Math.min(100, overallProgress))),
+    taskProgress: roundToTwoDecimals(Math.max(0, Math.min(100, taskProgress))),
+    habitCompletionRate: roundToTwoDecimals(Math.max(0, Math.min(100, habitCompletionRate))),
     taskCount: tasksWithLabel.length,
     habitCount: habitsWithLabel.length,
   };
@@ -557,9 +566,9 @@ export async function calculateGroupProgress(groupId: string): Promise<{
   }
 
   return {
-    overallProgress: Math.max(0, Math.min(100, overallProgress)),
-    taskProgress: Math.max(0, Math.min(100, taskProgress)),
-    habitCompletionRate: Math.max(0, Math.min(100, habitCompletionRate)),
+    overallProgress: roundToTwoDecimals(Math.max(0, Math.min(100, overallProgress))),
+    taskProgress: roundToTwoDecimals(Math.max(0, Math.min(100, taskProgress))),
+    habitCompletionRate: roundToTwoDecimals(Math.max(0, Math.min(100, habitCompletionRate))),
     taskCount: tasksInGroup.length,
     habitCount: habitsInGroup.length,
   };
