@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { updateHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
+import { updateTaskProgressRecursive } from "@/lib/progress-calculator"
 
 // GET /api/habits/[id] - Get a specific habit
 export async function GET(
@@ -174,6 +175,20 @@ export async function PUT(
       },
     })
 
+    // Recalculate progress if parentTaskId changed
+    const parentTaskChanged = validatedData.parentTaskId !== undefined && validatedData.parentTaskId !== existingHabit.parentTaskId
+
+    if (parentTaskChanged) {
+      // Update old parent task's progress (if existed)
+      if (existingHabit.parentTaskId) {
+        await updateTaskProgressRecursive(existingHabit.parentTaskId)
+      }
+      // Update new parent task's progress (if exists)
+      if (habit.parentTaskId) {
+        await updateTaskProgressRecursive(habit.parentTaskId)
+      }
+    }
+
     return NextResponse.json({ data: habit })
   } catch (error) {
     return handleApiError(error)
@@ -201,12 +216,20 @@ export async function DELETE(
       return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
 
+    // Store parent task ID before deletion for progress recalculation
+    const parentTaskId = existingHabit.parentTaskId
+
     // Delete will cascade to habit logs due to schema onDelete: Cascade
     await prisma.habit.delete({
       where: {
         id: id,
       },
     })
+
+    // Recalculate parent task's progress if this habit was linked to a task
+    if (parentTaskId) {
+      await updateTaskProgressRecursive(parentTaskId)
+    }
 
     return NextResponse.json({ message: "Habit deleted successfully" })
   } catch (error) {

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { createTaskSchema } from "@/lib/validations/task"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueTaskTitle } from "@/lib/validations/uniqueness"
+import { updateTaskProgressRecursive } from "@/lib/progress-calculator"
 
 // GET /api/tasks - Get all tasks for the authenticated user with optional filters
 export async function GET(request: Request) {
@@ -175,6 +176,11 @@ export async function POST(request: Request) {
         },
       },
     })
+
+    // Recalculate parent's progress if this task has a parent
+    if (task.parentId) {
+      await updateTaskProgressRecursive(task.parentId)
+    }
 
     return NextResponse.json({ data: task }, { status: 201 })
   } catch (error) {

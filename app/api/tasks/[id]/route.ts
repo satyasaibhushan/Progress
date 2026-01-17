@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { updateTaskSchema } from "@/lib/validations/task"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueTaskTitle } from "@/lib/validations/uniqueness"
+import { updateTaskProgressRecursive } from "@/lib/progress-calculator"
 
 // GET /api/tasks/[id] - Get a specific task
 export async function GET(
@@ -209,6 +210,27 @@ export async function PUT(
       },
     })
 
+    // Recalculate progress if this task has a parent or if progress/importance changed
+    const progressChanged = validatedData.progress !== undefined && validatedData.progress !== existingTask.progress
+    const importanceChanged = validatedData.importance !== undefined && validatedData.importance !== existingTask.importance
+
+    if (progressChanged || importanceChanged || parentChanged) {
+      // If parent changed, need to update both old and new parent
+      if (parentChanged) {
+        // Update old parent's progress (if existed)
+        if (existingTask.parentId) {
+          await updateTaskProgressRecursive(existingTask.parentId)
+        }
+        // Update new parent's progress (if exists)
+        if (task.parentId) {
+          await updateTaskProgressRecursive(task.parentId)
+        }
+      } else if (task.parentId) {
+        // Just update current parent's progress
+        await updateTaskProgressRecursive(task.parentId)
+      }
+    }
+
     return NextResponse.json({ data: task })
   } catch (error) {
     return handleApiError(error)
@@ -236,12 +258,20 @@ export async function DELETE(
       return NextResponse.json({ error: "Task not found" }, { status: 404 })
     }
 
+    // Store parent ID before deletion for progress recalculation
+    const parentId = existingTask.parentId
+
     // Delete will cascade to children due to schema onDelete: Cascade
     await prisma.task.delete({
       where: {
         id,
       },
     })
+
+    // Recalculate parent's progress if this task had a parent
+    if (parentId) {
+      await updateTaskProgressRecursive(parentId)
+    }
 
     return NextResponse.json({ message: "Task deleted successfully" })
   } catch (error) {

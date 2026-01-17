@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { logHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
+import { updateTaskProgressRecursive } from "@/lib/progress-calculator"
 
 // POST /api/habits/[id]/log - Log a habit completion
 export async function POST(
@@ -55,6 +56,11 @@ export async function POST(
           },
         })
 
+        // Recalculate parent task progress if habit is linked to a task
+        if (habit.parentTaskId) {
+          await updateTaskProgressRecursive(habit.parentTaskId)
+        }
+
         return NextResponse.json({ data: updatedLog })
       }
     }
@@ -67,6 +73,11 @@ export async function POST(
         count: validatedData.count,
       },
     })
+
+    // Recalculate parent task progress if habit is linked to a task
+    if (habit.parentTaskId) {
+      await updateTaskProgressRecursive(habit.parentTaskId)
+    }
 
     return NextResponse.json({ data: log }, { status: 201 })
   } catch (error) {
@@ -179,6 +190,11 @@ export async function DELETE(
         id: logId,
       },
     })
+
+    // Recalculate parent task progress if habit is linked to a task
+    if (habit.parentTaskId) {
+      await updateTaskProgressRecursive(habit.parentTaskId)
+    }
 
     return NextResponse.json({ message: "Log deleted successfully" })
   } catch (error) {

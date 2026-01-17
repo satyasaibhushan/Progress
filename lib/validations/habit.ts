@@ -11,6 +11,12 @@ export const createHabitSchema = z.object({
     .positive("Target count must be positive")
     .optional()
     .nullable(),
+  importance: z
+    .number()
+    .int()
+    .min(1, "Importance must be at least 1")
+    .max(100, "Importance must be at most 100")
+    .default(50),
   endDate: z.string().datetime().optional().nullable(),
   groupId: z.string().optional().nullable(),
   parentTaskId: z.string().optional().nullable(),
@@ -26,6 +32,12 @@ export const updateHabitSchema = z.object({
     .positive("Target count must be positive")
     .optional()
     .nullable(),
+  importance: z
+    .number()
+    .int()
+    .min(1, "Importance must be at least 1")
+    .max(100, "Importance must be at most 100")
+    .optional(),
   endDate: z.string().datetime().optional().nullable(),
   groupId: z.string().optional().nullable(),
   parentTaskId: z.string().optional().nullable(),

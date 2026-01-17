@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { createHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
+import { updateTaskProgressRecursive } from "@/lib/progress-calculator"
 
 // GET /api/habits - Get all habits for the authenticated user with optional filters
 export async function GET(request: Request) {
@@ -165,6 +166,11 @@ export async function POST(request: Request) {
         },
       },
     })
+
+    // Recalculate parent task's progress if this habit is linked to a task
+    if (habit.parentTaskId) {
+      await updateTaskProgressRecursive(habit.parentTaskId)
+    }
 
     return NextResponse.json({ data: habit }, { status: 201 })
   } catch (error) {

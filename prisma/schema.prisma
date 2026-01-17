@@ -137,6 +137,7 @@ model Habit {
   description  String?   @db.Text
   type         HabitType @default(DAILY)
   targetCount  Int? // for N_PER_DAY type
+  importance   Int       @default(50) // 1-100 weightage
   endDate      DateTime?
   userId       String
   groupId      String?

@@ -157,32 +157,40 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 ## Phase 5: Progress Calculation Engine
 
 ### Task 5.1: Task Progress Calculation
-**Status:** Pending
+**Status:** ✅ Completed
 **Description:** Implement automatic progress calculation for tasks based on subtasks.
-**What to do:**
-- Create utility function to calculate task progress from subtasks
-- Weight by importance levels
-- Handle mixed subtasks (some complete, some not)
-- Create database triggers or scheduled job to update
+**What was done:**
+- Created `calculateTaskProgress()` utility function in `lib/progress-calculator.ts`
+- Implemented importance-weighted calculation: `Σ(child.progress × child.importance) / Σ(child.importance)`
+- Integrated automatic recalculation into task create/update/delete API routes
+- Progress updates recursively up the task hierarchy
 
 ### Task 5.2: Goal Progress Calculation
-**Status:** Pending
+**Status:** ✅ Completed
 **Description:** Implement goal progress from tasks and linked habits.
-**What to do:**
-- Create utility function to calculate goal progress
-- Combine progress from tasks
-- Factor in linked habit completion
-- Weight appropriately
-- Test with various scenarios
+**What was done:**
+- Created `calculateGoalProgress()` utility function in `lib/progress-calculator.ts`
+- Implemented importance-weighted calculation combining child tasks and linked habits
+- Formula: `(Σ(task.progress × task.importance) + Σ(habit.completion × habit.importance)) / (Σ(task.importance) + Σ(habit.importance))`
+- Added `importance` field to Habit model (1-100 weightage, default 50)
+- Created migration `20260117181501_add_importance_to_habits`
+- Integrated into habit create/update/delete operations
 
 ### Task 5.3: Habit Completion Tracking
-**Status:** Pending
+**Status:** ✅ Completed
 **Description:** Calculate habit completion based on type and calendar logs.
-**What to do:**
-- Daily habits: Check if logged for the day
-- N-per-day: Track count progress (visual filling circle)
-- Weekly/Monthly: Check if quota met
-- Create API endpoint for habit stats
+**What was done:**
+- Created `calculateHabitCompletionToday()` function supporting all habit types:
+  - DAILY: 100% if logged today, 0% otherwise
+  - N_PER_DAY: `(count / targetCount) × 100`
+  - WEEKLY: 100% if logged at least once this week
+  - MONTHLY: 100% if logged at least once this month
+- Created `calculateHabitsCompletionRate()` with importance-weighted averaging
+- Integrated automatic progress recalculation into habit log create/delete operations
+- Added bonus functions:
+  - `calculateLabelProgress()` - Calculate progress by label (on-demand)
+  - `calculateGroupProgress()` - Calculate progress by group (on-demand)
+  - `calculateAllLabelsProgress()` - Get all label progress for a user
 
 ---
 
