@@ -27,26 +27,20 @@ export async function POST(
     const body = await request.json()
     const validatedData = logHabitSchema.parse(body)
 
-    const completedAt = validatedData.completedAt
-      ? new Date(validatedData.completedAt)
+    const logDate = validatedData.date
+      ? new Date(validatedData.date)
       : new Date()
+
+    // Set time to start of day for consistent date comparison
+    logDate.setHours(0, 0, 0, 0)
 
     // For N_PER_DAY habits, check if we should create or update existing log for today
     if (habit.type === "N_PER_DAY") {
-      const startOfDay = new Date(completedAt)
-      startOfDay.setHours(0, 0, 0, 0)
-
-      const endOfDay = new Date(completedAt)
-      endOfDay.setHours(23, 59, 59, 999)
-
       // Check if log exists for this day
       const existingLog = await prisma.habitLog.findFirst({
         where: {
           habitId: id,
-          completedAt: {
-            gte: startOfDay,
-            lte: endOfDay,
-          },
+          date: logDate,
         },
       })
 
@@ -69,7 +63,7 @@ export async function POST(
     const log = await prisma.habitLog.create({
       data: {
         habitId: id,
-        completedAt,
+        date: logDate,
         count: validatedData.count,
       },
     })
@@ -111,19 +105,23 @@ export async function GET(
     }
 
     if (startDate || endDate) {
-      where.completedAt = {}
+      where.date = {}
       if (startDate) {
-        where.completedAt.gte = new Date(startDate)
+        const start = new Date(startDate)
+        start.setHours(0, 0, 0, 0)
+        where.date.gte = start
       }
       if (endDate) {
-        where.completedAt.lte = new Date(endDate)
+        const end = new Date(endDate)
+        end.setHours(0, 0, 0, 0)
+        where.date.lte = end
       }
     }
 
     const logs = await prisma.habitLog.findMany({
       where,
       orderBy: {
-        completedAt: "desc",
+        date: "desc",
       },
     })
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ValidationError, UnauthorizedError } from "@/lib/errors";
+import { ZodError } from "zod";
 
 /**
  * Get the authenticated user from the session
@@ -52,8 +53,17 @@ export function handleApiError(error: unknown) {
 	}
 
 	// Handle Zod validation errors
-	if (error instanceof Error && error.name === "ZodError") {
-		return NextResponse.json({ error: "Validation error", details: error }, { status: 400 });
+	if (error instanceof ZodError) {
+		return NextResponse.json(
+			{
+				error: "Validation error",
+				details: error.issues.map((err: any) => ({
+					field: err.path.join("."),
+					message: err.message,
+				})),
+			},
+			{ status: 400 }
+		);
 	}
 
 	// Handle ValidationError (e.g., duplicate names)

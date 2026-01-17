@@ -37,15 +37,15 @@ export async function GET(
             label: true,
           },
         },
-        logs: {
+        habitLogs: {
           orderBy: {
-            completedAt: "desc",
+            date: "desc",
           },
           take: 30, // Last 30 logs
         },
         _count: {
           select: {
-            logs: true,
+            habitLogs: true,
           },
         },
       },
@@ -90,13 +90,13 @@ export async function PUT(
       await validateUniqueHabitTitle(userId, validatedData.title, id)
     }
 
-    // Validate targetPerDay for N_PER_DAY habits
+    // Validate targetCount for N_PER_DAY habits
     const finalType = validatedData.type ?? existingHabit.type
     if (finalType === "N_PER_DAY") {
-      const finalTarget = validatedData.targetPerDay ?? existingHabit.targetPerDay
+      const finalTarget = validatedData.targetCount ?? existingHabit.targetCount
       if (!finalTarget || finalTarget < 1) {
         return NextResponse.json(
-          { error: "targetPerDay is required for N_PER_DAY habits and must be positive" },
+          { error: "targetCount is required for N_PER_DAY habits and must be positive" },
           { status: 400 }
         )
       }
@@ -168,7 +168,7 @@ export async function PUT(
         },
         _count: {
           select: {
-            logs: true,
+            habitLogs: true,
           },
         },
       },

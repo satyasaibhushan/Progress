@@ -95,7 +95,7 @@ export async function GET(
         },
         _count: {
           select: {
-            logs: true,
+            habitLogs: true,
           },
         },
       },

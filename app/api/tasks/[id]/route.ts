@@ -262,7 +262,7 @@ async function checkIfDescendant(
       return true // Found taskId in the ancestry chain
     }
 
-    const task = await prisma.task.findUnique({
+    const task: { parentId: string | null } | null = await prisma.task.findUnique({
       where: { id: currentId },
       select: { parentId: true },
     })

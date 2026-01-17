@@ -57,7 +57,7 @@ export async function GET(request: Request) {
         },
         _count: {
           select: {
-            logs: true,
+            habitLogs: true,
           },
         },
       },
@@ -83,11 +83,11 @@ export async function POST(request: Request) {
     // Validate unique title
     await validateUniqueHabitTitle(userId, validatedData.title)
 
-    // Validate targetPerDay is provided for N_PER_DAY habits
+    // Validate targetCount is provided for N_PER_DAY habits
     if (validatedData.type === "N_PER_DAY") {
-      if (!validatedData.targetPerDay || validatedData.targetPerDay < 1) {
+      if (!validatedData.targetCount || validatedData.targetCount < 1) {
         return NextResponse.json(
-          { error: "targetPerDay is required for N_PER_DAY habits and must be positive" },
+          { error: "targetCount is required for N_PER_DAY habits and must be positive" },
           { status: 400 }
         )
       }
@@ -160,7 +160,7 @@ export async function POST(request: Request) {
         },
         _count: {
           select: {
-            logs: true,
+            habitLogs: true,
           },
         },
       },
