@@ -3,7 +3,12 @@ import { prisma } from "@/lib/prisma"
 import { updateTaskSchema } from "@/lib/validations/task"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueTaskTitle } from "@/lib/validations/uniqueness"
-import { updateTaskProgressRecursive } from "@/lib/progress-calculator"
+import {
+  updateLeafTaskProgress,
+  updateLeafTaskWeight,
+  addChildToTask,
+  removeChildFromTask,
+} from "@/lib/progress-calculator"
 
 // GET /api/tasks/[id] - Get a specific task
 export async function GET(
@@ -100,11 +105,21 @@ export async function PUT(
         id,
         userId,
       },
+      include: {
+        _count: {
+          select: {
+            children: true,
+            habits: true,
+          },
+        },
+      },
     })
 
     if (!existingTask) {
       return NextResponse.json({ error: "Task not found" }, { status: 404 })
     }
+
+    const wasLeaf = existingTask._count.children === 0 && existingTask._count.habits === 0
 
     const body = await request.json()
     const validatedData = updateTaskSchema.parse(body)
@@ -172,9 +187,20 @@ export async function PUT(
     }
 
     // Convert deadline string to Date if provided
-    const updateData: any = { ...validatedData }
-    if (validatedData.deadline) {
-      updateData.deadline = new Date(validatedData.deadline)
+    const { deadline: deadlineStr, ...rest } = validatedData
+    const updateData: {
+      title?: string
+      description?: string | null
+      importance?: number
+      progress?: number
+      deadline?: Date | null
+      groupId?: string | null
+      parentId?: string | null
+    } = {
+      ...rest,
+      ...(deadlineStr !== undefined && {
+        deadline: deadlineStr ? new Date(deadlineStr) : null,
+      }),
     }
 
     const task = await prisma.task.update({
@@ -210,24 +236,45 @@ export async function PUT(
       },
     })
 
-    // Recalculate progress if this task has a parent or if progress/importance changed
-    const progressChanged = validatedData.progress !== undefined && validatedData.progress !== existingTask.progress
+    const isLeaf = task._count.children === 0 && task._count.habits === 0
+    const existingProgress = (existingTask as { progress?: number | null }).progress ?? 0
+    const newProgress = (task as { progress?: number | null }).progress ?? 0
+    const progressChanged = validatedData.progress !== undefined && validatedData.progress !== existingProgress
     const importanceChanged = validatedData.importance !== undefined && validatedData.importance !== existingTask.importance
 
-    if (progressChanged || importanceChanged || parentChanged) {
-      // If parent changed, need to update both old and new parent
+    // Handle aggregate updates for leaf tasks
+    if (isLeaf) {
       if (parentChanged) {
-        // Update old parent's progress (if existed)
-        if (existingTask.parentId) {
-          await updateTaskProgressRecursive(existingTask.parentId)
+        // Remove from old parent if it existed
+        if (existingTask.parentId && wasLeaf) {
+          const oldWeight = BigInt(existingTask.importance)
+          const oldWeightedProgress = BigInt(Math.round(existingProgress * existingTask.importance))
+          await removeChildFromTask(existingTask.parentId, oldWeight, oldWeightedProgress)
         }
-        // Update new parent's progress (if exists)
+        // Add to new parent if it exists
         if (task.parentId) {
-          await updateTaskProgressRecursive(task.parentId)
+          const newWeight = BigInt(task.importance)
+          const newWeightedProgress = BigInt(Math.round(newProgress * task.importance))
+          await addChildToTask(task.parentId, newWeight, newWeightedProgress)
         }
       } else if (task.parentId) {
-        // Just update current parent's progress
-        await updateTaskProgressRecursive(task.parentId)
+        // Parent didn't change, but progress or importance might have
+        if (progressChanged) {
+          await updateLeafTaskProgress(
+            id,
+            existingProgress,
+            newProgress,
+            task.importance
+          )
+        }
+        if (importanceChanged) {
+          await updateLeafTaskWeight(
+            id,
+            existingTask.importance,
+            task.importance,
+            newProgress
+          )
+        }
       }
     }
 
@@ -252,14 +299,24 @@ export async function DELETE(
         id,
         userId,
       },
+      include: {
+        _count: {
+          select: {
+            children: true,
+            habits: true,
+          },
+        },
+      },
     })
 
     if (!existingTask) {
       return NextResponse.json({ error: "Task not found" }, { status: 404 })
     }
 
-    // Store parent ID before deletion for progress recalculation
+    // Store parent ID and check if this is a leaf before deletion
     const parentId = existingTask.parentId
+    const wasLeaf = existingTask._count.children === 0 && existingTask._count.habits === 0
+    const existingProgress = (existingTask as { progress?: number | null }).progress ?? 0
 
     // Delete will cascade to children due to schema onDelete: Cascade
     await prisma.task.delete({
@@ -268,9 +325,11 @@ export async function DELETE(
       },
     })
 
-    // Recalculate parent's progress if this task had a parent
-    if (parentId) {
-      await updateTaskProgressRecursive(parentId)
+    // Remove from parent's aggregates if this was a leaf task
+    if (parentId && wasLeaf) {
+      const weight = BigInt(existingTask.importance)
+      const weightedProgress = BigInt(Math.round(existingProgress * existingTask.importance))
+      await removeChildFromTask(parentId, weight, weightedProgress)
     }
 
     return NextResponse.json({ message: "Task deleted successfully" })

@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { createTaskSchema } from "@/lib/validations/task"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueTaskTitle } from "@/lib/validations/uniqueness"
-import { updateTaskProgressRecursive } from "@/lib/progress-calculator"
+import { addChildToTask } from "@/lib/progress-calculator"
 
 // GET /api/tasks - Get all tasks for the authenticated user with optional filters
 export async function GET(request: Request) {
@@ -177,9 +177,12 @@ export async function POST(request: Request) {
       },
     })
 
-    // Recalculate parent's progress if this task has a parent
-    if (task.parentId) {
-      await updateTaskProgressRecursive(task.parentId)
+    // If this is a leaf task (no children, no habits) and has a parent, add it to parent's aggregates
+    const isLeaf = task._count.children === 0 && task._count.habits === 0
+    if (isLeaf && task.parentId) {
+      const weight = BigInt(task.importance)
+      const weightedProgress = BigInt(Math.round((task.progress || 0) * task.importance))
+      await addChildToTask(task.parentId, weight, weightedProgress)
     }
 
     return NextResponse.json({ data: task }, { status: 201 })

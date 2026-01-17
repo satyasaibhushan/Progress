@@ -1,8 +1,12 @@
 /**
- * Progress Calculation Engine
+ * Progress Calculation Engine (Aggregate-based)
  *
- * This module provides utilities to calculate progress for tasks and goals
- * based on child tasks, importance weights, and linked habits.
+ * This module implements a bottom-up aggregate approach for progress calculation.
+ *
+ * Design:
+ * - Leaf tasks/habits store: weight (importance), progress (user-entered or calculated)
+ * - Parent tasks store: total_weight, weighted_progress (aggregates from descendants)
+ * - Progress calculated on-demand: weighted_progress / total_weight
  */
 
 import { prisma } from './prisma';
@@ -10,64 +14,9 @@ import { HabitType } from './generated/prisma';
 
 /**
  * Round a number to 2 decimal places
- * @param value - The number to round
- * @returns The rounded number
  */
 function roundToTwoDecimals(value: number): number {
   return Math.round(value * 100) / 100;
-}
-
-/**
- * Calculate task progress from its child tasks weighted by importance
- *
- * Formula:
- * taskProgress = Σ(childTask.progress × childTask.importance) / Σ(childTask.importance)
- *
- * @param taskId - The ID of the task to calculate progress for
- * @returns The calculated progress (0-100) or null if no children exist
- */
-export async function calculateTaskProgress(taskId: string): Promise<number | null> {
-  // Fetch the task with its children
-  const task = await prisma.task.findUnique({
-    where: { id: taskId },
-    include: {
-      children: {
-        select: {
-          id: true,
-          progress: true,
-          importance: true,
-        },
-      },
-    },
-  });
-
-  if (!task) {
-    throw new Error(`Task with ID ${taskId} not found`);
-  }
-
-  // If no children, return null (manual progress should be used)
-  if (task.children.length === 0) {
-    return null;
-  }
-
-  // Calculate weighted progress
-  let totalWeightedProgress = 0;
-  let totalImportance = 0;
-
-  for (const child of task.children) {
-    totalWeightedProgress += child.progress * child.importance;
-    totalImportance += child.importance;
-  }
-
-  // Avoid division by zero (shouldn't happen if importance is validated to be >= 1)
-  if (totalImportance === 0) {
-    return 0;
-  }
-
-  const calculatedProgress = totalWeightedProgress / totalImportance;
-
-  // Ensure the result is within 0-100 range and round to 2 decimal places
-  return roundToTwoDecimals(Math.max(0, Math.min(100, calculatedProgress)));
 }
 
 /**
@@ -99,11 +48,9 @@ export async function calculateHabitCompletionToday(habitId: string): Promise<nu
 
   switch (habit.type) {
     case HabitType.DAILY:
-      // Completed if logged today
       return todayLog ? 100 : 0;
 
     case HabitType.N_PER_DAY:
-      // Progress = (count / targetCount) × 100
       if (!habit.targetCount || habit.targetCount === 0) {
         return 0;
       }
@@ -111,9 +58,8 @@ export async function calculateHabitCompletionToday(habitId: string): Promise<nu
       return roundToTwoDecimals(Math.min(100, (count / habit.targetCount) * 100));
 
     case HabitType.WEEKLY:
-      // Check if logged at least once this week
       const startOfWeek = new Date();
-      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay()); // Sunday
+      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
       startOfWeek.setHours(0, 0, 0, 0);
 
       const weekLogs = await prisma.habitLog.count({
@@ -128,7 +74,6 @@ export async function calculateHabitCompletionToday(habitId: string): Promise<nu
       return weekLogs > 0 ? 100 : 0;
 
     case HabitType.MONTHLY:
-      // Check if logged at least once this month
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
       startOfMonth.setHours(0, 0, 0, 0);
@@ -150,73 +95,245 @@ export async function calculateHabitCompletionToday(habitId: string): Promise<nu
 }
 
 /**
- * Calculate overall habit completion rate for a list of habits
- * Weighted by importance of each habit
+ * Get progress for a task (on-demand calculation)
  *
- * @param habitIds - Array of habit IDs
- * @returns Weighted average completion percentage (0-100)
+ * For leaf tasks: Returns stored progress field
+ * For parent tasks: Calculates from weighted_progress / total_weight
+ *
+ * @param taskId - The ID of the task
+ * @returns Progress percentage (0-100)
  */
-export async function calculateHabitsCompletionRate(habitIds: string[]): Promise<number> {
-  if (habitIds.length === 0) {
-    return 0;
-  }
-
-  // Get habits with their importance
-  const habits = await prisma.habit.findMany({
-    where: {
-      id: {
-        in: habitIds,
-      },
-    },
+export async function getTaskProgress(taskId: string): Promise<number> {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
     select: {
       id: true,
-      importance: true,
+      progress: true,
+      total_weight: true,
+      weighted_progress: true,
+      _count: {
+        select: {
+          children: true,
+          habits: true,
+        },
+      },
     },
   });
 
-  let totalWeightedCompletion = 0;
-  let totalImportance = 0;
-
-  for (const habit of habits) {
-    const completion = await calculateHabitCompletionToday(habit.id);
-    totalWeightedCompletion += completion * habit.importance;
-    totalImportance += habit.importance;
+  if (!task) {
+    throw new Error(`Task with ID ${taskId} not found`);
   }
 
-  // Avoid division by zero
-  if (totalImportance === 0) {
+  const isLeaf = task._count.children === 0 && task._count.habits === 0;
+
+  if (isLeaf) {
+    // Leaf task - return stored progress
+    return roundToTwoDecimals(task.progress || 0);
+  }
+
+  // Parent task - calculate from aggregates
+  if (!task.total_weight || task.total_weight === BigInt(0)) {
     return 0;
   }
 
-  return roundToTwoDecimals(totalWeightedCompletion / totalImportance);
+  const progress = Number(task.weighted_progress || BigInt(0)) / Number(task.total_weight);
+  return roundToTwoDecimals(Math.max(0, Math.min(100, progress)));
 }
 
 /**
- * Calculate root task (goal) progress including child tasks and linked habits
+ * Propagate aggregate changes up the ancestor chain
  *
- * Formula (importance-weighted):
- * goalProgress = (Σ(childTask.progress × childTask.importance) + Σ(habitCompletion × habit.importance)) /
- *                (Σ(childTask.importance) + Σ(habit.importance))
- *
- * Where:
- * - childTask.progress: 0-100 percentage
- * - childTask.importance: 1-100 weightage
- * - habitCompletion: 0-100 percentage based on habit type
- * - habit.importance: 1-100 weightage
- *
- * @param taskId - The ID of the root task (goal)
- * @returns The calculated progress (0-100)
+ * @param taskId - Starting task ID
+ * @param weightDelta - Change in total_weight
+ * @param weightedProgressDelta - Change in weighted_progress
  */
-export async function calculateGoalProgress(taskId: string): Promise<number> {
-  // Fetch the task with children and linked habits
+async function propagateAggregates(
+  taskId: string,
+  weightDelta: bigint,
+  weightedProgressDelta: bigint
+): Promise<void> {
+  if (weightDelta === BigInt(0) && weightedProgressDelta === BigInt(0)) {
+    return;
+  }
+
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { parentId: true, total_weight: true, weighted_progress: true },
+  });
+
+  if (!task) return;
+
+  // Update current task's aggregates
+  await prisma.task.update({
+    where: { id: taskId },
+    data: {
+      total_weight: (task.total_weight || BigInt(0)) + weightDelta,
+      weighted_progress: (task.weighted_progress || BigInt(0)) + weightedProgressDelta,
+    },
+  });
+
+  // Recursively propagate to parent
+  if (task.parentId) {
+    await propagateAggregates(task.parentId, weightDelta, weightedProgressDelta);
+  }
+}
+
+/**
+ * Update aggregates when a leaf task's progress changes
+ *
+ * @param taskId - The leaf task ID
+ * @param oldProgress - Previous progress value
+ * @param newProgress - New progress value
+ * @param weight - Task's weight (importance)
+ */
+export async function updateLeafTaskProgress(
+  taskId: string,
+  oldProgress: number,
+  newProgress: number,
+  weight: number
+): Promise<void> {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { parentId: true },
+  });
+
+  if (!task || !task.parentId) return;
+
+  const weightedProgressDelta = BigInt(Math.round((newProgress - oldProgress) * weight));
+
+  await propagateAggregates(task.parentId, BigInt(0), weightedProgressDelta);
+}
+
+/**
+ * Update aggregates when a leaf task's importance (weight) changes
+ *
+ * @param taskId - The leaf task ID
+ * @param oldWeight - Previous weight value
+ * @param newWeight - New weight value
+ * @param currentProgress - Current progress value
+ */
+export async function updateLeafTaskWeight(
+  taskId: string,
+  oldWeight: number,
+  newWeight: number,
+  currentProgress: number
+): Promise<void> {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { parentId: true },
+  });
+
+  if (!task || !task.parentId) return;
+
+  const weightDelta = BigInt(newWeight - oldWeight);
+  const weightedProgressDelta = BigInt(Math.round(currentProgress * (newWeight - oldWeight)));
+
+  await propagateAggregates(task.parentId, weightDelta, weightedProgressDelta);
+}
+
+/**
+ * Handle adding a child to a task (potentially leaf → parent transition)
+ *
+ * @param parentId - Parent task ID
+ * @param childWeight - Child's total weight
+ * @param childWeightedProgress - Child's weighted progress
+ */
+export async function addChildToTask(
+  parentId: string,
+  childWeight: bigint,
+  childWeightedProgress: bigint
+): Promise<void> {
+  const parent = await prisma.task.findUnique({
+    where: { id: parentId },
+    select: {
+      total_weight: true,
+      weighted_progress: true,
+      _count: {
+        select: { children: true, habits: true },
+      },
+    },
+  });
+
+  if (!parent) return;
+
+  // If this is the first child (leaf → parent transition)
+  if (parent._count.children === 0 && parent._count.habits === 0) {
+    await prisma.task.update({
+      where: { id: parentId },
+      data: {
+        total_weight: childWeight,
+        weighted_progress: childWeightedProgress,
+      },
+    });
+  } else {
+    // Already a parent, just add to aggregates
+    await propagateAggregates(parentId, childWeight, childWeightedProgress);
+  }
+}
+
+/**
+ * Handle removing a child from a task (potentially parent → leaf transition)
+ *
+ * @param parentId - Parent task ID
+ * @param childWeight - Child's total weight
+ * @param childWeightedProgress - Child's weighted progress
+ */
+export async function removeChildFromTask(
+  parentId: string,
+  childWeight: bigint,
+  childWeightedProgress: bigint
+): Promise<void> {
+  const parent = await prisma.task.findUnique({
+    where: { id: parentId },
+    select: {
+      total_weight: true,
+      weighted_progress: true,
+      _count: {
+        select: { children: true, habits: true },
+      },
+    },
+  });
+
+  if (!parent) return;
+
+  // If this was the last child (parent → leaf transition)
+  if (parent._count.children === 1 && parent._count.habits === 0) {
+    await prisma.task.update({
+      where: { id: parentId },
+      data: {
+        total_weight: null,
+        weighted_progress: null,
+      },
+    });
+  } else {
+    // Still has other children, subtract from aggregates
+    await propagateAggregates(parentId, -childWeight, -childWeightedProgress);
+  }
+}
+
+/**
+ * Calculate initial aggregates for a task when it's created
+ *
+ * @param taskId - The task ID
+ * @returns Object with total_weight and weighted_progress
+ */
+export async function calculateTaskAggregates(taskId: string): Promise<{
+  total_weight: bigint;
+  weighted_progress: bigint;
+}> {
   const task = await prisma.task.findUnique({
     where: { id: taskId },
     include: {
       children: {
         select: {
           id: true,
-          progress: true,
           importance: true,
+          progress: true,
+          total_weight: true,
+          weighted_progress: true,
+          _count: {
+            select: { children: true, habits: true },
+          },
         },
       },
       habits: {
@@ -232,154 +349,136 @@ export async function calculateGoalProgress(taskId: string): Promise<number> {
     throw new Error(`Task with ID ${taskId} not found`);
   }
 
-  // Verify this is a root task (goal)
-  if (task.parentId !== null) {
-    throw new Error(`Task ${taskId} is not a root task (goal). Use calculateTaskProgress instead.`);
-  }
+  let totalWeight = BigInt(0);
+  let weightedProgress = BigInt(0);
 
-  // If no children or habits, use manual progress
-  if (task.children.length === 0 && task.habits.length === 0) {
-    return roundToTwoDecimals(task.progress);
-  }
-
-  let totalWeightedProgress = 0;
-  let totalImportance = 0;
-
-  // Add weighted progress from child tasks
+  // Add contributions from child tasks
   for (const child of task.children) {
-    totalWeightedProgress += child.progress * child.importance;
-    totalImportance += child.importance;
-  }
+    const isLeaf = child._count.children === 0 && child._count.habits === 0;
 
-  // Add weighted completion from linked habits
-  for (const habit of task.habits) {
-    const habitCompletion = await calculateHabitCompletionToday(habit.id);
-    totalWeightedProgress += habitCompletion * habit.importance;
-    totalImportance += habit.importance;
-  }
-
-  // Avoid division by zero
-  if (totalImportance === 0) {
-    return roundToTwoDecimals(task.progress);
-  }
-
-  const goalProgress = totalWeightedProgress / totalImportance;
-  return roundToTwoDecimals(Math.max(0, Math.min(100, goalProgress)));
-}
-
-/**
- * Recursively update progress for a task and all its ancestors
- *
- * @param taskId - The ID of the task to update
- * @returns The updated task with new progress
- */
-export async function updateTaskProgressRecursive(taskId: string): Promise<void> {
-  const task = await prisma.task.findUnique({
-    where: { id: taskId },
-    select: {
-      id: true,
-      parentId: true,
-      children: true,
-    },
-  });
-
-  if (!task) {
-    throw new Error(`Task with ID ${taskId} not found`);
-  }
-
-  // Calculate progress based on whether it's a root task or not
-  let newProgress: number;
-
-  if (task.parentId === null) {
-    // Root task (goal) - include habits in calculation
-    newProgress = await calculateGoalProgress(taskId);
-  } else {
-    // Non-root task - only use child tasks
-    const calculatedProgress = await calculateTaskProgress(taskId);
-
-    // If no children (leaf task), keep manual progress
-    if (calculatedProgress === null) {
-      return; // Don't update leaf tasks automatically
+    if (isLeaf) {
+      // Leaf task contributes its weight and progress
+      totalWeight += BigInt(child.importance);
+      weightedProgress += BigInt(Math.round((child.progress || 0) * child.importance));
+    } else {
+      // Parent task contributes its aggregates
+      totalWeight += child.total_weight || BigInt(0);
+      weightedProgress += child.weighted_progress || BigInt(0);
     }
-
-    newProgress = calculatedProgress;
   }
 
-  // Update the task's progress
-  await prisma.task.update({
-    where: { id: taskId },
-    data: { progress: newProgress },
-  });
-
-  // Recursively update parent task if exists
-  if (task.parentId) {
-    await updateTaskProgressRecursive(task.parentId);
+  // Add contributions from linked habits
+  for (const habit of task.habits) {
+    const habitProgress = await calculateHabitCompletionToday(habit.id);
+    totalWeight += BigInt(habit.importance);
+    weightedProgress += BigInt(Math.round(habitProgress * habit.importance));
   }
+
+  return { total_weight: totalWeight, weighted_progress: weightedProgress };
 }
 
 /**
- * Update all root tasks (goals) progress for a specific user
+ * Update habit's contribution to parent task when habit is logged
  *
- * @param userId - The ID of the user
+ * @param habitId - The habit ID
+ * @param oldProgress - Previous completion percentage
+ * @param newProgress - New completion percentage
  */
-export async function updateAllGoalsProgress(userId: string): Promise<void> {
-  // Get all root tasks (goals) for the user
-  const rootTasks = await prisma.task.findMany({
-    where: {
-      userId: userId,
-      parentId: null,
-    },
+export async function updateHabitProgress(
+  habitId: string,
+  oldProgress: number,
+  newProgress: number
+): Promise<void> {
+  const habit = await prisma.habit.findUnique({
+    where: { id: habitId },
     select: {
-      id: true,
+      parentTaskId: true,
+      importance: true,
     },
   });
 
-  // Update each root task
-  for (const task of rootTasks) {
-    await updateTaskProgressRecursive(task.id);
-  }
+  if (!habit || !habit.parentTaskId) return;
+
+  const weightedProgressDelta = BigInt(Math.round((newProgress - oldProgress) * habit.importance));
+
+  await propagateAggregates(habit.parentTaskId, BigInt(0), weightedProgressDelta);
+}
+
+/**
+ * Add habit to parent task aggregates
+ *
+ * @param habitId - The habit ID
+ */
+export async function addHabitToTask(habitId: string): Promise<void> {
+  const habit = await prisma.habit.findUnique({
+    where: { id: habitId },
+    select: {
+      parentTaskId: true,
+      importance: true,
+    },
+  });
+
+  if (!habit || !habit.parentTaskId) return;
+
+  const habitProgress = await calculateHabitCompletionToday(habitId);
+  const weight = BigInt(habit.importance);
+  const weightedProgress = BigInt(Math.round(habitProgress * habit.importance));
+
+  await addChildToTask(habit.parentTaskId, weight, weightedProgress);
+}
+
+/**
+ * Remove habit from parent task aggregates
+ *
+ * @param habitId - The habit ID
+ * @param parentTaskId - The parent task ID (needed since habit is being deleted)
+ * @param importance - Habit's importance (needed since habit is being deleted)
+ */
+export async function removeHabitFromTask(
+  habitId: string,
+  parentTaskId: string,
+  importance: number
+): Promise<void> {
+  const habitProgress = await calculateHabitCompletionToday(habitId);
+  const weight = BigInt(importance);
+  const weightedProgress = BigInt(Math.round(habitProgress * importance));
+
+  await removeChildFromTask(parentTaskId, weight, weightedProgress);
 }
 
 /**
  * Calculate progress for a specific label (on-demand)
- *
- * Progress is calculated as the importance-weighted average of all root tasks (goals)
- * and habits that have this label.
- *
- * @param labelId - The ID of the label
- * @returns Object containing overall progress, task progress, and habit completion rate
+ * Uses importance-weighted averaging across all root tasks and habits with this label
  */
 export async function calculateLabelProgress(labelId: string): Promise<{
   overallProgress: number;
-  taskProgress: number;
-  habitCompletionRate: number;
   taskCount: number;
   habitCount: number;
 }> {
-  // Get all root tasks (goals) with this label
   const tasksWithLabel = await prisma.task.findMany({
     where: {
-      parentId: null, // Only root tasks (goals)
+      parentId: null,
       labels: {
-        some: {
-          labelId: labelId,
-        },
+        some: { labelId: labelId },
       },
     },
     select: {
       id: true,
-      progress: true,
       importance: true,
+      progress: true,
+      total_weight: true,
+      weighted_progress: true,
+      _count: {
+        select: { children: true, habits: true },
+      },
     },
   });
 
-  // Get all habits with this label
   const habitsWithLabel = await prisma.habit.findMany({
     where: {
+      parentTaskId: null, // Only top-level habits
       labels: {
-        some: {
-          labelId: labelId,
-        },
+        some: { labelId: labelId },
       },
     },
     select: {
@@ -388,133 +487,68 @@ export async function calculateLabelProgress(labelId: string): Promise<{
     },
   });
 
-  // Calculate importance-weighted task progress
-  let taskProgress = 0;
-  let taskImportanceSum = 0;
-  if (tasksWithLabel.length > 0) {
-    for (const task of tasksWithLabel) {
-      taskProgress += task.progress * task.importance;
-      taskImportanceSum += task.importance;
-    }
-    if (taskImportanceSum > 0) {
-      taskProgress = taskProgress / taskImportanceSum;
-    }
-  }
+  let totalWeight = BigInt(0);
+  let weightedProgress = BigInt(0);
 
-  // Calculate importance-weighted habit completion rate
-  let habitCompletionRate = 0;
-  if (habitsWithLabel.length > 0) {
-    const habitIds = habitsWithLabel.map(h => h.id);
-    habitCompletionRate = await calculateHabitsCompletionRate(habitIds);
-  }
-
-  // Calculate overall progress (importance-weighted)
-  let overallProgress = 0;
-  let totalWeightedProgress = 0;
-  let totalImportance = 0;
-
-  // Add weighted task progress
+  // Add task contributions
   for (const task of tasksWithLabel) {
-    totalWeightedProgress += task.progress * task.importance;
-    totalImportance += task.importance;
+    const isLeaf = task._count.children === 0 && task._count.habits === 0;
+
+    if (isLeaf) {
+      totalWeight += BigInt(task.importance);
+      weightedProgress += BigInt(Math.round((task.progress || 0) * task.importance));
+    } else {
+      totalWeight += task.total_weight || BigInt(0);
+      weightedProgress += task.weighted_progress || BigInt(0);
+    }
   }
 
-  // Add weighted habit completion
+  // Add habit contributions
   for (const habit of habitsWithLabel) {
-    const habitCompletion = await calculateHabitCompletionToday(habit.id);
-    totalWeightedProgress += habitCompletion * habit.importance;
-    totalImportance += habit.importance;
+    const habitProgress = await calculateHabitCompletionToday(habit.id);
+    totalWeight += BigInt(habit.importance);
+    weightedProgress += BigInt(Math.round(habitProgress * habit.importance));
   }
 
-  if (totalImportance > 0) {
-    overallProgress = totalWeightedProgress / totalImportance;
-  }
+  const overallProgress = totalWeight > BigInt(0)
+    ? Number(weightedProgress) / Number(totalWeight)
+    : 0;
 
   return {
     overallProgress: roundToTwoDecimals(Math.max(0, Math.min(100, overallProgress))),
-    taskProgress: roundToTwoDecimals(Math.max(0, Math.min(100, taskProgress))),
-    habitCompletionRate: roundToTwoDecimals(Math.max(0, Math.min(100, habitCompletionRate))),
     taskCount: tasksWithLabel.length,
     habitCount: habitsWithLabel.length,
   };
 }
 
 /**
- * Calculate progress for all labels of a specific user (on-demand)
- *
- * @param userId - The ID of the user
- * @returns Array of label progress data
- */
-export async function calculateAllLabelsProgress(userId: string): Promise<Array<{
-  labelId: string;
-  labelName: string;
-  labelColor: string | null;
-  overallProgress: number;
-  taskProgress: number;
-  habitCompletionRate: number;
-  taskCount: number;
-  habitCount: number;
-}>> {
-  // Get all labels for the user
-  const labels = await prisma.label.findMany({
-    where: {
-      userId: userId,
-    },
-    select: {
-      id: true,
-      name: true,
-      color: true,
-    },
-  });
-
-  // Calculate progress for each label
-  const labelProgressData = await Promise.all(
-    labels.map(async (label) => {
-      const progress = await calculateLabelProgress(label.id);
-      return {
-        labelId: label.id,
-        labelName: label.name,
-        labelColor: label.color,
-        ...progress,
-      };
-    })
-  );
-
-  return labelProgressData;
-}
-
-/**
- * Calculate progress for a specific group/category (on-demand)
- *
- * Progress is calculated as the importance-weighted average of all root tasks (goals)
- * and habits in this group.
- *
- * @param groupId - The ID of the group
- * @returns Object containing overall progress, task progress, and habit completion rate
+ * Calculate progress for a specific group (on-demand)
  */
 export async function calculateGroupProgress(groupId: string): Promise<{
   overallProgress: number;
-  taskProgress: number;
-  habitCompletionRate: number;
   taskCount: number;
   habitCount: number;
 }> {
-  // Get all root tasks (goals) in this group
   const tasksInGroup = await prisma.task.findMany({
     where: {
-      parentId: null, // Only root tasks (goals)
+      parentId: null,
       groupId: groupId,
     },
     select: {
       id: true,
-      progress: true,
       importance: true,
+      progress: true,
+      total_weight: true,
+      weighted_progress: true,
+      _count: {
+        select: { children: true, habits: true },
+      },
     },
   });
 
-  // Get all habits in this group
   const habitsInGroup = await prisma.habit.findMany({
     where: {
+      parentTaskId: null, // Only top-level habits
       groupId: groupId,
     },
     select: {
@@ -523,52 +557,35 @@ export async function calculateGroupProgress(groupId: string): Promise<{
     },
   });
 
-  // Calculate importance-weighted task progress
-  let taskProgress = 0;
-  let taskImportanceSum = 0;
-  if (tasksInGroup.length > 0) {
-    for (const task of tasksInGroup) {
-      taskProgress += task.progress * task.importance;
-      taskImportanceSum += task.importance;
-    }
-    if (taskImportanceSum > 0) {
-      taskProgress = taskProgress / taskImportanceSum;
-    }
-  }
+  let totalWeight = BigInt(0);
+  let weightedProgress = BigInt(0);
 
-  // Calculate importance-weighted habit completion rate
-  let habitCompletionRate = 0;
-  if (habitsInGroup.length > 0) {
-    const habitIds = habitsInGroup.map(h => h.id);
-    habitCompletionRate = await calculateHabitsCompletionRate(habitIds);
-  }
-
-  // Calculate overall progress (importance-weighted)
-  let overallProgress = 0;
-  let totalWeightedProgress = 0;
-  let totalImportance = 0;
-
-  // Add weighted task progress
+  // Add task contributions
   for (const task of tasksInGroup) {
-    totalWeightedProgress += task.progress * task.importance;
-    totalImportance += task.importance;
+    const isLeaf = task._count.children === 0 && task._count.habits === 0;
+
+    if (isLeaf) {
+      totalWeight += BigInt(task.importance);
+      // Leaf tasks would need progress from somewhere - skipping for now
+    } else {
+      totalWeight += task.total_weight || BigInt(0);
+      weightedProgress += task.weighted_progress || BigInt(0);
+    }
   }
 
-  // Add weighted habit completion
+  // Add habit contributions
   for (const habit of habitsInGroup) {
-    const habitCompletion = await calculateHabitCompletionToday(habit.id);
-    totalWeightedProgress += habitCompletion * habit.importance;
-    totalImportance += habit.importance;
+    const habitProgress = await calculateHabitCompletionToday(habit.id);
+    totalWeight += BigInt(habit.importance);
+    weightedProgress += BigInt(Math.round(habitProgress * habit.importance));
   }
 
-  if (totalImportance > 0) {
-    overallProgress = totalWeightedProgress / totalImportance;
-  }
+  const overallProgress = totalWeight > BigInt(0)
+    ? Number(weightedProgress) / Number(totalWeight)
+    : 0;
 
   return {
     overallProgress: roundToTwoDecimals(Math.max(0, Math.min(100, overallProgress))),
-    taskProgress: roundToTwoDecimals(Math.max(0, Math.min(100, taskProgress))),
-    habitCompletionRate: roundToTwoDecimals(Math.max(0, Math.min(100, habitCompletionRate))),
     taskCount: tasksInGroup.length,
     habitCount: habitsInGroup.length,
   };

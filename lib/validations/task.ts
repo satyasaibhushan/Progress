@@ -13,7 +13,8 @@ export const createTaskSchema = z.object({
     .number()
     .min(0, "Progress must be at least 0")
     .max(100, "Progress must be at most 100")
-    .default(0),
+    .default(0)
+    .optional(), // Optional - only for leaf tasks, calculated for parent tasks
   deadline: z.string().datetime().optional().nullable(),
   groupId: z.string().optional().nullable(),
   parentId: z.string().optional().nullable(),
@@ -32,7 +33,7 @@ export const updateTaskSchema = z.object({
     .number()
     .min(0, "Progress must be at least 0")
     .max(100, "Progress must be at most 100")
-    .optional(),
+    .optional(), // Optional - only for leaf tasks, calculated for parent tasks
   deadline: z.string().datetime().optional().nullable(),
   groupId: z.string().optional().nullable(),
   parentId: z.string().optional().nullable(),

@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { updateHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
-import { updateTaskProgressRecursive } from "@/lib/progress-calculator"
+import { addHabitToTask, removeHabitFromTask } from "@/lib/progress-calculator"
 
 // GET /api/habits/[id] - Get a specific habit
 export async function GET(
@@ -175,17 +175,21 @@ export async function PUT(
       },
     })
 
-    // Recalculate progress if parentTaskId changed
+    // Update aggregates if parentTaskId changed
     const parentTaskChanged = validatedData.parentTaskId !== undefined && validatedData.parentTaskId !== existingHabit.parentTaskId
 
     if (parentTaskChanged) {
-      // Update old parent task's progress (if existed)
+      // Remove from old parent task (if existed)
       if (existingHabit.parentTaskId) {
-        await updateTaskProgressRecursive(existingHabit.parentTaskId)
+        await removeHabitFromTask(
+          existingHabit.id,
+          existingHabit.parentTaskId,
+          existingHabit.importance
+        )
       }
-      // Update new parent task's progress (if exists)
+      // Add to new parent task (if exists)
       if (habit.parentTaskId) {
-        await updateTaskProgressRecursive(habit.parentTaskId)
+        await addHabitToTask(habit.id)
       }
     }
 
@@ -216,8 +220,9 @@ export async function DELETE(
       return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
 
-    // Store parent task ID before deletion for progress recalculation
+    // Store parent task ID and importance before deletion
     const parentTaskId = existingHabit.parentTaskId
+    const importance = existingHabit.importance
 
     // Delete will cascade to habit logs due to schema onDelete: Cascade
     await prisma.habit.delete({
@@ -226,9 +231,9 @@ export async function DELETE(
       },
     })
 
-    // Recalculate parent task's progress if this habit was linked to a task
+    // Remove from parent task's aggregates if this habit was linked to a task
     if (parentTaskId) {
-      await updateTaskProgressRecursive(parentTaskId)
+      await removeHabitFromTask(id, parentTaskId, importance)
     }
 
     return NextResponse.json({ message: "Habit deleted successfully" })

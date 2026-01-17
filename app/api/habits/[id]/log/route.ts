@@ -2,7 +2,10 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { logHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
-import { updateTaskProgressRecursive } from "@/lib/progress-calculator"
+import {
+  calculateHabitCompletionToday,
+  updateHabitProgress,
+} from "@/lib/progress-calculator"
 
 // POST /api/habits/[id]/log - Log a habit completion
 export async function POST(
@@ -35,6 +38,9 @@ export async function POST(
     // Set time to start of day for consistent date comparison
     logDate.setHours(0, 0, 0, 0)
 
+    // Calculate old progress before logging
+    const oldProgress = await calculateHabitCompletionToday(id)
+
     // For N_PER_DAY habits, check if we should create or update existing log for today
     if (habit.type === "N_PER_DAY") {
       // Check if log exists for this day
@@ -56,9 +62,10 @@ export async function POST(
           },
         })
 
-        // Recalculate parent task progress if habit is linked to a task
+        // Update parent task aggregates if habit is linked to a task
         if (habit.parentTaskId) {
-          await updateTaskProgressRecursive(habit.parentTaskId)
+          const newProgress = await calculateHabitCompletionToday(id)
+          await updateHabitProgress(id, oldProgress, newProgress)
         }
 
         return NextResponse.json({ data: updatedLog })
@@ -74,9 +81,10 @@ export async function POST(
       },
     })
 
-    // Recalculate parent task progress if habit is linked to a task
+    // Update parent task aggregates if habit is linked to a task
     if (habit.parentTaskId) {
-      await updateTaskProgressRecursive(habit.parentTaskId)
+      const newProgress = await calculateHabitCompletionToday(id)
+      await updateHabitProgress(id, oldProgress, newProgress)
     }
 
     return NextResponse.json({ data: log }, { status: 201 })
@@ -185,15 +193,19 @@ export async function DELETE(
       return NextResponse.json({ error: "Log not found" }, { status: 404 })
     }
 
+    // Calculate old progress before deleting log
+    const oldProgress = await calculateHabitCompletionToday(id)
+
     await prisma.habitLog.delete({
       where: {
         id: logId,
       },
     })
 
-    // Recalculate parent task progress if habit is linked to a task
+    // Update parent task aggregates if habit is linked to a task
     if (habit.parentTaskId) {
-      await updateTaskProgressRecursive(habit.parentTaskId)
+      const newProgress = await calculateHabitCompletionToday(id)
+      await updateHabitProgress(id, oldProgress, newProgress)
     }
 
     return NextResponse.json({ message: "Log deleted successfully" })

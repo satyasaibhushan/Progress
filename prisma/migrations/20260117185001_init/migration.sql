@@ -63,50 +63,22 @@ CREATE TABLE "groups" (
 );
 
 -- CreateTable
-CREATE TABLE "goals" (
-    "id" TEXT NOT NULL,
-    "title" TEXT NOT NULL,
-    "description" TEXT,
-    "deadline" TIMESTAMP(3),
-    "progress" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "userId" TEXT NOT NULL,
-    "groupId" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "goals_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "tasks" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "description" TEXT,
-    "importance" INTEGER NOT NULL DEFAULT 33,
-    "progress" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "isManualProgress" BOOLEAN NOT NULL DEFAULT true,
+    "importance" INTEGER NOT NULL DEFAULT 50,
+    "progress" DOUBLE PRECISION DEFAULT 0,
+    "total_weight" BIGINT,
+    "weighted_progress" BIGINT,
     "deadline" TIMESTAMP(3),
-    "goalId" TEXT NOT NULL,
+    "groupId" TEXT,
+    "parentId" TEXT,
     "userId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "tasks_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "subtasks" (
-    "id" TEXT NOT NULL,
-    "title" TEXT NOT NULL,
-    "description" TEXT,
-    "importance" INTEGER NOT NULL DEFAULT 33,
-    "progress" DOUBLE PRECISION NOT NULL DEFAULT 0,
-    "deadline" TIMESTAMP(3),
-    "taskId" TEXT NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "subtasks_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -116,9 +88,11 @@ CREATE TABLE "habits" (
     "description" TEXT,
     "type" "HabitType" NOT NULL DEFAULT 'DAILY',
     "targetCount" INTEGER,
+    "importance" INTEGER NOT NULL DEFAULT 50,
     "endDate" TIMESTAMP(3),
     "userId" TEXT NOT NULL,
     "groupId" TEXT,
+    "parentTaskId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -150,14 +124,6 @@ CREATE TABLE "labels" (
 );
 
 -- CreateTable
-CREATE TABLE "goal_labels" (
-    "goalId" TEXT NOT NULL,
-    "labelId" TEXT NOT NULL,
-
-    CONSTRAINT "goal_labels_pkey" PRIMARY KEY ("goalId","labelId")
-);
-
--- CreateTable
 CREATE TABLE "task_labels" (
     "taskId" TEXT NOT NULL,
     "labelId" TEXT NOT NULL,
@@ -171,14 +137,6 @@ CREATE TABLE "habit_labels" (
     "labelId" TEXT NOT NULL,
 
     CONSTRAINT "habit_labels_pkey" PRIMARY KEY ("habitId","labelId")
-);
-
--- CreateTable
-CREATE TABLE "goal_habits" (
-    "goalId" TEXT NOT NULL,
-    "habitId" TEXT NOT NULL,
-
-    CONSTRAINT "goal_habits_pkey" PRIMARY KEY ("goalId","habitId")
 );
 
 -- CreateIndex
@@ -200,34 +158,25 @@ CREATE UNIQUE INDEX "verification_tokens_identifier_token_key" ON "verification_
 CREATE INDEX "groups_userId_idx" ON "groups"("userId");
 
 -- CreateIndex
-CREATE INDEX "goals_userId_idx" ON "goals"("userId");
-
--- CreateIndex
-CREATE INDEX "goals_groupId_idx" ON "goals"("groupId");
-
--- CreateIndex
-CREATE INDEX "goals_deadline_idx" ON "goals"("deadline");
-
--- CreateIndex
-CREATE INDEX "goals_createdAt_idx" ON "goals"("createdAt");
-
--- CreateIndex
 CREATE INDEX "tasks_userId_idx" ON "tasks"("userId");
 
 -- CreateIndex
-CREATE INDEX "tasks_goalId_idx" ON "tasks"("goalId");
+CREATE INDEX "tasks_groupId_idx" ON "tasks"("groupId");
+
+-- CreateIndex
+CREATE INDEX "tasks_parentId_idx" ON "tasks"("parentId");
 
 -- CreateIndex
 CREATE INDEX "tasks_deadline_idx" ON "tasks"("deadline");
-
--- CreateIndex
-CREATE INDEX "subtasks_taskId_idx" ON "subtasks"("taskId");
 
 -- CreateIndex
 CREATE INDEX "habits_userId_idx" ON "habits"("userId");
 
 -- CreateIndex
 CREATE INDEX "habits_groupId_idx" ON "habits"("groupId");
+
+-- CreateIndex
+CREATE INDEX "habits_parentTaskId_idx" ON "habits"("parentTaskId");
 
 -- CreateIndex
 CREATE INDEX "habit_logs_habitId_idx" ON "habit_logs"("habitId");
@@ -251,19 +200,13 @@ ALTER TABLE "sessions" ADD CONSTRAINT "sessions_userId_fkey" FOREIGN KEY ("userI
 ALTER TABLE "groups" ADD CONSTRAINT "groups_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "goals" ADD CONSTRAINT "goals_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "goals" ADD CONSTRAINT "goals_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "groups"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "tasks" ADD CONSTRAINT "tasks_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "tasks" ADD CONSTRAINT "tasks_goalId_fkey" FOREIGN KEY ("goalId") REFERENCES "goals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "tasks" ADD CONSTRAINT "tasks_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "groups"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "subtasks" ADD CONSTRAINT "subtasks_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "tasks"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "tasks" ADD CONSTRAINT "tasks_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "tasks"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "habits" ADD CONSTRAINT "habits_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -272,16 +215,13 @@ ALTER TABLE "habits" ADD CONSTRAINT "habits_userId_fkey" FOREIGN KEY ("userId") 
 ALTER TABLE "habits" ADD CONSTRAINT "habits_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "groups"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "habits" ADD CONSTRAINT "habits_parentTaskId_fkey" FOREIGN KEY ("parentTaskId") REFERENCES "tasks"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "habit_logs" ADD CONSTRAINT "habit_logs_habitId_fkey" FOREIGN KEY ("habitId") REFERENCES "habits"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "labels" ADD CONSTRAINT "labels_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "goal_labels" ADD CONSTRAINT "goal_labels_goalId_fkey" FOREIGN KEY ("goalId") REFERENCES "goals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "goal_labels" ADD CONSTRAINT "goal_labels_labelId_fkey" FOREIGN KEY ("labelId") REFERENCES "labels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "task_labels" ADD CONSTRAINT "task_labels_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "tasks"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -294,9 +234,3 @@ ALTER TABLE "habit_labels" ADD CONSTRAINT "habit_labels_habitId_fkey" FOREIGN KE
 
 -- AddForeignKey
 ALTER TABLE "habit_labels" ADD CONSTRAINT "habit_labels_labelId_fkey" FOREIGN KEY ("labelId") REFERENCES "labels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "goal_habits" ADD CONSTRAINT "goal_habits_goalId_fkey" FOREIGN KEY ("goalId") REFERENCES "goals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "goal_habits" ADD CONSTRAINT "goal_habits_habitId_fkey" FOREIGN KEY ("habitId") REFERENCES "habits"("id") ON DELETE CASCADE ON UPDATE CASCADE;

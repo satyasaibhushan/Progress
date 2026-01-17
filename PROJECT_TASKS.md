@@ -156,25 +156,37 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 
 ## Phase 5: Progress Calculation Engine
 
-### Task 5.1: Task Progress Calculation
+### Task 5.1: Task Progress Calculation (Aggregate-Based)
 **Status:** ✅ Completed
-**Description:** Implement automatic progress calculation for tasks based on subtasks.
+**Description:** Implement aggregate-based progress calculation for tasks using bottom-up aggregation.
 **What was done:**
-- Created `calculateTaskProgress()` utility function in `lib/progress-calculator.ts`
-- Implemented importance-weighted calculation: `Σ(child.progress × child.importance) / Σ(child.importance)`
-- Integrated automatic recalculation into task create/update/delete API routes
-- Progress updates recursively up the task hierarchy
+- Updated Prisma schema: Added `total_weight` (BigInt) and `weighted_progress` (BigInt) fields to Task model
+- Removed direct `progress` field from parent tasks (only leaf tasks store progress)
+- Created aggregate-based calculation system in `lib/progress-calculator.ts`:
+  - Leaf tasks store: `importance` (weight), `progress` (0-100)
+  - Parent tasks store: `total_weight` (Σ weights of all descendant leaves), `weighted_progress` (Σ(progress × weight) of descendant leaves)
+  - Progress calculated on-demand: `weighted_progress / total_weight`
+- Implemented functions:
+  - `getTaskProgress()` - On-demand progress calculation for any task
+  - `updateLeafTaskProgress()` - Update aggregates when leaf task progress changes
+  - `updateLeafTaskWeight()` - Update aggregates when leaf task importance changes
+  - `addChildToTask()` - Add child to parent's aggregates (handles leaf → parent transition)
+  - `removeChildFromTask()` - Remove child from parent's aggregates (handles parent → leaf transition)
+  - `propagateAggregates()` - Recursively propagate changes up the hierarchy
+- Integrated into task create/update/delete API routes
+- Uses BIGINT to prevent overflow with large hierarchies
 
-### Task 5.2: Goal Progress Calculation
+### Task 5.2: Goal Progress Calculation (Aggregate-Based)
 **Status:** ✅ Completed
-**Description:** Implement goal progress from tasks and linked habits.
+**Description:** Implement goal progress from tasks and linked habits using aggregate approach.
 **What was done:**
-- Created `calculateGoalProgress()` utility function in `lib/progress-calculator.ts`
-- Implemented importance-weighted calculation combining child tasks and linked habits
-- Formula: `(Σ(task.progress × task.importance) + Σ(habit.completion × habit.importance)) / (Σ(task.importance) + Σ(habit.importance))`
-- Added `importance` field to Habit model (1-100 weightage, default 50)
-- Created migration `20260117181501_add_importance_to_habits`
-- Integrated into habit create/update/delete operations
+- Root tasks (goals) use same aggregate system as parent tasks
+- Child tasks contribute their `total_weight` and `weighted_progress` to parent
+- Linked habits (via `parentTaskId`) contribute their weight and weighted progress
+- Formula: `weighted_progress / total_weight` where:
+  - `total_weight = Σ(child_task.total_weight) + Σ(habit.importance)`
+  - `weighted_progress = Σ(child_task.weighted_progress) + Σ(habit.completion × habit.importance)`
+- Progress calculated on-demand, no manual updates needed
 
 ### Task 5.3: Habit Completion Tracking
 **Status:** ✅ Completed
@@ -185,12 +197,13 @@ Building a comprehensive progress tracking application with goals, tasks, habits
   - N_PER_DAY: `(count / targetCount) × 100`
   - WEEKLY: 100% if logged at least once this week
   - MONTHLY: 100% if logged at least once this month
-- Created `calculateHabitsCompletionRate()` with importance-weighted averaging
-- Integrated automatic progress recalculation into habit log create/delete operations
+- Created `updateHabitProgress()` - Update parent task aggregates when habit completion changes
+- Created `addHabitToTask()` - Add habit to parent task's aggregates
+- Created `removeHabitFromTask()` - Remove habit from parent task's aggregates
+- Integrated automatic aggregate updates into habit create/update/delete/log operations
 - Added bonus functions:
   - `calculateLabelProgress()` - Calculate progress by label (on-demand)
   - `calculateGroupProgress()` - Calculate progress by group (on-demand)
-  - `calculateAllLabelsProgress()` - Get all label progress for a user
 
 ---
 
