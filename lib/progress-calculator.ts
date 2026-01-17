@@ -20,23 +20,18 @@ function roundToTwoDecimals(value: number): number {
 }
 
 /**
- * Calculate habit completion rate for today based on habit type
+ * Calculate habit completion rate (cumulative progress)
+ * Progress = (total count of all logs / targetCount) × 100
  *
  * @param habitId - The ID of the habit
  * @returns Completion percentage (0-100)
  */
-export async function calculateHabitCompletionToday(habitId: string): Promise<number> {
+export async function calculateHabitCompletion(habitId: string): Promise<number> {
   const habit = await prisma.habit.findUnique({
     where: { id: habitId },
-    include: {
-      habitLogs: {
-        where: {
-          date: {
-            gte: new Date(new Date().setHours(0, 0, 0, 0)), // Start of today
-            lt: new Date(new Date().setHours(24, 0, 0, 0)),  // Start of tomorrow
-          },
-        },
-      },
+    select: {
+      id: true,
+      targetCount: true,
     },
   });
 
@@ -44,54 +39,32 @@ export async function calculateHabitCompletionToday(habitId: string): Promise<nu
     throw new Error(`Habit with ID ${habitId} not found`);
   }
 
-  const todayLog = habit.habitLogs[0]; // Should be max 1 log per day
+  // Get total count of all logs for this habit
+  const totalLogs = await prisma.habitLog.aggregate({
+    where: {
+      habitId: habitId,
+    },
+    _sum: {
+      count: true,
+    },
+  });
 
-  switch (habit.type) {
-    case HabitType.DAILY:
-      return todayLog ? 100 : 0;
+  const totalCount = totalLogs._sum.count || 0;
 
-    case HabitType.N_PER_DAY:
-      if (!habit.targetCount || habit.targetCount === 0) {
-        return 0;
-      }
-      const count = todayLog?.count || 0;
-      return roundToTwoDecimals(Math.min(100, (count / habit.targetCount) * 100));
-
-    case HabitType.WEEKLY:
-      const startOfWeek = new Date();
-      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-      startOfWeek.setHours(0, 0, 0, 0);
-
-      const weekLogs = await prisma.habitLog.count({
-        where: {
-          habitId: habitId,
-          date: {
-            gte: startOfWeek,
-          },
-        },
-      });
-
-      return weekLogs > 0 ? 100 : 0;
-
-    case HabitType.MONTHLY:
-      const startOfMonth = new Date();
-      startOfMonth.setDate(1);
-      startOfMonth.setHours(0, 0, 0, 0);
-
-      const monthLogs = await prisma.habitLog.count({
-        where: {
-          habitId: habitId,
-          date: {
-            gte: startOfMonth,
-          },
-        },
-      });
-
-      return monthLogs > 0 ? 100 : 0;
-
-    default:
-      return 0;
+  if (habit.targetCount === 0) {
+    return 0;
   }
+
+  const progress = (totalCount / habit.targetCount) * 100;
+  return roundToTwoDecimals(Math.min(100, Math.max(0, progress)));
+}
+
+/**
+ * @deprecated Use calculateHabitCompletion instead
+ * Kept for backward compatibility during migration
+ */
+export async function calculateHabitCompletionToday(habitId: string): Promise<number> {
+  return calculateHabitCompletion(habitId);
 }
 
 /**
@@ -256,8 +229,9 @@ export async function addChildToTask(
 
   if (!parent) return;
 
-  // If this is the first child (leaf → parent transition)
-  if (parent._count.children === 0 && parent._count.habits === 0) {
+  // If parent has no aggregates set yet (was a leaf before this child was added)
+  if (parent.total_weight === null && parent.weighted_progress === null) {
+    // This is the first child, initialize aggregates
     await prisma.task.update({
       where: { id: parentId },
       data: {
@@ -265,9 +239,36 @@ export async function addChildToTask(
         weighted_progress: childWeightedProgress,
       },
     });
+    // If parent has a parent, propagate the change up
+    const parentTask = await prisma.task.findUnique({
+      where: { id: parentId },
+      select: { parentId: true },
+    });
+    if (parentTask?.parentId) {
+      await propagateAggregates(parentTask.parentId, childWeight, childWeightedProgress);
+    }
   } else {
-    // Already a parent, just add to aggregates
-    await propagateAggregates(parentId, childWeight, childWeightedProgress);
+    // Parent already has aggregates, add this child's contribution
+    // propagateAggregates will update this parent and propagate up the tree
+    const currentTotalWeight = parent.total_weight || BigInt(0);
+    const currentWeightedProgress = parent.weighted_progress || BigInt(0);
+    
+    await prisma.task.update({
+      where: { id: parentId },
+      data: {
+        total_weight: currentTotalWeight + childWeight,
+        weighted_progress: currentWeightedProgress + childWeightedProgress,
+      },
+    });
+    
+    // Propagate to parent's parent if exists
+    const parentTask = await prisma.task.findUnique({
+      where: { id: parentId },
+      select: { parentId: true },
+    });
+    if (parentTask?.parentId) {
+      await propagateAggregates(parentTask.parentId, childWeight, childWeightedProgress);
+    }
   }
 }
 
@@ -369,7 +370,7 @@ export async function calculateTaskAggregates(taskId: string): Promise<{
 
   // Add contributions from linked habits
   for (const habit of task.habits) {
-    const habitProgress = await calculateHabitCompletionToday(habit.id);
+    const habitProgress = await calculateHabitCompletion(habit.id);
     totalWeight += BigInt(habit.importance);
     weightedProgress += BigInt(Math.round(habitProgress * habit.importance));
   }
@@ -420,7 +421,7 @@ export async function addHabitToTask(habitId: string): Promise<void> {
 
   if (!habit || !habit.parentTaskId) return;
 
-  const habitProgress = await calculateHabitCompletionToday(habitId);
+  const habitProgress = await calculateHabitCompletion(habitId);
   const weight = BigInt(habit.importance);
   const weightedProgress = BigInt(Math.round(habitProgress * habit.importance));
 
@@ -439,7 +440,7 @@ export async function removeHabitFromTask(
   parentTaskId: string,
   importance: number
 ): Promise<void> {
-  const habitProgress = await calculateHabitCompletionToday(habitId);
+  const habitProgress = await calculateHabitCompletion(habitId);
   const weight = BigInt(importance);
   const weightedProgress = BigInt(Math.round(habitProgress * importance));
 

@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { logHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import {
-  calculateHabitCompletionToday,
+  calculateHabitCompletion,
   updateHabitProgress,
 } from "@/lib/progress-calculator"
 
@@ -39,37 +39,35 @@ export async function POST(
     logDate.setHours(0, 0, 0, 0)
 
     // Calculate old progress before logging
-    const oldProgress = await calculateHabitCompletionToday(id)
+    const oldProgress = await calculateHabitCompletion(id)
 
-    // For N_PER_DAY habits, check if we should create or update existing log for today
-    if (habit.type === "N_PER_DAY") {
-      // Check if log exists for this day
-      const existingLog = await prisma.habitLog.findFirst({
+    // For all habits, check if we should create or update existing log for the date
+    // (Multiple logs per day are allowed for all habit types, we increment count)
+    const existingLog = await prisma.habitLog.findFirst({
+      where: {
+        habitId: id,
+        date: logDate,
+      },
+    })
+
+    if (existingLog) {
+      // Update existing log count
+      const updatedLog = await prisma.habitLog.update({
         where: {
-          habitId: id,
-          date: logDate,
+          id: existingLog.id,
+        },
+        data: {
+          count: existingLog.count + validatedData.count,
         },
       })
 
-      if (existingLog) {
-        // Update existing log count
-        const updatedLog = await prisma.habitLog.update({
-          where: {
-            id: existingLog.id,
-          },
-          data: {
-            count: existingLog.count + validatedData.count,
-          },
-        })
-
-        // Update parent task aggregates if habit is linked to a task
-        if (habit.parentTaskId) {
-          const newProgress = await calculateHabitCompletionToday(id)
-          await updateHabitProgress(id, oldProgress, newProgress)
-        }
-
-        return NextResponse.json({ data: updatedLog })
+      // Update parent task aggregates if habit is linked to a task
+      if (habit.parentTaskId) {
+        const newProgress = await calculateHabitCompletion(id)
+        await updateHabitProgress(id, oldProgress, newProgress)
       }
+
+      return NextResponse.json({ data: updatedLog })
     }
 
     // Create new log
@@ -83,7 +81,7 @@ export async function POST(
 
     // Update parent task aggregates if habit is linked to a task
     if (habit.parentTaskId) {
-      const newProgress = await calculateHabitCompletionToday(id)
+      const newProgress = await calculateHabitCompletion(id)
       await updateHabitProgress(id, oldProgress, newProgress)
     }
 
@@ -119,7 +117,13 @@ export async function GET(
     const startDate = searchParams.get("startDate")
     const endDate = searchParams.get("endDate")
 
-    const where: any = {
+    const where: {
+      habitId: string
+      date?: {
+        gte?: Date
+        lte?: Date
+      }
+    } = {
       habitId: id,
     }
 
@@ -194,7 +198,7 @@ export async function DELETE(
     }
 
     // Calculate old progress before deleting log
-    const oldProgress = await calculateHabitCompletionToday(id)
+    const oldProgress = await calculateHabitCompletion(id)
 
     await prisma.habitLog.delete({
       where: {
@@ -204,7 +208,7 @@ export async function DELETE(
 
     // Update parent task aggregates if habit is linked to a task
     if (habit.parentTaskId) {
-      const newProgress = await calculateHabitCompletionToday(id)
+      const newProgress = await calculateHabitCompletion(id)
       await updateHabitProgress(id, oldProgress, newProgress)
     }
 

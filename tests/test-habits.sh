@@ -1,0 +1,314 @@
+#!/bin/bash
+
+# This file tests habit-related APIs thoroughly
+# It should be sourced from test-apis.sh which provides:
+# - BASE_URL
+# - COOKIE
+# - TIMESTAMP
+# - GROUP_ID (optional)
+
+echo "=== COMPREHENSIVE HABIT TESTS ==="
+echo ""
+
+# Test 1: Create DAILY habit with targetCount
+echo "Test 1: POST /api/habits (Create DAILY habit with targetCount)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+    -d "{\"title\":\"Daily Meditation ${TIMESTAMP}\",\"description\":\"10 minutes daily\",\"type\":\"DAILY\",\"targetCount\":30,\"importance\":70,\"groupId\":\"${GROUP_ID}\"}" \
+    "${BASE_URL}/api/habits")
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+echo "Status: $HTTP_CODE"
+DAILY_HABIT_ID=$(echo "$BODY" | jq -r '.data.id // empty')
+if [ "$HTTP_CODE" != "201" ]; then
+    echo "❌ ERROR: Expected 201, got $HTTP_CODE"
+    echo "Response: $BODY"
+else
+    echo "✅ Created DAILY habit: $DAILY_HABIT_ID"
+    echo "Response: $BODY" | jq '.'
+fi
+echo ""
+
+# Test 2: Create DAILY habit with auto-calculated targetCount (from endDate)
+echo "Test 2: POST /api/habits (Create DAILY habit with auto-calculated targetCount)"
+END_DATE=$(date -u -v+30d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "+30 days" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "2024-12-31T23:59:59Z")
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+    -d "{\"title\":\"Daily Reading ${TIMESTAMP}\",\"description\":\"Read 30 minutes daily\",\"type\":\"DAILY\",\"endDate\":\"${END_DATE}\",\"importance\":60}" \
+    "${BASE_URL}/api/habits")
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+echo "Status: $HTTP_CODE"
+DAILY_AUTO_HABIT_ID=$(echo "$BODY" | jq -r '.data.id // empty')
+AUTO_TARGET_COUNT=$(echo "$BODY" | jq -r '.data.targetCount // empty')
+if [ "$HTTP_CODE" != "201" ]; then
+    echo "❌ ERROR: Expected 201, got $HTTP_CODE"
+    echo "Response: $BODY"
+else
+    echo "✅ Created DAILY habit with auto-calculated targetCount: $DAILY_AUTO_HABIT_ID"
+    echo "Auto-calculated targetCount: $AUTO_TARGET_COUNT"
+    echo "Response: $BODY" | jq '.'
+fi
+echo ""
+
+# Test 3: Create WEEKLY habit with activeDays
+echo "Test 3: POST /api/habits (Create WEEKLY habit with activeDays)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+    -d "{\"title\":\"Gym Workout ${TIMESTAMP}\",\"description\":\"3 times per week\",\"type\":\"WEEKLY\",\"targetCount\":12,\"activeDays\":[1,3,5],\"importance\":80,\"groupId\":\"${GROUP_ID}\"}" \
+    "${BASE_URL}/api/habits")
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+echo "Status: $HTTP_CODE"
+WEEKLY_HABIT_ID=$(echo "$BODY" | jq -r '.data.id // empty')
+if [ "$HTTP_CODE" != "201" ]; then
+    echo "❌ ERROR: Expected 201, got $HTTP_CODE"
+    echo "Response: $BODY"
+else
+    echo "✅ Created WEEKLY habit: $WEEKLY_HABIT_ID"
+    echo "Active days: $(echo "$BODY" | jq -r '.data.activeDays // []')"
+    echo "Response: $BODY" | jq '.'
+fi
+echo ""
+
+# Test 4: Create WEEKLY habit with auto-calculated targetCount
+echo "Test 4: POST /api/habits (Create WEEKLY habit with auto-calculated targetCount)"
+END_DATE=$(date -u -v+28d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "+28 days" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "2024-12-31T23:59:59Z")
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+    -d "{\"title\":\"Weekly Yoga ${TIMESTAMP}\",\"description\":\"Yoga on Mon, Wed, Fri\",\"type\":\"WEEKLY\",\"endDate\":\"${END_DATE}\",\"activeDays\":[1,3,5],\"importance\":65}" \
+    "${BASE_URL}/api/habits")
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+echo "Status: $HTTP_CODE"
+WEEKLY_AUTO_HABIT_ID=$(echo "$BODY" | jq -r '.data.id // empty')
+if [ "$HTTP_CODE" != "201" ]; then
+    echo "❌ ERROR: Expected 201, got $HTTP_CODE"
+    echo "Response: $BODY"
+else
+    echo "✅ Created WEEKLY habit with auto-calculated targetCount: $WEEKLY_AUTO_HABIT_ID"
+    echo "Response: $BODY" | jq '.'
+fi
+echo ""
+
+# Test 5: Create MONTHLY habit
+echo "Test 5: POST /api/habits (Create MONTHLY habit)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+    -d "{\"title\":\"Monthly Review ${TIMESTAMP}\",\"description\":\"Monthly review meeting\",\"type\":\"MONTHLY\",\"targetCount\":6,\"importance\":50}" \
+    "${BASE_URL}/api/habits")
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+echo "Status: $HTTP_CODE"
+MONTHLY_HABIT_ID=$(echo "$BODY" | jq -r '.data.id // empty')
+if [ "$HTTP_CODE" != "201" ]; then
+    echo "❌ ERROR: Expected 201, got $HTTP_CODE"
+    echo "Response: $BODY"
+else
+    echo "✅ Created MONTHLY habit: $MONTHLY_HABIT_ID"
+    echo "Response: $BODY" | jq '.'
+fi
+echo ""
+
+# Test 6: Error - WEEKLY habit without activeDays
+echo "Test 6: POST /api/habits (WEEKLY habit without activeDays - should fail)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+    -d "{\"title\":\"Invalid Weekly ${TIMESTAMP}\",\"type\":\"WEEKLY\",\"targetCount\":10}" \
+    "${BASE_URL}/api/habits")
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+echo "Status: $HTTP_CODE"
+if [ "$HTTP_CODE" == "400" ]; then
+    echo "✅ Correctly rejected WEEKLY habit without activeDays"
+else
+    echo "❌ ERROR: Expected 400, got $HTTP_CODE"
+    echo "Response: $BODY"
+fi
+echo ""
+
+# Test 7: Error - Habit without targetCount or endDate
+echo "Test 7: POST /api/habits (Habit without targetCount or endDate - should fail)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+    -d "{\"title\":\"Invalid Habit ${TIMESTAMP}\",\"type\":\"DAILY\"}" \
+    "${BASE_URL}/api/habits")
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+echo "Status: $HTTP_CODE"
+if [ "$HTTP_CODE" == "400" ]; then
+    echo "✅ Correctly rejected habit without targetCount or endDate"
+else
+    echo "❌ ERROR: Expected 400, got $HTTP_CODE"
+    echo "Response: $BODY"
+fi
+echo ""
+
+# Test 8: Log DAILY habit multiple times
+if [ -n "$DAILY_HABIT_ID" ]; then
+    echo "Test 8: POST /api/habits/${DAILY_HABIT_ID}/log (Log DAILY habit - first log)"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+        -d '{"count":1}' \
+        "${BASE_URL}/api/habits/${DAILY_HABIT_ID}/log")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    echo "Status: $HTTP_CODE"
+    if [ "$HTTP_CODE" == "201" ]; then
+        echo "✅ Logged DAILY habit (count: 1)"
+    else
+        echo "❌ ERROR: Expected 201, got $HTTP_CODE"
+        echo "Response: $BODY"
+    fi
+    echo ""
+
+    echo "Test 9: POST /api/habits/${DAILY_HABIT_ID}/log (Log DAILY habit again - should increment)"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+        -d '{"count":1}' \
+        "${BASE_URL}/api/habits/${DAILY_HABIT_ID}/log")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    UPDATED_COUNT=$(echo "$BODY" | jq -r '.data.count // empty')
+    echo "Status: $HTTP_CODE"
+    if [ "$HTTP_CODE" == "200" ] && [ "$UPDATED_COUNT" == "2" ]; then
+        echo "✅ Logged DAILY habit again (count incremented to: $UPDATED_COUNT)"
+    else
+        echo "❌ ERROR: Expected 200 with count=2, got $HTTP_CODE, count=$UPDATED_COUNT"
+        echo "Response: $BODY"
+    fi
+    echo ""
+
+    echo "Test 10: GET /api/habits/${DAILY_HABIT_ID} (Check progress calculation)"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -H "Cookie: ${COOKIE}" "${BASE_URL}/api/habits/${DAILY_HABIT_ID}")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    echo "Status: $HTTP_CODE"
+    if [ "$HTTP_CODE" == "200" ]; then
+        TARGET_COUNT=$(echo "$BODY" | jq -r '.data.targetCount // empty')
+        echo "✅ Retrieved habit: targetCount=$TARGET_COUNT"
+        echo "Note: Progress is calculated on-demand via calculateHabitCompletion()"
+        echo "Expected progress: (2 / $TARGET_COUNT) × 100"
+    else
+        echo "❌ ERROR: Expected 200, got $HTTP_CODE"
+        echo "Response: $BODY"
+    fi
+    echo ""
+fi
+
+# Test 11: Log WEEKLY habit on different days
+if [ -n "$WEEKLY_HABIT_ID" ]; then
+    echo "Test 11: POST /api/habits/${WEEKLY_HABIT_ID}/log (Log WEEKLY habit - Monday)"
+    MONDAY_DATE=$(date -u +"%Y-%m-%dT00:00:00Z")
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+        -d "{\"count\":1,\"date\":\"${MONDAY_DATE}\"}" \
+        "${BASE_URL}/api/habits/${WEEKLY_HABIT_ID}/log")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    echo "Status: $HTTP_CODE"
+    if [ "$HTTP_CODE" == "201" ]; then
+        echo "✅ Logged WEEKLY habit on Monday"
+    else
+        echo "❌ ERROR: Expected 201, got $HTTP_CODE"
+        echo "Response: $BODY"
+    fi
+    echo ""
+
+    echo "Test 12: POST /api/habits/${WEEKLY_HABIT_ID}/log (Log WEEKLY habit - Wednesday)"
+    WEDNESDAY_DATE=$(date -u -v+2d +"%Y-%m-%dT00:00:00Z" 2>/dev/null || date -u -d "+2 days" +"%Y-%m-%dT00:00:00Z" 2>/dev/null || echo "$MONDAY_DATE")
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+        -d "{\"count\":1,\"date\":\"${WEDNESDAY_DATE}\"}" \
+        "${BASE_URL}/api/habits/${WEEKLY_HABIT_ID}/log")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    echo "Status: $HTTP_CODE"
+    if [ "$HTTP_CODE" == "201" ]; then
+        echo "✅ Logged WEEKLY habit on Wednesday"
+    else
+        echo "❌ ERROR: Expected 201, got $HTTP_CODE"
+        echo "Response: $BODY"
+    fi
+    echo ""
+
+    echo "Test 13: GET /api/habits/${WEEKLY_HABIT_ID}/log (Get all logs)"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -H "Cookie: ${COOKIE}" "${BASE_URL}/api/habits/${WEEKLY_HABIT_ID}/log")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    LOG_COUNT=$(echo "$BODY" | jq -r '.data | length // 0')
+    echo "Status: $HTTP_CODE"
+    if [ "$HTTP_CODE" == "200" ]; then
+        echo "✅ Retrieved logs: $LOG_COUNT log(s) found"
+        echo "Logs: $BODY" | jq '.data'
+    else
+        echo "❌ ERROR: Expected 200, got $HTTP_CODE"
+        echo "Response: $BODY"
+    fi
+    echo ""
+fi
+
+# Test 14: Log MONTHLY habit
+if [ -n "$MONTHLY_HABIT_ID" ]; then
+    echo "Test 14: POST /api/habits/${MONTHLY_HABIT_ID}/log (Log MONTHLY habit)"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+        -d '{"count":1}' \
+        "${BASE_URL}/api/habits/${MONTHLY_HABIT_ID}/log")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    echo "Status: $HTTP_CODE"
+    if [ "$HTTP_CODE" == "201" ]; then
+        echo "✅ Logged MONTHLY habit"
+    else
+        echo "❌ ERROR: Expected 201, got $HTTP_CODE"
+        echo "Response: $BODY"
+    fi
+    echo ""
+fi
+
+# Test 15: Update habit (change targetCount)
+if [ -n "$DAILY_HABIT_ID" ]; then
+    echo "Test 15: PUT /api/habits/${DAILY_HABIT_ID} (Update targetCount)"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+        -d '{"targetCount":60}' \
+        "${BASE_URL}/api/habits/${DAILY_HABIT_ID}")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    NEW_TARGET=$(echo "$BODY" | jq -r '.data.targetCount // empty')
+    echo "Status: $HTTP_CODE"
+    if [ "$HTTP_CODE" == "200" ] && [ "$NEW_TARGET" == "60" ]; then
+        echo "✅ Updated targetCount to: $NEW_TARGET"
+    else
+        echo "❌ ERROR: Expected 200 with targetCount=60, got $HTTP_CODE, targetCount=$NEW_TARGET"
+        echo "Response: $BODY"
+    fi
+    echo ""
+fi
+
+# Test 16: Update WEEKLY habit (change activeDays)
+if [ -n "$WEEKLY_HABIT_ID" ]; then
+    echo "Test 16: PUT /api/habits/${WEEKLY_HABIT_ID} (Update activeDays)"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+        -d '{"activeDays":[0,2,4,6]}' \
+        "${BASE_URL}/api/habits/${WEEKLY_HABIT_ID}")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    NEW_ACTIVE_DAYS=$(echo "$BODY" | jq -r '.data.activeDays // []')
+    echo "Status: $HTTP_CODE"
+    if [ "$HTTP_CODE" == "200" ]; then
+        echo "✅ Updated activeDays to: $NEW_ACTIVE_DAYS"
+    else
+        echo "❌ ERROR: Expected 200, got $HTTP_CODE"
+        echo "Response: $BODY"
+    fi
+    echo ""
+fi
+
+# Test 17: Get all habits and verify types
+echo "Test 17: GET /api/habits (Get all habits)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -H "Cookie: ${COOKIE}" "${BASE_URL}/api/habits")
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+HABIT_COUNT=$(echo "$BODY" | jq -r '.data | length // 0')
+echo "Status: $HTTP_CODE"
+if [ "$HTTP_CODE" == "200" ]; then
+    echo "✅ Retrieved $HABIT_COUNT habit(s)"
+    echo "Habit types breakdown:"
+    echo "$BODY" | jq -r '.data[] | "  - \(.title): \(.type) (targetCount: \(.targetCount), activeDays: \(.activeDays // []))"'
+else
+    echo "❌ ERROR: Expected 200, got $HTTP_CODE"
+    echo "Response: $BODY"
+fi
+echo ""
+
+echo "=== HABIT TESTS COMPLETE ==="
+echo ""

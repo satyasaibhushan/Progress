@@ -9,6 +9,7 @@ import {
   addChildToTask,
   removeChildFromTask,
 } from "@/lib/progress-calculator"
+import { serializeTask } from "@/lib/utils"
 
 // GET /api/tasks/[id] - Get a specific task
 export async function GET(
@@ -84,7 +85,7 @@ export async function GET(
       return NextResponse.json({ error: "Task not found" }, { status: 404 })
     }
 
-    return NextResponse.json({ data: task })
+    return NextResponse.json({ data: serializeTask(task) })
   } catch (error) {
     return handleApiError(error)
   }
@@ -278,7 +279,7 @@ export async function PUT(
       }
     }
 
-    return NextResponse.json({ data: task })
+    return NextResponse.json({ data: serializeTask(task) })
   } catch (error) {
     return handleApiError(error)
   }

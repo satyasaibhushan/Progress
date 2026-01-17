@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
+import { serializeTask } from "@/lib/utils"
 import { z } from "zod"
 
 const addLabelSchema = z.object({
@@ -84,7 +85,7 @@ export async function POST(
       },
     })
 
-    return NextResponse.json({ data: updatedTask })
+    return NextResponse.json({ data: serializeTask(updatedTask) })
   } catch (error) {
     return handleApiError(error)
   }
@@ -153,7 +154,7 @@ export async function DELETE(
       },
     })
 
-    return NextResponse.json({ data: updatedTask })
+    return NextResponse.json({ data: serializeTask(updatedTask) })
   } catch (error) {
     return handleApiError(error)
   }

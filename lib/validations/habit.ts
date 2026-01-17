@@ -10,7 +10,7 @@ export const createHabitSchema = z.object({
     .int()
     .positive("Target count must be positive")
     .optional()
-    .nullable(),
+    .nullable(), // Can be auto-calculated from endDate
   importance: z
     .number()
     .int()
@@ -18,6 +18,10 @@ export const createHabitSchema = z.object({
     .max(100, "Importance must be at most 100")
     .default(50),
   endDate: z.string().datetime().optional().nullable(),
+  activeDays: z
+    .array(z.number().int().min(0).max(6)) // 0=Sun, 1=Mon, ..., 6=Sat
+    .optional()
+    .nullable(), // Required for WEEKLY habits, optional for others
   groupId: z.string().optional().nullable(),
   parentTaskId: z.string().optional().nullable(),
 })
@@ -31,7 +35,7 @@ export const updateHabitSchema = z.object({
     .int()
     .positive("Target count must be positive")
     .optional()
-    .nullable(),
+    .nullable(), // Can be auto-calculated from endDate
   importance: z
     .number()
     .int()
@@ -39,11 +43,15 @@ export const updateHabitSchema = z.object({
     .max(100, "Importance must be at most 100")
     .optional(),
   endDate: z.string().datetime().optional().nullable(),
+  activeDays: z
+    .array(z.number().int().min(0).max(6)) // 0=Sun, 1=Mon, ..., 6=Sat
+    .optional()
+    .nullable(),
   groupId: z.string().optional().nullable(),
   parentTaskId: z.string().optional().nullable(),
 })
 
 export const logHabitSchema = z.object({
   date: z.string().datetime().optional(), // defaults to today if not provided
-  count: z.number().int().positive().default(1), // for N_PER_DAY habits
+  count: z.number().int().positive().default(1), // number of times logged
 })

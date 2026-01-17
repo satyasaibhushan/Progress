@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma"
 import { updateHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
-import { addHabitToTask, removeHabitFromTask } from "@/lib/progress-calculator"
+import { addHabitToTask, removeHabitFromTask, calculateHabitCompletion } from "@/lib/progress-calculator"
+import { calculateTargetCount } from "@/lib/habit-helpers"
 
 // GET /api/habits/[id] - Get a specific habit
 export async function GET(
@@ -56,7 +57,15 @@ export async function GET(
       return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
 
-    return NextResponse.json({ data: habit })
+    // Calculate progress on-demand
+    const progress = await calculateHabitCompletion(habit.id)
+
+    return NextResponse.json({
+      data: {
+        ...habit,
+        progress,
+      },
+    })
   } catch (error) {
     return handleApiError(error)
   }
@@ -91,16 +100,51 @@ export async function PUT(
       await validateUniqueHabitTitle(userId, validatedData.title, id)
     }
 
-    // Validate targetCount for N_PER_DAY habits
+    // Validate activeDays for WEEKLY habits
     const finalType = validatedData.type ?? existingHabit.type
-    if (finalType === "N_PER_DAY") {
-      const finalTarget = validatedData.targetCount ?? existingHabit.targetCount
-      if (!finalTarget || finalTarget < 1) {
+    const finalActiveDays = validatedData.activeDays ?? existingHabit.activeDays
+    
+    if (finalType === "WEEKLY") {
+      if (!finalActiveDays || finalActiveDays.length === 0) {
         return NextResponse.json(
-          { error: "targetCount is required for N_PER_DAY habits and must be positive" },
+          { error: "activeDays is required for WEEKLY habits" },
           { status: 400 }
         )
       }
+      // Validate day numbers are 0-6
+      const invalidDays = finalActiveDays.filter((day: number) => day < 0 || day > 6)
+      if (invalidDays.length > 0) {
+        return NextResponse.json(
+          { error: "activeDays must contain numbers between 0 (Sunday) and 6 (Saturday)" },
+          { status: 400 }
+        )
+      }
+    }
+
+    // Auto-calculate targetCount if not provided but endDate is set/changed
+    let targetCount = validatedData.targetCount ?? existingHabit.targetCount
+    const finalEndDate = validatedData.endDate !== undefined 
+      ? (validatedData.endDate ? new Date(validatedData.endDate) : null)
+      : existingHabit.endDate
+    
+    if (!targetCount && finalEndDate) {
+      const calculated = calculateTargetCount(
+        finalType,
+        finalEndDate,
+        finalActiveDays,
+        existingHabit.createdAt
+      )
+      if (calculated !== null) {
+        targetCount = calculated
+      }
+    }
+
+    // Ensure targetCount is set
+    if (!targetCount || targetCount < 1) {
+      return NextResponse.json(
+        { error: "targetCount is required and must be positive. Provide it directly or set endDate to auto-calculate." },
+        { status: 400 }
+      )
     }
 
     // If parentTaskId is being updated, verify it exists and belongs to user
@@ -137,10 +181,46 @@ export async function PUT(
       }
     }
 
-    // Convert endDate string to Date if provided
-    const updateData: any = { ...validatedData }
-    if (validatedData.endDate) {
-      updateData.endDate = new Date(validatedData.endDate)
+    // Prepare update data
+    const updateData: {
+      title?: string
+      description?: string | null
+      type?: string
+      targetCount?: number
+      importance?: number
+      endDate?: Date | null
+      activeDays?: number[]
+      groupId?: string | null
+      parentTaskId?: string | null
+    } = {}
+
+    if (validatedData.title !== undefined) updateData.title = validatedData.title
+    if (validatedData.description !== undefined) updateData.description = validatedData.description ?? null
+    if (validatedData.type !== undefined) updateData.type = validatedData.type
+    if (validatedData.importance !== undefined) updateData.importance = validatedData.importance
+    if (validatedData.groupId !== undefined) updateData.groupId = validatedData.groupId ?? null
+    if (validatedData.parentTaskId !== undefined) updateData.parentTaskId = validatedData.parentTaskId ?? null
+    
+    // Set targetCount (use calculated if auto-calculated, otherwise use provided or existing)
+    if (targetCount !== existingHabit.targetCount) {
+      updateData.targetCount = targetCount
+    }
+    
+    // Set endDate
+    if (validatedData.endDate !== undefined) {
+      updateData.endDate = validatedData.endDate ? new Date(validatedData.endDate) : null
+    }
+    
+    // Set activeDays
+    if (validatedData.activeDays !== undefined) {
+      if (finalType === "WEEKLY") {
+        updateData.activeDays = validatedData.activeDays || []
+      } else {
+        updateData.activeDays = []
+      }
+    } else if (validatedData.type !== undefined && validatedData.type !== "WEEKLY") {
+      // If type changed from WEEKLY to something else, clear activeDays
+      updateData.activeDays = []
     }
 
     const habit = await prisma.habit.update({
@@ -193,7 +273,15 @@ export async function PUT(
       }
     }
 
-    return NextResponse.json({ data: habit })
+    // Calculate progress on-demand
+    const progress = await calculateHabitCompletion(habit.id)
+
+    return NextResponse.json({
+      data: {
+        ...habit,
+        progress,
+      },
+    })
   } catch (error) {
     return handleApiError(error)
   }

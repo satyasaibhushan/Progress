@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
   output   = "../lib/generated/prisma"
@@ -11,209 +8,171 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============================================================================
-// NextAuth.js Models
-// ============================================================================
-
-model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String?
-  image         String?
-  emailVerified DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  // Relations
-  accounts Account[]
-  sessions Session[]
-  groups   Group[]
-  tasks    Task[]
-  habits   Habit[]
-  labels   Label[]
-
-  @@map("users")
-}
-
-model Account {
-  id                String  @id @default(cuid())
+model accounts {
+  id                String  @id
   userId            String
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
+  refresh_token     String?
+  access_token      String?
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String? @db.Text
+  id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  users             users   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
-  @@map("accounts")
 }
 
-model Session {
-  id           String   @id @default(cuid())
+model groups {
+  id          String   @id
+  name        String
+  description String?
+  color       String?
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+  users       users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  habits      habits[]
+  tasks       tasks[]
+
+  @@index([userId])
+}
+
+model habit_labels {
+  habitId String
+  labelId String
+  habits  habits @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  labels  labels @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([habitId, labelId])
+}
+
+model habit_logs {
+  id        String   @id
+  habitId   String
+  date      DateTime @db.Date
+  count     Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+  habits    habits   @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  @@unique([habitId, date])
+  @@index([date])
+  @@index([habitId])
+}
+
+model habits {
+  id           String         @id
+  title        String
+  description  String?
+  type         HabitType      @default(DAILY)
+  targetCount  Int
+  importance   Int            @default(50)
+  endDate      DateTime?
+  userId       String
+  groupId      String?
+  parentTaskId String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime
+  activeDays   Int[]          @default([])
+  habit_labels habit_labels[]
+  habit_logs   habit_logs[]
+  groups       groups?        @relation(fields: [groupId], references: [id])
+  tasks        tasks?         @relation(fields: [parentTaskId], references: [id], onDelete: Cascade)
+  users        users          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@index([parentTaskId])
+  @@index([userId])
+}
+
+model labels {
+  id           String         @id
+  name         String
+  color        String?
+  userId       String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime
+  habit_labels habit_labels[]
+  users        users          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task_labels  task_labels[]
+
+  @@index([userId])
+}
+
+model sessions {
+  id           String   @id
   sessionToken String   @unique
   userId       String
   expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("sessions")
+  users        users    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-model VerificationToken {
+model task_labels {
+  taskId  String
+  labelId String
+  labels  labels @relation(fields: [labelId], references: [id], onDelete: Cascade)
+  tasks   tasks  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, labelId])
+}
+
+model tasks {
+  id                String        @id
+  title             String
+  description       String?
+  importance        Int           @default(50)
+  progress          Float?        @default(0)
+  total_weight      BigInt?
+  weighted_progress BigInt?
+  deadline          DateTime?
+  groupId           String?
+  parentId          String?
+  userId            String
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime
+  habits            habits[]
+  task_labels       task_labels[]
+  groups            groups?       @relation(fields: [groupId], references: [id])
+  tasks             tasks?        @relation("tasksTotasks", fields: [parentId], references: [id], onDelete: Cascade)
+  other_tasks       tasks[]       @relation("tasksTotasks")
+  users             users         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([deadline])
+  @@index([groupId])
+  @@index([parentId])
+  @@index([userId])
+}
+
+model users {
+  id            String     @id
+  email         String     @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime
+  accounts      accounts[]
+  groups        groups[]
+  habits        habits[]
+  labels        labels[]
+  sessions      sessions[]
+  tasks         tasks[]
+}
+
+model verification_tokens {
   identifier String
   token      String   @unique
   expires    DateTime
 
   @@unique([identifier, token])
-  @@map("verification_tokens")
-}
-
-// ============================================================================
-// Application Models
-// ============================================================================
-
-model Group {
-  id          String   @id @default(cuid())
-  name        String
-  description String?
-  color       String? // hex color for UI
-  userId      String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tasks  Task[]
-  habits Habit[]
-
-  @@index([userId])
-  @@map("groups")
-}
-
-model Task {
-  id                String    @id @default(cuid())
-  title             String
-  description       String?   @db.Text
-  importance        Int       @default(50) // 1-100 weightage (weight for leaf tasks)
-  progress          Float?    @default(0) // 0-100 percentage (only for leaf tasks, NULL for parents)
-  total_weight      BigInt? // Σ weights of all descendant leaves (only for parent tasks)
-  weighted_progress BigInt? // Σ(progress × weight) of descendant leaves (only for parent tasks)
-  deadline          DateTime?
-  groupId           String? // Category/Group
-  parentId          String? // Self-referential for infinite nesting (null = root/"goal")
-  userId            String
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  // Relations
-  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  group    Group?      @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  parent   Task?       @relation("TaskHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
-  children Task[]      @relation("TaskHierarchy")
-  labels   TaskLabel[]
-  habits   Habit[]     // Habits can be children of tasks
-
-  @@index([userId])
-  @@index([groupId])
-  @@index([parentId])
-  @@index([deadline])
-  @@map("tasks")
 }
 
 enum HabitType {
   DAILY
-  N_PER_DAY
   WEEKLY
   MONTHLY
-}
-
-model Habit {
-  id           String    @id @default(cuid())
-  title        String
-  description  String?   @db.Text
-  type         HabitType @default(DAILY)
-  targetCount  Int? // for N_PER_DAY type
-  importance   Int       @default(50) // 1-100 weightage
-  endDate      DateTime?
-  userId       String
-  groupId      String?
-  parentTaskId String? // Habit can be a child of a task
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  // Relations
-  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  group      Group?       @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  parentTask Task?        @relation(fields: [parentTaskId], references: [id], onDelete: Cascade)
-  labels     HabitLabel[]
-  habitLogs  HabitLog[]
-
-  @@index([userId])
-  @@index([groupId])
-  @@index([parentTaskId])
-  @@map("habits")
-}
-
-model HabitLog {
-  id        String   @id @default(cuid())
-  habitId   String
-  date      DateTime @db.Date // day level, no time
-  count     Int      @default(1) // number of times logged that day
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  habit Habit @relation(fields: [habitId], references: [id], onDelete: Cascade)
-
-  @@unique([habitId, date])
-  @@index([habitId])
-  @@index([date])
-  @@map("habit_logs")
-}
-
-model Label {
-  id        String   @id @default(cuid())
-  name      String
-  color     String? // hex color
-  userId    String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tasks  TaskLabel[]
-  habits HabitLabel[]
-
-  @@index([userId])
-  @@map("labels")
-}
-
-// ============================================================================
-// Many-to-Many Join Tables
-// ============================================================================
-
-model TaskLabel {
-  taskId  String
-  labelId String
-  task    Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  label   Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
-
-  @@id([taskId, labelId])
-  @@map("task_labels")
-}
-
-model HabitLabel {
-  habitId String
-  labelId String
-  habit   Habit  @relation(fields: [habitId], references: [id], onDelete: Cascade)
-  label   Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
-
-  @@id([habitId, labelId])
-  @@map("habit_labels")
 }

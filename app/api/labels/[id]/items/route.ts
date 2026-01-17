@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
+import { serializeTasks } from "@/lib/utils"
 
 // GET /api/labels/[id]/items - Get all tasks and habits with this label
 export async function GET(
@@ -107,7 +108,7 @@ export async function GET(
     return NextResponse.json({
       data: {
         label,
-        tasks,
+        tasks: serializeTasks(tasks),
         habits,
       },
     })

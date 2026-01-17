@@ -245,9 +245,11 @@ Key Changes:
   id: string (UUID)
   title: string
   description: string?
-  type: enum (DAILY, N_PER_DAY, WEEKLY, MONTHLY)
-  targetPerDay: int? (for N_PER_DAY type)
-  endDate: DateTime?
+  type: enum (DAILY, WEEKLY, MONTHLY)
+  targetCount: int (required - total cumulative count, can be auto-calculated from endDate)
+  importance: int (1-100 weightage)
+  endDate: DateTime? (used for auto-calculating targetCount and urgency)
+  activeDays: int[] (for WEEKLY habits: [0=Sun, 1=Mon, ..., 6=Sat])
   userId: string
   groupId: string?
   parentTaskId: string? (habit can be child of a task)
@@ -268,15 +270,17 @@ Key Changes:
 {
   id: string (UUID)
   habitId: string
-  completedAt: DateTime (timestamp when logged)
-  count: int (for N_PER_DAY habits, increments daily)
+  date: Date (date when logged)
+  count: int (number of times logged, increments if log exists for date)
   createdAt: DateTime
+  updatedAt: DateTime
 
   // Relations
   habit: Habit
 
-  // Note: For N_PER_DAY, multiple logs on same day
-  // increment count on existing log for that day
+  // Note: All habit types allow multiple logs per day
+  // If log exists for a date, count is incremented
+  // Progress is cumulative: (total count of all logs / targetCount) × 100
 }
 ```
 
@@ -355,10 +359,14 @@ Key Changes:
 │   ├── route.ts              (GET all with filters, POST)
 │   │                         (Filters: ?type={type}, ?groupId={id})
 │   │                         (         ?parentTaskId={id})
+│   │                         (POST: auto-calculates targetCount from endDate if not provided)
+│   │                         (POST: validates activeDays for WEEKLY habits)
 │   └── [id]
 │       ├── route.ts          (GET, PUT, DELETE)
+│       │                     (PUT: auto-calculates targetCount from endDate if changed)
 │       ├── log
 │       │   └── route.ts      (POST log, GET logs, DELETE log)
+│       │                     (POST: increments count if log exists for date)
 │       │                     (GET filters: ?startDate=, ?endDate=)
 │       └── labels
 │           └── route.ts      (POST add, DELETE remove label)
@@ -537,13 +545,23 @@ Where:
 **Habit Completion Rate Calculation:**
 ```typescript
 For each linked habit (habit.parentTaskId = task.id):
-  - DAILY: completed if logged today
-  - N_PER_DAY: (logsToday / targetPerDay) × 100
-  - WEEKLY: completed if logged ≥ 1 day this week
-  - MONTHLY: completed if logged ≥ 1 day this month
+  - All types use cumulative progress: (total count of all logs / targetCount) × 100
+  - Progress is calculated on-demand, not stored
+  - Capped at 100%
 
 habitCompletionRate = Σ(habitCompletion) / numberOfLinkedHabits
 ```
+
+**Habit Progress Details:**
+- **DAILY:** Can be logged multiple times per day, progress = (total logs / targetCount) × 100
+- **WEEKLY:** Can be logged n times per week on specific days (activeDays), progress = (total logs / targetCount) × 100
+- **MONTHLY:** Can be logged n times per month, progress = (total logs / targetCount) × 100
+- **targetCount:** Required, can be provided manually or auto-calculated from endDate:
+  - DAILY: days between start and endDate
+  - WEEKLY: count of active days in date range
+  - MONTHLY: number of months between start and endDate
+- **activeDays:** Required for WEEKLY habits (array of day numbers 0-6)
+- **Logging:** All habits allow logging on any day (activeDays used for suggestions only)
 
 **Example:**
 ```
@@ -681,7 +699,7 @@ Return suggestion with:
 │   ├── habit-form.tsx
 │   ├── habit-calendar.tsx
 │   ├── habit-log-button.tsx
-│   └── filling-circle.tsx     # Visual for n-per-day
+│   └── progress-indicator.tsx  # Visual for cumulative progress
 ├── shared
 │   ├── label-selector.tsx
 │   ├── importance-selector.tsx
@@ -828,7 +846,8 @@ model HabitLog {
 - **Check Constraints:**
   - Progress values between 0-100
   - Importance values between 1-100
-  - targetPerDay > 0 for N_PER_DAY habits
+  - targetCount > 0 for all habits (required)
+  - activeDays contains values 0-6 for WEEKLY habits
 - **Self-Referential Constraint:**
   - Task.parentId references Task.id (allows infinite nesting)
   - Prevents circular references via application logic

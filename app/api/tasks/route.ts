@@ -4,6 +4,7 @@ import { createTaskSchema } from "@/lib/validations/task"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueTaskTitle } from "@/lib/validations/uniqueness"
 import { addChildToTask } from "@/lib/progress-calculator"
+import { serializeTask, serializeTasks } from "@/lib/utils"
 
 // GET /api/tasks - Get all tasks for the authenticated user with optional filters
 export async function GET(request: Request) {
@@ -82,7 +83,7 @@ export async function GET(request: Request) {
       ],
     })
 
-    return NextResponse.json({ data: tasks })
+    return NextResponse.json({ data: serializeTasks(tasks) })
   } catch (error) {
     return handleApiError(error)
   }
@@ -180,12 +181,13 @@ export async function POST(request: Request) {
     // If this is a leaf task (no children, no habits) and has a parent, add it to parent's aggregates
     const isLeaf = task._count.children === 0 && task._count.habits === 0
     if (isLeaf && task.parentId) {
+      const taskProgress = (task as { progress?: number | null }).progress ?? 0
       const weight = BigInt(task.importance)
-      const weightedProgress = BigInt(Math.round((task.progress || 0) * task.importance))
+      const weightedProgress = BigInt(Math.round(taskProgress * task.importance))
       await addChildToTask(task.parentId, weight, weightedProgress)
     }
 
-    return NextResponse.json({ data: task }, { status: 201 })
+    return NextResponse.json({ data: serializeTask(task) }, { status: 201 })
   } catch (error) {
     return handleApiError(error)
   }

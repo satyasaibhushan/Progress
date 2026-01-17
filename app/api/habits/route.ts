@@ -3,7 +3,9 @@ import { prisma } from "@/lib/prisma"
 import { createHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
-import { addHabitToTask } from "@/lib/progress-calculator"
+import { addHabitToTask, calculateHabitCompletion } from "@/lib/progress-calculator"
+import { calculateTargetCount } from "@/lib/habit-helpers"
+import { HabitType } from "@/lib/generated/prisma"
 
 // GET /api/habits - Get all habits for the authenticated user with optional filters
 export async function GET(request: Request) {
@@ -17,7 +19,12 @@ export async function GET(request: Request) {
     const type = searchParams.get("type")
 
     // Build where clause
-    const where: any = { userId }
+    const where: {
+      userId: string
+      groupId?: string
+      parentTaskId?: string | null
+      type?: HabitType
+    } = { userId }
 
     if (groupId) {
       where.groupId = groupId
@@ -32,7 +39,7 @@ export async function GET(request: Request) {
     }
 
     if (type) {
-      where.type = type
+      where.type = type as HabitType
     }
 
     const habits = await prisma.habit.findMany({
@@ -67,7 +74,18 @@ export async function GET(request: Request) {
       },
     })
 
-    return NextResponse.json({ data: habits })
+    // Calculate progress for each habit
+    const habitsWithProgress = await Promise.all(
+      habits.map(async (habit) => {
+        const progress = await calculateHabitCompletion(habit.id)
+        return {
+          ...habit,
+          progress,
+        }
+      })
+    )
+
+    return NextResponse.json({ data: habitsWithProgress })
   } catch (error) {
     return handleApiError(error)
   }
@@ -84,14 +102,49 @@ export async function POST(request: Request) {
     // Validate unique title
     await validateUniqueHabitTitle(userId, validatedData.title)
 
-    // Validate targetCount is provided for N_PER_DAY habits
-    if (validatedData.type === "N_PER_DAY") {
-      if (!validatedData.targetCount || validatedData.targetCount < 1) {
+    // Validate activeDays for WEEKLY habits
+    if (validatedData.type === "WEEKLY") {
+      if (!validatedData.activeDays || validatedData.activeDays.length === 0) {
         return NextResponse.json(
-          { error: "targetCount is required for N_PER_DAY habits and must be positive" },
+          { error: "activeDays is required for WEEKLY habits" },
           { status: 400 }
         )
       }
+      // Validate day numbers are 0-6
+      const invalidDays = validatedData.activeDays.filter(day => day < 0 || day > 6)
+      if (invalidDays.length > 0) {
+        return NextResponse.json(
+          { error: "activeDays must contain numbers between 0 (Sunday) and 6 (Saturday)" },
+          { status: 400 }
+        )
+      }
+    }
+
+    // Auto-calculate targetCount if not provided
+    let targetCount = validatedData.targetCount
+    if (!targetCount && validatedData.endDate) {
+      const endDate = new Date(validatedData.endDate)
+      const calculated = calculateTargetCount(
+        validatedData.type,
+        endDate,
+        validatedData.activeDays || null,
+        new Date()
+      )
+      if (calculated === null) {
+        return NextResponse.json(
+          { error: "Cannot auto-calculate targetCount. Please provide targetCount or ensure endDate is valid and activeDays is set for WEEKLY habits." },
+          { status: 400 }
+        )
+      }
+      targetCount = calculated
+    }
+
+    // Ensure targetCount is set
+    if (!targetCount || targetCount < 1) {
+      return NextResponse.json(
+        { error: "targetCount is required and must be positive. Provide it directly or set endDate to auto-calculate." },
+        { status: 400 }
+      )
     }
 
     // If parentTaskId is provided, verify it exists and belongs to user
@@ -128,14 +181,31 @@ export async function POST(request: Request) {
       }
     }
 
-    // Convert endDate string to Date if provided
-    const habitData: any = {
-      ...validatedData,
+    // Prepare habit data
+    const habitData = {
+      title: validatedData.title,
+      description: validatedData.description ?? null,
+      type: validatedData.type as "DAILY" | "WEEKLY" | "MONTHLY",
+      targetCount: targetCount,
+      importance: validatedData.importance,
       userId,
+      groupId: validatedData.groupId ?? null,
+      parentTaskId: validatedData.parentTaskId ?? null,
+      endDate: validatedData.endDate ? new Date(validatedData.endDate) : null,
+      activeDays: validatedData.type === "WEEKLY" ? (validatedData.activeDays || []) : [],
     }
 
     if (validatedData.endDate) {
       habitData.endDate = new Date(validatedData.endDate)
+    } else {
+      habitData.endDate = null
+    }
+
+    // Set activeDays (empty array for non-weekly habits, or provided array for weekly)
+    if (validatedData.type === "WEEKLY") {
+      habitData.activeDays = validatedData.activeDays || []
+    } else {
+      habitData.activeDays = []
     }
 
     const habit = await prisma.habit.create({

@@ -133,14 +133,18 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 
 ### Task 4.3: Habits API
 **Status:** ✅ Completed
-**Description:** Create CRUD operations for habits.
+**Description:** Create CRUD operations for habits with cumulative progress tracking.
 **What to do:**
 - Create API routes: `/api/habits` (GET, POST, PUT, DELETE)
-- Implement habit types (daily, n-per-day, weekly, monthly)
+- Implement habit types (DAILY, WEEKLY, MONTHLY)
+- Implement targetCount (required, can be auto-calculated from endDate)
+- Implement activeDays field for WEEKLY habits (array of day numbers 0-6)
 - Handle labels association
 - Support parentTaskId (habit can be child of a task)
-- Create habit logging endpoint `/api/habits/[id]/log`
-- Implement calendar query for habit completion
+- Create habit logging endpoint `/api/habits/[id]/log` (allows logging on any day, increments count)
+- Implement cumulative progress calculation: (total logs / targetCount) × 100
+- Auto-calculate targetCount from endDate if not provided
+- Validate activeDays for WEEKLY habits
 - Test all endpoints
 
 ### Task 4.4: Labels API
@@ -190,17 +194,26 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 
 ### Task 5.3: Habit Completion Tracking
 **Status:** ✅ Completed
-**Description:** Calculate habit completion based on type and calendar logs.
+**Description:** Calculate habit completion using cumulative progress based on total logs.
 **What was done:**
-- Created `calculateHabitCompletionToday()` function supporting all habit types:
-  - DAILY: 100% if logged today, 0% otherwise
-  - N_PER_DAY: `(count / targetCount) × 100`
-  - WEEKLY: 100% if logged at least once this week
-  - MONTHLY: 100% if logged at least once this month
+- **Habit Types:** Simplified to DAILY, WEEKLY, MONTHLY (removed N_PER_DAY)
+- **Progress Calculation:** Changed to cumulative approach - `(total count of all logs / targetCount) × 100`
+  - All habit types use the same cumulative formula
+  - Progress is calculated on-demand, not stored
+  - Capped at 100%
+- **targetCount:** Required field (can be provided or auto-calculated from endDate)
+  - **DAILY:** `days between start and endDate`
+  - **WEEKLY:** `count of active days in date range`
+  - **MONTHLY:** `number of months between start and endDate`
+- **activeDays:** New field for WEEKLY habits (Int[] array of day numbers: 0=Sun, 1=Mon, ..., 6=Sat)
+- **endDate:** Used for auto-calculating targetCount and urgency calculation (optional)
+- Created `calculateHabitCompletion()` function (replaces `calculateHabitCompletionToday()`)
+- Created `calculateTargetCount()` helper function for auto-calculation
 - Created `updateHabitProgress()` - Update parent task aggregates when habit completion changes
 - Created `addHabitToTask()` - Add habit to parent task's aggregates
 - Created `removeHabitFromTask()` - Remove habit from parent task's aggregates
 - Integrated automatic aggregate updates into habit create/update/delete/log operations
+- Updated habit API routes to handle activeDays validation and targetCount auto-calculation
 - Added bonus functions:
   - `calculateLabelProgress()` - Calculate progress by label (on-demand)
   - `calculateGroupProgress()` - Calculate progress by group (on-demand)
@@ -296,16 +309,18 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 **What to do:**
 - Create habits list view
 - Build habit create/edit form with:
-  - Type selector (daily/n-per-day/weekly/monthly)
-  - End date picker
+  - Type selector (DAILY, WEEKLY, MONTHLY)
+  - targetCount input (or auto-calculate from endDate)
+  - End date picker (for auto-calculation and urgency)
+  - Active days selector for WEEKLY habits (day of week checkboxes: Sun-Sat)
   - Labels selection
   - Group assignment
 - Create habit calendar view
 - Implement daily logging interface:
-  - Filling circle visualization for n-per-day
-  - Check/uncheck for daily habits
+  - Count input for all habit types (increments if log exists for date)
+  - Progress visualization showing cumulative progress
   - Visual streak indicators
-- Show habit statistics (current streak, completion rate)
+- Show habit statistics (current progress, total logs, targetCount)
 
 ### Task 7.7: Labels & Filters UI
 **Status:** Pending
