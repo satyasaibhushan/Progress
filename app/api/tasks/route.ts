@@ -54,7 +54,7 @@ export async function GET(request: Request) {
             title: true,
           },
         },
-        labels: {
+        taskLabels: {
           include: {
             label: true,
           },
@@ -68,7 +68,7 @@ export async function GET(request: Request) {
         ...(includeChildren && {
           children: {
             include: {
-              labels: {
+              taskLabels: {
                 include: {
                   label: true,
                 },
@@ -192,7 +192,7 @@ export async function POST(request: Request) {
             title: true,
           },
         },
-        labels: {
+        taskLabels: {
           include: {
             label: true,
           },

@@ -18,7 +18,7 @@ export async function GET(
         userId, // Security: only user's own labels
       },
       include: {
-        tasks: {
+        taskLabels: {
           include: {
             task: {
               include: {
@@ -33,7 +33,7 @@ export async function GET(
             },
           },
         },
-        habits: {
+        habitLabels: {
           include: {
             habit: {
               include: {
@@ -50,8 +50,8 @@ export async function GET(
         },
         _count: {
           select: {
-            tasks: true,
-            habits: true,
+            taskLabels: true,
+            habitLabels: true,
           },
         },
       },
@@ -119,8 +119,8 @@ export async function PUT(
       include: {
         _count: {
           select: {
-            tasks: true,
-            habits: true,
+            taskLabels: true,
+            habitLabels: true,
           },
         },
       },

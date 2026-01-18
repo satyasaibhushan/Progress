@@ -69,7 +69,7 @@ export async function GET(request: Request) {
           const task = await prisma.task.findUnique({
             where: { id: item.id },
             include: {
-              labels: {
+              taskLabels: {
                 include: { label: true },
               },
               parent: {
@@ -79,7 +79,7 @@ export async function GET(request: Request) {
           })
 
           if (task) {
-            enriched.labels = task.labels.map((tl) => ({
+            enriched.labels = task.taskLabels.map((tl) => ({
               id: tl.label.id,
               name: tl.label.name,
               color: tl.label.color,
@@ -127,7 +127,7 @@ export async function GET(request: Request) {
           const habit = await prisma.habit.findUnique({
             where: { id: item.id },
             include: {
-              labels: {
+              habitLabels: {
                 include: { label: true },
               },
               parentTask: {
@@ -137,7 +137,7 @@ export async function GET(request: Request) {
           })
 
           if (habit) {
-            enriched.labels = habit.labels.map((hl) => ({
+            enriched.labels = habit.habitLabels.map((hl) => ({
               id: hl.label.id,
               name: hl.label.name,
               color: hl.label.color,

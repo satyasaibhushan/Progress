@@ -76,7 +76,7 @@ export async function POST(
     const updatedHabit = await prisma.habit.findUnique({
       where: { id: id },
       include: {
-        labels: {
+        habitLabels: {
           include: {
             label: true,
           },
@@ -145,7 +145,7 @@ export async function DELETE(
     const updatedHabit = await prisma.habit.findUnique({
       where: { id: id },
       include: {
-        labels: {
+        habitLabels: {
           include: {
             label: true,
           },

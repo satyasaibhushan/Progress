@@ -34,7 +34,7 @@ export async function GET(
             title: true,
           },
         },
-        labels: {
+        habitLabels: {
           include: {
             label: true,
           },
@@ -121,18 +121,26 @@ export async function PUT(
       }
     }
 
+    // Get countPerPeriod (use provided value, existing value, or default to 1)
+    const finalCountPerPeriod = validatedData.countPerPeriod ?? existingHabit.countPerPeriod ?? 1
+
     // Auto-calculate targetCount if not provided but endDate is set/changed
     let targetCount = validatedData.targetCount ?? existingHabit.targetCount
-    const finalEndDate = validatedData.endDate !== undefined 
+    const finalEndDate = validatedData.endDate !== undefined
       ? (validatedData.endDate ? new Date(validatedData.endDate) : null)
       : existingHabit.endDate
-    
-    if (!targetCount && finalEndDate) {
+
+    // Recalculate targetCount if countPerPeriod changed or targetCount is not set
+    const countPerPeriodChanged = validatedData.countPerPeriod !== undefined &&
+      validatedData.countPerPeriod !== existingHabit.countPerPeriod
+
+    if ((!targetCount || countPerPeriodChanged) && finalEndDate) {
       const calculated = calculateTargetCount(
         finalType,
         finalEndDate,
         finalActiveDays,
-        existingHabit.createdAt
+        existingHabit.createdAt,
+        finalCountPerPeriod
       )
       if (calculated !== null) {
         targetCount = calculated
@@ -181,18 +189,8 @@ export async function PUT(
       }
     }
 
-    // Prepare update data
-    const updateData: {
-      title?: string
-      description?: string | null
-      type?: string
-      targetCount?: number
-      importance?: number
-      endDate?: Date | null
-      activeDays?: number[]
-      groupId?: string | null
-      parentTaskId?: string | null
-    } = {}
+    // Prepare update data - use Record type to allow dynamic property assignment
+    const updateData: Record<string, unknown> = {}
 
     if (validatedData.title !== undefined) updateData.title = validatedData.title
     if (validatedData.description !== undefined) updateData.description = validatedData.description ?? null
@@ -200,7 +198,12 @@ export async function PUT(
     if (validatedData.importance !== undefined) updateData.importance = validatedData.importance
     if (validatedData.groupId !== undefined) updateData.groupId = validatedData.groupId ?? null
     if (validatedData.parentTaskId !== undefined) updateData.parentTaskId = validatedData.parentTaskId ?? null
-    
+
+    // Set countPerPeriod if changed
+    if (validatedData.countPerPeriod !== undefined) {
+      updateData.countPerPeriod = validatedData.countPerPeriod
+    }
+
     // Set targetCount (use calculated if auto-calculated, otherwise use provided or existing)
     if (targetCount !== existingHabit.targetCount) {
       updateData.targetCount = targetCount
@@ -242,7 +245,7 @@ export async function PUT(
             title: true,
           },
         },
-        labels: {
+        habitLabels: {
           include: {
             label: true,
           },

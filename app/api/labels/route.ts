@@ -13,8 +13,8 @@ export async function GET() {
       include: {
         _count: {
           select: {
-            tasks: true,
-            habits: true,
+            taskLabels: true,
+            habitLabels: true,
           },
         },
       },
@@ -60,8 +60,8 @@ export async function POST(request: Request) {
       include: {
         _count: {
           select: {
-            tasks: true,
-            habits: true,
+            taskLabels: true,
+            habitLabels: true,
           },
         },
       },

@@ -9,26 +9,23 @@ export function isTaskDone(progress: number): boolean {
 }
 
 /**
- * Check if a habit is completed for today based on logs and type
+ * Check if a habit is completed for today based on logs and countPerPeriod
  */
 export function isHabitDoneToday(
   habitType: HabitType,
-  targetCount: number | null,
+  countPerPeriod: number,
   todaysLogs: { count: number }[]
 ): boolean {
   const todayCount = todaysLogs.reduce((sum, log) => sum + log.count, 0)
 
   switch (habitType) {
     case "DAILY":
-      return todayCount > 0
-
-    case "N_PER_DAY":
-      if (!targetCount) return false
-      return todayCount >= targetCount
+      // For daily habits, check if we've hit countPerPeriod
+      return todayCount >= countPerPeriod
 
     case "WEEKLY":
     case "MONTHLY":
-      // For weekly/monthly, we consider it done if logged at least once
+      // For weekly/monthly, we consider it done for today if logged at least once
       return todayCount > 0
 
     default:
@@ -37,25 +34,23 @@ export function isHabitDoneToday(
 }
 
 /**
- * Get habit completion percentage for today (useful for N_PER_DAY)
+ * Get habit completion percentage for today based on countPerPeriod
  */
 export function getHabitCompletionPercentage(
   habitType: HabitType,
-  targetCount: number | null,
+  countPerPeriod: number,
   todaysLogs: { count: number }[]
 ): number {
   const todayCount = todaysLogs.reduce((sum, log) => sum + log.count, 0)
 
   switch (habitType) {
     case "DAILY":
-      return todayCount > 0 ? 100 : 0
-
-    case "N_PER_DAY":
-      if (!targetCount) return 0
-      return Math.min((todayCount / targetCount) * 100, 100)
+      // For daily habits, percentage is based on countPerPeriod
+      return Math.min((todayCount / countPerPeriod) * 100, 100)
 
     case "WEEKLY":
     case "MONTHLY":
+      // For weekly/monthly, today's completion is binary (logged or not)
       return todayCount > 0 ? 100 : 0
 
     default:
@@ -64,17 +59,56 @@ export function getHabitCompletionPercentage(
 }
 
 /**
- * Check if a habit is completed for the current week
+ * Check if a habit is completed for the current week based on countPerPeriod
  */
-export function isHabitDoneThisWeek(weekLogs: { count: number }[]): boolean {
-  return weekLogs.length > 0
+export function isHabitDoneThisWeek(
+  countPerPeriod: number,
+  weekLogs: { count: number }[]
+): boolean {
+  const weekCount = weekLogs.reduce((sum, log) => sum + log.count, 0)
+  return weekCount >= countPerPeriod
 }
 
 /**
- * Check if a habit is completed for the current month
+ * Check if a habit is completed for the current month based on countPerPeriod
  */
-export function isHabitDoneThisMonth(monthLogs: { count: number }[]): boolean {
-  return monthLogs.length > 0
+export function isHabitDoneThisMonth(
+  countPerPeriod: number,
+  monthLogs: { count: number }[]
+): boolean {
+  const monthCount = monthLogs.reduce((sum, log) => sum + log.count, 0)
+  return monthCount >= countPerPeriod
+}
+
+/**
+ * Get period progress for a habit (current day/week/month progress)
+ * Returns current count, target, and percentage for the current period
+ */
+export function getPeriodProgress(
+  habitType: HabitType,
+  countPerPeriod: number,
+  periodLogs: { count: number }[]
+): { current: number; target: number; percentage: number } {
+  const currentCount = periodLogs.reduce((sum, log) => sum + log.count, 0)
+  const percentage = Math.min((currentCount / countPerPeriod) * 100, 100)
+
+  return {
+    current: currentCount,
+    target: countPerPeriod,
+    percentage: Math.round(percentage * 100) / 100, // Round to 2 decimal places
+  }
+}
+
+/**
+ * Check if a habit's current period is complete
+ */
+export function isPeriodComplete(
+  habitType: HabitType,
+  countPerPeriod: number,
+  periodLogs: { count: number }[]
+): boolean {
+  const currentCount = periodLogs.reduce((sum, log) => sum + log.count, 0)
+  return currentCount >= countPerPeriod
 }
 
 /**

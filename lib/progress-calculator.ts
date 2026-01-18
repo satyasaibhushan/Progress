@@ -459,7 +459,7 @@ export async function calculateLabelProgress(labelId: string): Promise<{
   const tasksWithLabel = await prisma.task.findMany({
     where: {
       parentId: null,
-      labels: {
+      taskLabels: {
         some: { labelId: labelId },
       },
     },
@@ -478,7 +478,7 @@ export async function calculateLabelProgress(labelId: string): Promise<{
   const habitsWithLabel = await prisma.habit.findMany({
     where: {
       parentTaskId: null, // Only top-level habits
-      labels: {
+      habitLabels: {
         some: { labelId: labelId },
       },
     },

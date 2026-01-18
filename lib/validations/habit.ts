@@ -11,6 +11,12 @@ export const createHabitSchema = z.object({
     .positive("Target count must be positive")
     .optional()
     .nullable(), // Can be auto-calculated from endDate
+  countPerPeriod: z
+    .number()
+    .int()
+    .positive("Count per period must be positive")
+    .default(1)
+    .optional(), // How many times per day/week/month
   importance: z
     .number()
     .int()
@@ -36,6 +42,11 @@ export const updateHabitSchema = z.object({
     .positive("Target count must be positive")
     .optional()
     .nullable(), // Can be auto-calculated from endDate
+  countPerPeriod: z
+    .number()
+    .int()
+    .positive("Count per period must be positive")
+    .optional(), // How many times per day/week/month
   importance: z
     .number()
     .int()

@@ -41,14 +41,14 @@ export async function GET(
             title: true,
           },
         },
-        labels: {
+        taskLabels: {
           include: {
             label: true,
           },
         },
         habits: {
           include: {
-            labels: {
+            habitLabels: {
               include: {
                 label: true,
               },
@@ -64,7 +64,7 @@ export async function GET(
         ...(includeChildren && {
           children: {
             include: {
-              labels: {
+              taskLabels: {
                 include: {
                   label: true,
                 },
@@ -259,7 +259,7 @@ export async function PUT(
             title: true,
           },
         },
-        labels: {
+        taskLabels: {
           include: {
             label: true,
           },

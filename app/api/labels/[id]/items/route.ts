@@ -28,7 +28,7 @@ export async function GET(
     const tasks = await prisma.task.findMany({
       where: {
         userId,
-        labels: {
+        taskLabels: {
           some: {
             labelId: id,
           },
@@ -48,7 +48,7 @@ export async function GET(
             title: true,
           },
         },
-        labels: {
+        taskLabels: {
           include: {
             label: true,
           },
@@ -69,7 +69,7 @@ export async function GET(
     const habits = await prisma.habit.findMany({
       where: {
         userId,
-        labels: {
+        habitLabels: {
           some: {
             labelId: id,
           },
@@ -89,7 +89,7 @@ export async function GET(
             title: true,
           },
         },
-        labels: {
+        habitLabels: {
           include: {
             label: true,
           },

@@ -58,7 +58,7 @@ export async function GET(request: Request) {
             title: true,
           },
         },
-        labels: {
+        habitLabels: {
           include: {
             label: true,
           },
@@ -120,6 +120,9 @@ export async function POST(request: Request) {
       }
     }
 
+    // Get countPerPeriod (defaults to 1)
+    const countPerPeriod = validatedData.countPerPeriod ?? 1
+
     // Auto-calculate targetCount if not provided
     let targetCount = validatedData.targetCount
     if (!targetCount && validatedData.endDate) {
@@ -128,11 +131,12 @@ export async function POST(request: Request) {
         validatedData.type,
         endDate,
         validatedData.activeDays || null,
-        new Date()
+        new Date(),
+        countPerPeriod
       )
       if (calculated === null) {
         return NextResponse.json(
-          { error: "Cannot auto-calculate targetCount. Please provide targetCount or ensure endDate is valid and activeDays is set for WEEKLY habits." },
+          { error: "Cannot auto-calculate targetCount. Please provide targetCount or ensure endDate is valid." },
           { status: 400 }
         )
       }
@@ -187,6 +191,7 @@ export async function POST(request: Request) {
       description: validatedData.description ?? null,
       type: validatedData.type as "DAILY" | "WEEKLY" | "MONTHLY",
       targetCount: targetCount,
+      countPerPeriod: countPerPeriod,
       importance: validatedData.importance,
       userId,
       groupId: validatedData.groupId ?? null,
@@ -224,7 +229,7 @@ export async function POST(request: Request) {
             title: true,
           },
         },
-        labels: {
+        habitLabels: {
           include: {
             label: true,
           },

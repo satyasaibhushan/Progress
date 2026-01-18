@@ -77,7 +77,7 @@ export async function POST(
     const updatedTask = await prisma.task.findUnique({
       where: { id },
       include: {
-        labels: {
+        taskLabels: {
           include: {
             label: true,
           },
@@ -146,7 +146,7 @@ export async function DELETE(
     const updatedTask = await prisma.task.findUnique({
       where: { id },
       include: {
-        labels: {
+        taskLabels: {
           include: {
             label: true,
           },
