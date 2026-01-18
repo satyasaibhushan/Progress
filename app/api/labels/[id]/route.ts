@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { updateLabelSchema } from "@/lib/validations/label"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
+import { serializeTask } from "@/lib/utils"
 
 // GET /api/labels/[id] - Get a specific label with its associated items
 export async function GET(
@@ -61,7 +62,16 @@ export async function GET(
       return NextResponse.json({ error: "Label not found" }, { status: 404 })
     }
 
-    return NextResponse.json({ data: label })
+    // Serialize BigInt fields in nested tasks
+    const serializedLabel = {
+      ...label,
+      taskLabels: label.taskLabels.map((taskLabel) => ({
+        ...taskLabel,
+        task: serializeTask(taskLabel.task),
+      })),
+    }
+
+    return NextResponse.json({ data: serializedLabel })
   } catch (error) {
     return handleApiError(error)
   }

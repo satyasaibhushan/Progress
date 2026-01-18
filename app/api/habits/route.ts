@@ -17,6 +17,7 @@ export async function GET(request: Request) {
     const groupId = searchParams.get("groupId")
     const parentTaskId = searchParams.get("parentTaskId")
     const type = searchParams.get("type")
+    const includeLogs = searchParams.get("includeLogs") === "true" // Defaults to false if not specified
 
     // Build where clause
     const where: {
@@ -63,6 +64,11 @@ export async function GET(request: Request) {
             label: true,
           },
         },
+        habitLogs: includeLogs ? {
+          orderBy: {
+            date: "desc",
+          },
+        } : false,
         _count: {
           select: {
             habitLogs: true,

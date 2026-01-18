@@ -31,18 +31,28 @@ export async function POST(
     const body = await request.json()
     const validatedData = logHabitSchema.parse(body)
 
-    const logDate = validatedData.date
-      ? new Date(validatedData.date)
-      : new Date()
-
-    // Set time to start of day for consistent date comparison
-    logDate.setHours(0, 0, 0, 0)
+    let logDate: Date
+    if (validatedData.date) {
+      // Parse the date string and create a date at midnight UTC
+      // This ensures consistent date comparison regardless of timezone
+      const dateStr = validatedData.date.split('T')[0] // Get YYYY-MM-DD part
+      const [year, month, day] = dateStr.split('-').map(Number)
+      // Create date at midnight UTC to avoid timezone shifts
+      // This ensures the date stored matches what the user selected
+      logDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
+    } else {
+      // Use today's date at midnight UTC
+      const now = new Date()
+      logDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+    }
 
     // Calculate old progress before logging
     const oldProgress = await calculateHabitCompletion(id)
 
     // For all habits, check if we should create or update existing log for the date
-    // (Multiple logs per day are allowed for all habit types, we increment count)
+    // Since date is stored as @db.Date, we can compare directly
+    // The unique constraint [habitId, date] ensures one log per day
+    // Use findFirst with the unique fields since Prisma generates the constraint name
     const existingLog = await prisma.habitLog.findFirst({
       where: {
         habitId: id,
@@ -51,13 +61,13 @@ export async function POST(
     })
 
     if (existingLog) {
-      // Update existing log count
+      // Update existing log count (increment)
       const updatedLog = await prisma.habitLog.update({
         where: {
           id: existingLog.id,
         },
         data: {
-          count: existingLog.count + validatedData.count,
+          count: existingLog.count + (validatedData.count || 1),
         },
       })
 
@@ -71,13 +81,41 @@ export async function POST(
     }
 
     // Create new log
-    const log = await prisma.habitLog.create({
-      data: {
-        habitId: id,
-        date: logDate,
-        count: validatedData.count,
-      },
-    })
+    // Handle potential race condition with try-catch
+    let log
+    try {
+      log = await prisma.habitLog.create({
+        data: {
+          habitId: id,
+          date: logDate,
+          count: validatedData.count || 1,
+        },
+      })
+    } catch (error: any) {
+      // If unique constraint violation (race condition), fetch and update existing log
+      if (error?.code === 'P2002' || error?.message?.includes('Unique constraint')) {
+        const existingLog = await prisma.habitLog.findFirst({
+          where: {
+            habitId: id,
+            date: logDate,
+          },
+        })
+        if (existingLog) {
+          log = await prisma.habitLog.update({
+            where: {
+              id: existingLog.id,
+            },
+            data: {
+              count: existingLog.count + (validatedData.count || 1),
+            },
+          })
+        } else {
+          throw error
+        }
+      } else {
+        throw error
+      }
+    }
 
     // Update parent task aggregates if habit is linked to a task
     if (habit.parentTaskId) {
@@ -213,6 +251,83 @@ export async function DELETE(
     }
 
     return NextResponse.json({ message: "Log deleted successfully" })
+  } catch (error) {
+    return handleApiError(error)
+  }
+}
+
+// PATCH /api/habits/[id]/log - Update habit log count
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params
+    const { userId } = await getAuthenticatedUser()
+
+    const body = await request.json()
+    const { logId, count } = body
+
+    if (!logId || count === undefined) {
+      return NextResponse.json(
+        { error: "logId and count are required" },
+        { status: 400 }
+      )
+    }
+
+    // Check if habit exists and belongs to user
+    const habit = await prisma.habit.findFirst({
+      where: {
+        id: id,
+        userId,
+      },
+    })
+
+    if (!habit) {
+      return NextResponse.json({ error: "Habit not found" }, { status: 404 })
+    }
+
+    // Check if log exists and belongs to this habit
+    const existingLog = await prisma.habitLog.findFirst({
+      where: {
+        id: logId,
+        habitId: id,
+      },
+    })
+
+    if (!existingLog) {
+      return NextResponse.json({ error: "Log not found" }, { status: 404 })
+    }
+
+    // Calculate old progress before updating
+    const oldProgress = await calculateHabitCompletion(id)
+
+    // If count is 0 or less, delete the log
+    if (count <= 0) {
+      await prisma.habitLog.delete({
+        where: {
+          id: logId,
+        },
+      })
+    } else {
+      // Update the log count
+      await prisma.habitLog.update({
+        where: {
+          id: logId,
+        },
+        data: {
+          count: count,
+        },
+      })
+    }
+
+    // Update parent task aggregates if habit is linked to a task
+    if (habit.parentTaskId) {
+      const newProgress = await calculateHabitCompletion(id)
+      await updateHabitProgress(id, oldProgress, newProgress)
+    }
+
+    return NextResponse.json({ message: "Log updated successfully" })
   } catch (error) {
     return handleApiError(error)
   }

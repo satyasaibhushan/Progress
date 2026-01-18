@@ -38,6 +38,85 @@ export async function GET(request: Request) {
       where.groupId = groupId
     }
 
+    // If includeChildren is true, we need to fetch all tasks and build the tree recursively
+    if (includeChildren) {
+      // First, fetch all tasks for this user (or filtered by groupId)
+      const allTasksWhere: {
+        userId: string
+        groupId?: string
+      } = { userId }
+      if (groupId) {
+        allTasksWhere.groupId = groupId
+      }
+
+      const allTasks = await prisma.task.findMany({
+        where: allTasksWhere,
+        include: {
+          group: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+          parent: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+          taskLabels: {
+            include: {
+              label: true,
+            },
+          },
+          _count: {
+            select: {
+              children: true,
+              habits: true,
+            },
+          },
+          habits: {
+            include: {
+              habitLabels: {
+                include: {
+                  label: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: [
+          {
+            importance: "desc",
+          },
+          {
+            createdAt: "desc",
+          },
+        ],
+      })
+
+      // Build the tree structure recursively
+      const buildTaskTree = (parentId: string | null): typeof allTasks => {
+        return allTasks
+          .filter((task) => task.parentId === parentId)
+          .map((task) => ({
+            ...task,
+            children: buildTaskTree(task.id),
+          }))
+      }
+
+      // Filter root tasks based on parentId filter
+      const rootTasks = parentId === null 
+        ? buildTaskTree(null)
+        : parentId === "null"
+        ? buildTaskTree(null)
+        : buildTaskTree(parentId)
+
+      return NextResponse.json({ data: serializeTasks(rootTasks) })
+    }
+
+    // If not including children, use the original query
     const tasks = await prisma.task.findMany({
       where,
       include: {
@@ -65,17 +144,15 @@ export async function GET(request: Request) {
             habits: true,
           },
         },
-        ...(includeChildren && {
-          children: {
-            include: {
-              taskLabels: {
-                include: {
-                  label: true,
-                },
+        habits: {
+          include: {
+            habitLabels: {
+              include: {
+                label: true,
               },
             },
           },
-        }),
+        },
       },
       orderBy: [
         {

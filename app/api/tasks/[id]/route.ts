@@ -223,6 +223,19 @@ export async function PUT(
       }
     }
 
+    // Prevent progress updates for tasks with children or habits
+    if (validatedData.progress !== undefined) {
+      const hasChildren = existingTask._count.children > 0
+      const hasHabits = existingTask._count.habits > 0
+      
+      if (hasChildren || hasHabits) {
+        return NextResponse.json(
+          { error: "Cannot set progress for tasks with child tasks or linked habits. Progress is automatically calculated." },
+          { status: 400 }
+        )
+      }
+    }
+
     // Convert deadline string to Date if provided
     const { deadline: deadlineStr, ...rest } = validatedData
     const updateData: {
