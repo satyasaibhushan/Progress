@@ -14,7 +14,6 @@ import { GroupBreakdown } from "@/components/analytics/group-breakdown";
 import { LabelStats } from "@/components/analytics/label-stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
@@ -53,7 +52,7 @@ export default function DashboardPage() {
       try {
         const [tasksData, habitsData, groupsData, labelsData] = await Promise.all([
           getTasks({ includeChildren: true }),
-          getHabits(),
+          getHabits({ includeLogs: true }),
           getGroups(),
           getLabels(),
         ]);
@@ -196,12 +195,36 @@ export default function DashboardPage() {
       };
     }
 
-    const tasksWithLabel = allLeafTasks.filter((t) =>
-      t.labels?.some((l) => l.id === selectedLabel.id)
-    );
-    const habitsWithLabel = habits.filter((h) =>
-      h.labels?.some((l) => l.id === selectedLabel.id)
-    );
+    // Filter tasks with label (including inherited labels)
+    const tasksWithLabel = allLeafTasks.filter((t) => {
+      // Check if task has label directly
+      if (t.labels?.some((l) => l.id === selectedLabel.id)) return true;
+      // Check if any ancestor has the label (inheritance)
+      let currentTask = t;
+      while (currentTask.parentId) {
+        const parentTask = tasks.find((task) => task.id === currentTask.parentId);
+        if (!parentTask) break;
+        if (parentTask.labels?.some((l) => l.id === selectedLabel.id)) return true;
+        currentTask = parentTask;
+      }
+      return false;
+    });
+    
+    // Filter habits with label (including inherited from parent tasks)
+    const habitsWithLabel = habits.filter((h) => {
+      // Check if habit has label directly
+      if (h.labels?.some((l) => l.id === selectedLabel.id)) return true;
+      // Check if parent task (or ancestor) has the label
+      if (h.parentTaskId) {
+        let currentTask = tasks.find((t) => t.id === h.parentTaskId);
+        while (currentTask) {
+          if (currentTask.labels?.some((l) => l.id === selectedLabel.id)) return true;
+          if (!currentTask.parentId) break;
+          currentTask = tasks.find((t) => t.id === currentTask.parentId);
+        }
+      }
+      return false;
+    });
 
     const totalItems = tasksWithLabel.length + habitsWithLabel.length;
     const completedItems = tasksWithLabel.filter((t) => t.progress === 100).length;
@@ -303,7 +326,7 @@ export default function DashboardPage() {
               return (
                 <button
                   key={habit.id}
-                  onClick={() => router.push(`/habits/${habit.id}`)}
+                  onClick={() => router.push(`/habits?highlight=${habit.id}`)}
                   className="text-left p-4 border rounded-lg hover:border-indigo-300 hover:shadow-sm transition-all"
                 >
                   <div className="flex items-start justify-between mb-2">

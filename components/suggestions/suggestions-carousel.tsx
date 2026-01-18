@@ -1,17 +1,17 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, X, TrendingDown, Target, ArrowRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, TrendingDown, Target, ArrowRight } from "lucide-react";
 import { getSuggestions, Suggestion } from "@/lib/api/suggestions";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
+import { cn } from "@/lib/utils";
 
 interface SuggestionsCarouselProps {
   onClose: () => void;
@@ -53,14 +53,23 @@ export function SuggestionsCarousel({
     onClose();
   };
 
+  // Format numbers to remove excessive decimal places
+  const formatNumber = (num: number, decimals: number = 1): string => {
+    return num.toFixed(decimals);
+  };
+
+  const formatPercentage = (num: number): string => {
+    return `${formatNumber(num)}%`;
+  };
+
   if (loading) {
     return (
       <Dialog open onOpenChange={onClose}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Loading suggestions</DialogTitle>
-          </DialogHeader>
-          <LoadingSkeleton count={5} />
+        <DialogContent className="max-w-2xl p-0 border-0 bg-transparent">
+          <DialogTitle className="sr-only">Loading suggestions</DialogTitle>
+          <div className="bg-white rounded-xl p-6">
+            <LoadingSkeleton count={5} />
+          </div>
         </DialogContent>
       </Dialog>
     );
@@ -70,9 +79,7 @@ export function SuggestionsCarousel({
     return (
       <Dialog open onOpenChange={onClose}>
         <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>All Caught Up! 🎉</DialogTitle>
-          </DialogHeader>
+          <DialogTitle className="sr-only">All Caught Up</DialogTitle>
           <div className="text-center py-8">
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <Target className="w-8 h-8 text-green-600" />
@@ -88,30 +95,84 @@ export function SuggestionsCarousel({
   }
 
   const currentSuggestion = suggestions[currentIndex];
+  const hasMultiple = suggestions.length > 1;
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <DialogTitle>Suggested Next</DialogTitle>
-              <p className="text-sm text-muted-foreground mt-1">
-                Based on importance and deadline ({currentIndex + 1} of{" "}
-                {suggestions.length})
-              </p>
-            </div>
-            <Button variant="ghost" size="icon" onClick={onClose}>
-              <X className="w-5 h-5" />
-            </Button>
-          </div>
-        </DialogHeader>
-
-        <div className="p-6">
+      <DialogContent 
+        className="border-0 bg-transparent shadow-none !p-0"
+        showCloseButton={false}
+        style={{ 
+          width: 'auto', 
+          minWidth: '700px',
+          maxWidth: '800px',
+          padding: 0,
+          gap: 0
+        }}
+      >
+        <DialogTitle className="sr-only">Suggested Next</DialogTitle>
+        
+        {/* Blue Card - Main Content with all buttons inside */}
+        <div className="relative group w-full">
           <div
-            className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl p-6 text-white cursor-pointer hover:shadow-lg transition-shadow"
+            className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl text-white cursor-pointer hover:shadow-lg transition-shadow relative"
+            style={{ padding: '3.5rem 3.5rem 4.5rem 3.5rem' }}
             onClick={() => handleCardClick(currentSuggestion)}
           >
+            {/* Close Button - Inside blue card */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+              className="absolute z-20 rounded-xs opacity-40 transition-opacity hover:opacity-70 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none p-1.5 text-white/60 hover:text-white/80"
+              style={{ top: '1rem', right: '1rem' }}
+            >
+              <span className="sr-only">Close</span>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            {/* Left Navigation Arrow - Inside blue card */}
+            {hasMultiple && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePrev();
+                }}
+                className={cn(
+                  "absolute top-1/2 -translate-y-1/2 z-10 p-1.5 rounded-full",
+                  "text-white/15 hover:text-white/40 hover:bg-white/5",
+                  "transition-all duration-200",
+                  "opacity-0 group-hover:opacity-60"
+                )}
+                style={{ left: '0.75rem' }}
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Right Navigation Arrow - Inside blue card */}
+            {hasMultiple && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleNext();
+                }}
+                className={cn(
+                  "absolute top-1/2 -translate-y-1/2 z-10 p-1.5 rounded-full",
+                  "text-white/15 hover:text-white/40 hover:bg-white/5",
+                  "transition-all duration-200",
+                  "opacity-0 hover:opacity-60 group-hover:opacity-60"
+                )}
+                style={{ right: '0.75rem' }}
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Main Content */}
             <div className="flex items-start justify-between mb-4">
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-2">
@@ -139,7 +200,9 @@ export function SuggestionsCarousel({
               </div>
               <div className="text-right">
                 <p className="text-xs text-indigo-200 mb-1">Priority Score</p>
-                <p className="text-2xl font-bold">{currentSuggestion.score}</p>
+                <p className="text-2xl font-bold">
+                  {formatNumber(currentSuggestion.score, 1)}
+                </p>
               </div>
             </div>
 
@@ -147,19 +210,21 @@ export function SuggestionsCarousel({
             <div className="grid grid-cols-3 gap-3 mb-4">
               <div className="bg-white/10 rounded-lg p-3">
                 <p className="text-xs text-indigo-200 mb-1">Current</p>
-                <p className="text-xl font-semibold">{currentSuggestion.progress}%</p>
+                <p className="text-xl font-semibold">
+                  {formatPercentage(currentSuggestion.progress)}
+                </p>
               </div>
               <div className="bg-white/10 rounded-lg p-3">
                 <p className="text-xs text-indigo-200 mb-1">Expected</p>
                 <p className="text-xl font-semibold">
-                  {currentSuggestion.expectedProgress}%
+                  {formatPercentage(currentSuggestion.expectedProgress)}
                 </p>
               </div>
               <div className="bg-white/10 rounded-lg p-3">
                 <p className="text-xs text-indigo-200 mb-1">Behind</p>
                 <p className="text-xl font-semibold text-amber-300 flex items-center gap-1">
                   <TrendingDown className="w-4 h-4" />
-                  {currentSuggestion.progressGap}%
+                  {formatPercentage(currentSuggestion.progressGap)}
                 </p>
               </div>
             </div>
@@ -204,34 +269,36 @@ export function SuggestionsCarousel({
               <span>Click to view details</span>
               <ArrowRight className="w-4 h-4" />
             </div>
-          </div>
 
-          {/* Navigation */}
-          {suggestions.length > 1 && (
-            <div className="flex items-center justify-between mt-6">
-              <Button variant="outline" size="icon" onClick={handlePrev}>
-                <ChevronLeft className="w-5 h-5" />
-              </Button>
-
-              <div className="flex gap-2">
+            {/* Pagination Dots - Inside blue card, at bottom */}
+            {hasMultiple && (
+              <div 
+                className="flex items-center justify-center gap-2 absolute"
+                style={{ 
+                  bottom: '1rem',
+                  left: '50%',
+                  transform: 'translateX(-50%)'
+                }}
+              >
                 {suggestions.map((_, index) => (
                   <button
                     key={index}
-                    onClick={() => setCurrentIndex(index)}
-                    className={`h-2 rounded-full transition-all ${
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCurrentIndex(index);
+                    }}
+                    className={cn(
+                      "h-2 rounded-full transition-all duration-200",
                       index === currentIndex
-                        ? "bg-indigo-600 w-6"
-                        : "bg-slate-300 w-2"
-                    }`}
+                        ? "bg-white/50 w-6"
+                        : "bg-white/20 w-2 hover:bg-white/35"
+                    )}
+                    aria-label={`Go to suggestion ${index + 1}`}
                   />
                 ))}
               </div>
-
-              <Button variant="outline" size="icon" onClick={handleNext}>
-                <ChevronRight className="w-5 h-5" />
-              </Button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>

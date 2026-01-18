@@ -9,7 +9,7 @@ import { Label } from "@/types";
 interface LabelStatsProps {
   labels: Label[];
   selectedLabel: Label;
-  onLabelChange: (label: Label) => void;
+  onLabelChange?: (label: Label) => void;
   stats: {
     totalItems: number;
     tasksCount: number;
@@ -31,24 +31,26 @@ export function LabelStats({
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle>Label Statistics</CardTitle>
-          <Select
-            value={selectedLabel.id}
-            onValueChange={(value) => {
-              const label = labels.find((l) => l.id === value);
-              if (label) onLabelChange(label);
-            }}
-          >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {labels.map((label) => (
-                <SelectItem key={label.id} value={label.id}>
-                  {label.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {onLabelChange && (
+            <Select
+              value={selectedLabel.id}
+              onValueChange={(value: string) => {
+                const label = labels.find((l) => l.id === value);
+                if (label) onLabelChange(label);
+              }}
+            >
+              <SelectTrigger className="w-[180px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {labels.map((label) => (
+                  <SelectItem key={label.id} value={label.id}>
+                    {label.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
       </CardHeader>
       <CardContent>

@@ -22,7 +22,7 @@ import { getGroups } from "@/lib/api/groups";
 import { getLabels } from "@/lib/api/labels";
 import { Task, Habit, Group, Label } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -372,7 +372,11 @@ export default function AnalyticsPage() {
                       {habit.completion}%
                     </span>
                   </div>
-                  <Progress value={habit.completion} className="h-2" />
+                  <UnifiedProgressBar
+                    value={habit.completion}
+                    interactive={false}
+                    showPercentageOnHover={false}
+                  />
                 </div>
               ))}
             </div>
@@ -442,7 +446,9 @@ export default function AnalyticsPage() {
                       <td className="py-3 px-4 text-sm">{inProgress}</td>
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2">
-                          <Progress
+                          <UnifiedProgressBar
+                            interactive={false}
+                            showPercentageOnHover={false}
                             value={avgProg}
                             className="flex-1 h-1.5 max-w-[100px]"
                           />

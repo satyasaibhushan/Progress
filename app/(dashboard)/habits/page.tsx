@@ -16,7 +16,7 @@ import { HabitCalendar } from "@/components/habits/habit-calendar";
 import { HabitForm } from "@/components/habits/habit-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -440,7 +440,10 @@ export default function HabitsPage() {
           <div className="lg:col-span-1 flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto pr-2 space-y-3">
             {habits.map((habit) => {
-              const habitLogs = logs.filter(log => log.habitId === habit.id);
+              // Use habitLogs from habit if available, otherwise filter from logs
+              const habitLogs = habit.habitLogs && habit.habitLogs.length > 0 
+                ? habit.habitLogs.map(log => ({ ...log, habitId: habit.id }))
+                : logs.filter(log => log.habitId === habit.id);
               const habitProgress = calculateHabitProgress(habit, habitLogs);
               const currentCount = habitLogs.reduce((sum, log) => sum + log.count, 0);
               const streak = calculateStreak(habitLogs);
@@ -545,9 +548,10 @@ export default function HabitsPage() {
                       <span className="text-sm text-muted-foreground">Progress</span>
                       <span className="text-sm font-medium">{selectedHabitProgress}%</span>
                     </div>
-                    <Progress
+                    <UnifiedProgressBar
                       value={selectedHabitProgress}
-                      className="h-1.5 mb-1.5"
+                      interactive={false}
+                      showPercentageOnHover={false}
                     />
                               <div className="grid grid-cols-3 gap-2.5 text-sm">
                                 <div>

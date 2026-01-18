@@ -3,7 +3,7 @@
 import { Habit, Group } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
+import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { Flame, Repeat, ArrowRight, ListTodo, MoreVertical, Folder } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -58,25 +58,79 @@ export function HabitCard({
   return (
     <Card
       className={cn(
-        "p-4 cursor-pointer transition-all relative",
-        isSelected
-          ? "border-indigo-600 bg-indigo-50"
-          : "hover:border-slate-300"
+        "p-4 hover:border-slate-300 transition-all group",
+        isSelected && "border-indigo-600 bg-indigo-50",
+        onClick && "cursor-pointer"
       )}
       onClick={onClick}
     >
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex-1 pr-8">
-          <div className="flex items-center gap-2 mb-1">
-            <h4 className="text-sm font-medium">{habit.title}</h4>
-            {streak > 0 && (
-              <div className="flex items-center gap-1 text-orange-500">
-                <Flame className="w-3 h-3" />
-                <span className="text-xs">{streak}</span>
-              </div>
+      <div className="flex items-start gap-3">
+        {/* Placeholder for checkbox alignment (habits don't have checkboxes) */}
+        <div className="w-5 flex-shrink-0" />
+        
+        {/* Habit Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between mb-2">
+            <div className="flex-1">
+              <h4 className="text-sm font-medium mb-1">
+                {habit.title}
+                {streak > 0 && (
+                  <span className="ml-2 flex items-center gap-1 text-orange-500 inline-flex">
+                    <Flame className="w-3 h-3" />
+                    <span className="text-xs">{streak}</span>
+                  </span>
+                )}
+              </h4>
+              {habit.description && (
+                <p className="text-xs text-muted-foreground line-clamp-1">
+                  {habit.description}
+                </p>
+              )}
+            </div>
+            {(onEdit || onDelete) && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button 
+                    className={cn(
+                      "p-1 hover:bg-slate-100 rounded opacity-0 group-hover:opacity-100 transition-opacity",
+                      isSelected && "opacity-100"
+                    )}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreVertical className="w-4 h-4 text-muted-foreground" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {onEdit && (
+                    <DropdownMenuItem onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit();
+                    }}>
+                      Edit
+                    </DropdownMenuItem>
+                  )}
+                  {onDelete && (
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete();
+                      }}
+                      className="text-red-600"
+                    >
+                      Delete
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1 flex-wrap">
+
+          {/* Meta Info */}
+          <div className="flex items-center gap-3 text-xs text-muted-foreground mb-2 flex-wrap">
+            <div className="flex items-center gap-1">
+              <ImportanceIndicator importance={habit.importance} size="sm" />
+              <span>{habit.importance}</span>
+            </div>
             <Badge variant="secondary" className="text-xs">
               {habit.type}
             </Badge>
@@ -92,8 +146,21 @@ export function HabitCard({
                 <span>{displayGroup.name}</span>
               </button>
             )}
+            {linkedTaskTitle && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTaskClick?.();
+                }}
+                className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700"
+              >
+                <ListTodo className="w-3 h-3" />
+                <span>{linkedTaskTitle}</span>
+                <ArrowRight className="w-3 h-3" />
+              </button>
+            )}
           </div>
-          
+
           {/* Labels */}
           {habit.labels && habit.labels.length > 0 && (
             <div className="flex gap-1 mb-2 flex-wrap">
@@ -101,10 +168,14 @@ export function HabitCard({
                 <Badge
                   key={label.id}
                   variant="secondary"
-                  className="text-xs"
+                  className="text-xs cursor-pointer hover:opacity-80 transition-opacity"
                   style={{
                     backgroundColor: `${label.color}20`,
                     color: label.color,
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    router.push(`/labels?highlight=${label.id}`);
                   }}
                 >
                   {label.name}
@@ -112,68 +183,20 @@ export function HabitCard({
               ))}
             </div>
           )}
-          {linkedTaskTitle && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onTaskClick?.();
-              }}
-              className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 mt-1"
-            >
-              <ListTodo className="w-3 h-3" />
-              <span>{linkedTaskTitle}</span>
-              <ArrowRight className="w-3 h-3" />
-            </button>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-muted-foreground">Progress: {progress}%</span>
-          {(onEdit || onDelete) && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                <button className="p-1 hover:bg-slate-100 rounded">
-                  <MoreVertical className="w-4 h-4 text-muted-foreground" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {onEdit && (
-                  <DropdownMenuItem onClick={(e) => {
-                    e.stopPropagation();
-                    onEdit();
-                  }}>
-                    Edit
-                  </DropdownMenuItem>
-                )}
-                {onDelete && (
-                  <DropdownMenuItem
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete();
-                    }}
-                    className="text-red-600"
-                  >
-                    Delete
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
-      </div>
-      <div className="w-full bg-muted rounded-full h-1.5 mb-2">
-        <div
-          className="bg-green-600 rounded-full h-1.5 transition-all"
-          style={{ width: `${Math.min(progress, 100)}%` }}
-        />
-      </div>
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>
-          {currentCount} / {habit.targetCount}
-        </span>
-        <div className="flex items-center gap-1">
-          <span className="text-xs">Importance:</span>
-          <ImportanceIndicator importance={habit.importance} size="sm" />
-          <span className="font-medium">{habit.importance}</span>
+
+          {/* Progress Bar */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <UnifiedProgressBar
+                value={progress}
+                interactive={false}
+                showPercentageOnHover={true}
+              />
+            </div>
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              {currentCount} / {habit.targetCount}
+            </span>
+          </div>
         </div>
       </div>
     </Card>

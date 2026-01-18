@@ -3,16 +3,16 @@
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { ArrowLeft, Edit, Trash2 } from "lucide-react";
-import { getGroup, deleteGroup } from "@/lib/api/groups";
-import { getTasks } from "@/lib/api/tasks";
-import { getHabits } from "@/lib/api/habits";
+import { getGroup, deleteGroup, getGroupItems, updateGroup, UpdateGroupInput } from "@/lib/api/groups";
+import { getGroups } from "@/lib/api/groups";
 import { Group, Task, Habit } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
-import { TaskCard } from "@/components/tasks/task-card";
-import { HabitCard } from "@/components/habits/habit-card";
+import { TasksHabitsTree } from "@/components/shared/tasks-habits-tree";
+import { GroupForm } from "@/components/groups/group-form";
+import { useSearchParams } from "next/navigation";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,6 +23,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 function getAllLeafTasks(tasks: Task[]): Task[] {
   const leafTasks: Task[] = [];
@@ -42,24 +48,31 @@ function getAllLeafTasks(tasks: Task[]): Task[] {
 export default function GroupDetailPage() {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const groupId = params.id as string;
   const [group, setGroup] = useState<Group | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [editingGroup, setEditingGroup] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const highlightedTaskId = searchParams.get("highlightTask");
+  const highlightedHabitId = searchParams.get("highlightHabit");
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [groupData, tasksData, habitsData] = await Promise.all([
+        const [groupData, itemsData, groupsData] = await Promise.all([
           getGroup(groupId),
-          getTasks({ includeChildren: true, groupId }),
-          getHabits({ groupId }),
+          getGroupItems(groupId),
+          getGroups(),
         ]);
         setGroup(groupData);
-        setTasks(tasksData);
-        setHabits(habitsData);
+        setTasks(itemsData.tasks);
+        setHabits(itemsData.habits);
+        setGroups(groupsData);
       } catch (error) {
         console.error("Error loading group:", error);
       } finally {
@@ -80,6 +93,32 @@ export default function GroupDetailPage() {
     }
   };
 
+  const handleEdit = async (data: any) => {
+    if (!group) return;
+    setSaving(true);
+    try {
+      const input: UpdateGroupInput = {
+        id: groupId,
+        name: data.name,
+        description: data.description,
+        color: data.color,
+      };
+      await updateGroup(input);
+      const [groupData, groupsData] = await Promise.all([
+        getGroup(groupId),
+        getGroups(),
+      ]);
+      setGroup(groupData);
+      setGroups(groupsData);
+      setEditingGroup(false);
+    } catch (error) {
+      console.error("Error updating group:", error);
+      throw error;
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto space-y-6">
@@ -97,12 +136,89 @@ export default function GroupDetailPage() {
   }
 
   const allLeafTasks = getAllLeafTasks(tasks);
-  const avgProgress =
-    allLeafTasks.length > 0
-      ? Math.round(
-          allLeafTasks.reduce((acc, t) => acc + t.progress, 0) / allLeafTasks.length
-        )
-      : 0;
+  
+  // Helper function to calculate habit progress
+  const getHabitProgress = (habit: Habit): number => {
+    if (habit.habitLogs && habit.habitLogs.length > 0) {
+      const totalCount = habit.habitLogs.reduce((sum, log) => sum + log.count, 0);
+      if (habit.targetCount > 0) {
+        return Math.min(100, Math.round((totalCount / habit.targetCount) * 100));
+      }
+    } else if (habit.currentCount !== undefined && habit.targetCount) {
+      return Math.min(100, Math.round((habit.currentCount / habit.targetCount) * 100));
+    }
+    return 0;
+  };
+  
+  // Calculate weighted progress for overall average
+  let totalWeight = 0;
+  let weightedProgress = 0;
+  
+  const rootTasks = tasks.filter((t) => !t.parentId);
+  for (const task of rootTasks) {
+    const isLeaf = !task.children || task.children.length === 0;
+    if (isLeaf) {
+      const taskProgress = Math.min(100, Math.max(0, task.progress || 0));
+      totalWeight += task.importance;
+      weightedProgress += taskProgress * task.importance;
+    } else if (task.total_weight && task.weighted_progress) {
+      // weighted_progress is already the sum of (progress * importance) for all children
+      // total_weight is the sum of importance for all children
+      // So we can use them directly without recalculating
+      const taskWeight = Number(task.total_weight);
+      const taskWeightedProgress = Number(task.weighted_progress);
+      if (taskWeight > 0) {
+        totalWeight += taskWeight;
+        weightedProgress += taskWeightedProgress;
+      }
+    }
+  }
+  
+  // Get task IDs to exclude linked habits from root habits calculation
+  const taskIds = new Set(tasks.map((t) => t.id));
+  const rootHabits = habits.filter((h) => !h.parentTaskId && !taskIds.has(h.parentTaskId || ""));
+  for (const habit of rootHabits) {
+    const habitProgress = getHabitProgress(habit);
+    totalWeight += habit.importance;
+    weightedProgress += habitProgress * habit.importance;
+  }
+  
+  // Ensure progress is between 0-100
+  // weighted_progress is sum of (progress * importance) where progress is 0-100
+  // total_weight is sum of importance
+  // So weightedProgress / totalWeight gives us average progress (0-100)
+  const avgProgress = totalWeight > 0 
+    ? Math.min(100, Math.max(0, Math.round(weightedProgress / totalWeight))) 
+    : 0;
+  
+  // Calculate task progress (weighted average of leaf tasks)
+  let taskTotalWeight = 0;
+  let taskWeightedProgress = 0;
+  for (const task of allLeafTasks) {
+    taskTotalWeight += task.importance;
+    taskWeightedProgress += (task.progress || 0) * task.importance;
+  }
+  const taskProgress = taskTotalWeight > 0
+    ? Math.round(taskWeightedProgress / taskTotalWeight)
+    : 0;
+  
+  // Calculate habit progress (weighted average of all habits)
+  let habitTotalWeight = 0;
+  let habitWeightedProgress = 0;
+  for (const habit of habits) {
+    const habitProgress = getHabitProgress(habit);
+    habitTotalWeight += habit.importance;
+    habitWeightedProgress += habitProgress * habit.importance;
+  }
+  const habitProgress = habitTotalWeight > 0
+    ? Math.round(habitWeightedProgress / habitTotalWeight)
+    : 0;
+  
+  // Calculate completed counts
+  const completedTasks = allLeafTasks.filter((t) => t.progress === 100).length;
+  const completedHabits = habits.filter((h) => getHabitProgress(h) >= 100).length;
+  const totalCompleted = completedTasks + completedHabits;
+  const totalRemaining = allLeafTasks.length + habits.length - totalCompleted;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -150,84 +266,90 @@ export default function GroupDetailPage() {
         <CardContent className="space-y-4">
           {/* Stats */}
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-muted rounded-lg p-4">
-              <p className="text-sm text-muted-foreground mb-1">Tasks</p>
+            <div className="bg-muted rounded-lg p-3">
+              <p className="text-xs text-muted-foreground mb-1">Tasks</p>
               <p className="text-2xl font-semibold">{allLeafTasks.length}</p>
             </div>
-            <div className="bg-muted rounded-lg p-4">
-              <p className="text-sm text-muted-foreground mb-1">Habits</p>
+            <div className="bg-muted rounded-lg p-3">
+              <p className="text-xs text-muted-foreground mb-1">Habits</p>
               <p className="text-2xl font-semibold">{habits.length}</p>
+            </div>
+            <div className="bg-muted rounded-lg p-3">
+              <p className="text-xs text-muted-foreground mb-1">Completed</p>
+              <p className="text-2xl font-semibold">{totalCompleted}</p>
+            </div>
+            <div className="bg-muted rounded-lg p-3">
+              <p className="text-xs text-muted-foreground mb-1">Remaining</p>
+              <p className="text-2xl font-semibold">{totalRemaining}</p>
             </div>
           </div>
 
           {/* Progress */}
-          <div>
-            <div className="flex items-center justify-between text-sm mb-2">
-              <span className="text-muted-foreground">Average Progress</span>
-              <span className="font-medium">{avgProgress}%</span>
+          <div className="space-y-3 pt-2">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-muted-foreground">Task Progress</span>
+                <span className="text-xs font-medium">{taskProgress}%</span>
+              </div>
+              <UnifiedProgressBar
+                value={taskProgress}
+                interactive={false}
+                showPercentageOnHover={false}
+              />
             </div>
-            <Progress
-              value={avgProgress}
-              className="h-2"
-              style={
-                group.color
-                  ? {
-                      ["--progress-background" as string]: group.color,
-                    }
-                  : undefined
-              }
-            />
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-muted-foreground">Habit Progress</span>
+                <span className="text-xs font-medium">{habitProgress}%</span>
+              </div>
+              <UnifiedProgressBar
+                value={habitProgress}
+                interactive={false}
+                showPercentageOnHover={false}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Tasks */}
-      {tasks.length > 0 && (
+      {/* Tasks and Habits */}
+      {(tasks.length > 0 || habits.length > 0) && (
         <Card>
           <CardHeader>
-            <CardTitle>Tasks ({allLeafTasks.length})</CardTitle>
+            <CardTitle>Tasks & Habits</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
-              {tasks.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  group={group}
-                  onClick={() => router.push(`/tasks?highlight=${task.id}`)}
-                />
-              ))}
-            </div>
+            <TasksHabitsTree
+              tasks={tasks}
+              habits={habits}
+              groups={groups}
+              onTaskClick={(taskId) => router.push(`/tasks?highlight=${taskId}`)}
+              onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+              highlightedTaskId={highlightedTaskId}
+              highlightedHabitId={highlightedHabitId}
+              showCounts={false}
+            />
           </CardContent>
         </Card>
       )}
 
-      {/* Habits */}
-      {habits.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Habits ({habits.length})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {habits.map((habit) => {
-                const progress =
-                  habit.currentCount && habit.targetCount
-                    ? Math.round((habit.currentCount / habit.targetCount) * 100)
-                    : 0;
-                return (
-                  <HabitCard
-                    key={habit.id}
-                    habit={habit}
-                    group={group}
-                    onClick={() => router.push(`/habits?highlight=${habit.id}`)}
-                  />
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Edit Group Dialog */}
+      <Dialog open={editingGroup} onOpenChange={setEditingGroup}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Group</DialogTitle>
+          </DialogHeader>
+          {group && (
+            <GroupForm
+              group={group}
+              onSubmit={handleEdit}
+              onCancel={() => setEditingGroup(false)}
+              loading={saving}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

@@ -3,10 +3,9 @@
 import { Task, Group, Habit } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Slider } from "@/components/ui/slider";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
+import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { Calendar, Folder, MoreVertical, ListTodo, CheckCircle2, Circle } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -16,7 +15,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 interface TaskCardProps {
@@ -74,19 +73,16 @@ export function TaskCard({
   // Parent tasks are only completed when ALL their leaf children are 100%
   const isCompleted = isLeaf && displayProgress >= 100;
 
-  const handleProgressChange = async (value: number[]) => {
-    const newProgress = value[0];
+  const handleProgressChange = useCallback(async (newProgress: number) => {
     setProgressValue(newProgress);
-    setIsUpdating(true);
     try {
       await onProgressUpdate?.(newProgress);
     } catch (error) {
       // Revert on error
       setProgressValue(displayProgress);
-    } finally {
-      setIsUpdating(false);
+      throw error;
     }
-  };
+  }, [onProgressUpdate, displayProgress]);
 
   const handleCheckboxChange = async (checked: boolean) => {
     if (!isLeaf || !onProgressUpdate) return;
@@ -208,10 +204,14 @@ export function TaskCard({
                 <Badge
                   key={label.id}
                   variant="secondary"
-                  className="text-xs"
+                  className="text-xs cursor-pointer hover:opacity-80 transition-opacity"
                   style={{
                     backgroundColor: `${label.color}20`,
                     color: label.color,
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    router.push(`/labels?highlight=${label.id}`);
                   }}
                 >
                   {label.name}
@@ -221,33 +221,19 @@ export function TaskCard({
           )}
 
 
-          {/* Progress Bar / Slider */}
+          {/* Progress Bar */}
           <div className="flex items-center gap-3">
-            {isLeaf && onProgressUpdate ? (
-              <div className="flex-1 space-y-1">
-                <Slider
-                  value={[progressValue]}
-                  onValueChange={handleProgressChange}
-                  min={0}
-                  max={100}
-                  step={1}
-                  disabled={isUpdating}
-                  className="w-full"
-                />
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>0%</span>
-                  <span className="font-medium">{progressValue}%</span>
-                  <span>100%</span>
-                </div>
-              </div>
-            ) : (
-              <>
-                <Progress value={displayProgress} className="flex-1 h-2" />
-                <span className="text-sm text-muted-foreground w-12 text-right">
-                  {displayProgress}%
-                </span>
-              </>
-            )}
+            <div className="flex-1">
+              <UnifiedProgressBar
+                value={progressValue}
+                onValueChange={isLeaf && onProgressUpdate ? handleProgressChange : undefined}
+                disabled={isUpdating}
+                min={1}
+                max={100}
+                interactive={isLeaf && !!onProgressUpdate}
+                showPercentageOnHover={false}
+              />
+            </div>
           </div>
         </div>
       </div>

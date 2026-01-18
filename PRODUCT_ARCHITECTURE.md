@@ -377,15 +377,12 @@ Key Changes:
 │       └── items
 │           └── route.ts      (GET all tasks & habits with this label)
 ├── suggestions
-│   └── route.ts              (GET suggestion - implemented)
+│   └── route.ts              (GET suggestion - ✅ implemented)
 │                             (Query params: ?limit=N, ?randomize=false)
-└── analytics
-    ├── overview
-    │   └── route.ts          (GET dashboard stats - to be implemented)
-    ├── by-label
-    │   └── route.ts          (GET progress by label - to be implemented)
-    └── by-group
-        └── route.ts          (GET progress by group - to be implemented)
+└── groups
+    └── [id]
+        └── items
+            └── route.ts      (GET all tasks & habits in group with tree structure)
 ```
 
 ### API Conventions
@@ -494,16 +491,22 @@ Key Changes:
 
 ## Progress Calculation Logic
 
-**Note:** With the simplified structure, progress is now manually entered for all tasks (leaf and parent). Future enhancements can implement automatic calculation.
+### Task Progress (Aggregate-Based Implementation)
 
-### Task Progress (Current Implementation)
+#### Current Implementation:
+- **Leaf Tasks:** Store manual progress (0-100%) in `progress` field
+- **Parent Tasks:** Use aggregate-based calculation with `total_weight` and `weighted_progress` fields
+- **Progress Calculation:** `weighted_progress / total_weight` calculated on-demand
+- **Automatic Updates:** When leaf task progress/importance changes, aggregates propagate up the hierarchy
+- **BIGINT Storage:** Uses BigInt to prevent overflow with large hierarchies
 
-#### Manual Entry:
-- All tasks have manual progress entry (0-100%)
-- User updates via slider or input
-- Progress is stored directly in the `progress` field
+#### Aggregate System:
+- Leaf tasks: Store `importance` (weight) and `progress` (0-100)
+- Parent tasks: Store `total_weight` (Σ weights of descendant leaves) and `weighted_progress` (Σ(progress × weight))
+- Progress calculated on-demand: `weighted_progress / total_weight`
+- Changes propagate automatically up the hierarchy
 
-### Future: Automatic Progress Calculation
+### Habit Progress (Cumulative Implementation)
 
 #### When Task Has Child Tasks:
 ```typescript
@@ -531,26 +534,19 @@ Task Progress = (50×80 + 100×60 + 0×40) / (80 + 60 + 40)
 ```
 
 #### Root Task Progress with Linked Habits:
-```typescript
-rootTaskProgress = (
-  (Σ(childTask.progress × childTask.importance) / Σ(childTask.importance)) × taskWeight +
-  (habitCompletionRate × habitWeight)
-)
+Root tasks use the same aggregate system as parent tasks, with habits contributing to aggregates:
+- **Habit Contribution:** Habits linked via `parentTaskId` contribute their `importance` as weight and `completion × importance` as weighted progress
+- **Formula:** `weighted_progress / total_weight` where:
+  - `total_weight = Σ(child_task.total_weight) + Σ(habit.importance)`
+  - `weighted_progress = Σ(child_task.weighted_progress) + Σ(habit.completion × habit.importance)`
 
-Where:
-- taskWeight: 0.7 (70% weight to child tasks)
-- habitWeight: 0.3 (30% weight to linked habits via parentTaskId)
-- habitCompletionRate: percentage of linked habits meeting their targets
-```
-
-**Habit Completion Rate Calculation:**
+**Habit Completion Calculation:**
 ```typescript
 For each linked habit (habit.parentTaskId = task.id):
   - All types use cumulative progress: (total count of all logs / targetCount) × 100
   - Progress is calculated on-demand, not stored
   - Capped at 100%
-
-habitCompletionRate = Σ(habitCompletion) / numberOfLinkedHabits
+  - Completion = min(100, (totalLogs / targetCount) × 100)
 ```
 
 **Habit Progress Details:**
@@ -567,21 +563,21 @@ habitCompletionRate = Σ(habitCompletion) / numberOfLinkedHabits
 **Example:**
 ```
 Root Task has:
-- 2 Child Tasks: Task1 (60%, importance 80), Task2 (80%, importance 40)
-- 2 Linked Habits: Habit1 (100% - done today), Habit2 (50% - 1/2 daily targets)
+- 2 Child Tasks: Task1 (total_weight=80, weighted_progress=4800), Task2 (total_weight=40, weighted_progress=3200)
+- 2 Linked Habits: Habit1 (importance=50, completion=100%), Habit2 (importance=30, completion=50%)
 
-Task Progress = (60×80 + 80×40) / (80 + 40) = 8000/120 = 66.67%
-Habit Progress = (100 + 50) / 2 = 75%
+total_weight = 80 + 40 + 50 + 30 = 200
+weighted_progress = 4800 + 3200 + (100×50) + (50×30) = 8000 + 5000 + 1500 = 14500
 
-Root Task Progress = (66.67 × 0.7) + (75 × 0.3)
-                   = 46.67 + 22.5
-                   = 69.17%
+Root Task Progress = 14500 / 200 = 72.5%
 ```
 
-### Update Triggers (Future Implementation)
-- **Child task update** → Recalculate parent Task progress
-- **Habit log** → Recalculate parent Task (if parentTaskId set)
-- Calculations will happen in API route or via database triggers
+### Update Triggers (Implemented)
+- **Child task update** → Automatically recalculates parent Task aggregates via `propagateAggregates()`
+- **Habit log/update** → Automatically updates parent Task aggregates (if parentTaskId set)
+- **Task importance change** → Updates aggregates up the hierarchy
+- **Task/habit added/removed** → Updates parent aggregates
+- All calculations happen in API routes using `lib/progress-calculator.ts` functions
 
 ---
 
@@ -679,20 +675,39 @@ Returns suggestion with:
 │   │   └── page.tsx
 │   └── layout.tsx
 ├── (dashboard)
-│   ├── layout.tsx              # Main layout with sidebar
-│   ├── page.tsx                # Dashboard/Overview
+│   ├── layout.tsx              # Main layout with sidebar and header
+│   ├── page.tsx                # Dashboard/Overview with analytics
 │   ├── tasks
-│   │   ├── page.tsx            # Tasks list (can filter for root tasks)
+│   │   ├── page.tsx            # Tasks list with filtering and search
 │   │   ├── [id]
-│   │   │   └── page.tsx        # Task detail with hierarchy
+│   │   │   ├── page.tsx        # Task detail with hierarchy
+│   │   │   └── edit
+│   │   │       └── page.tsx    # Edit task
 │   │   └── new
 │   │       └── page.tsx        # Create task
 │   ├── habits
 │   │   ├── page.tsx            # Habits list
 │   │   ├── [id]
-│   │   │   └── page.tsx        # Habit detail with calendar
+│   │   │   └── edit
+│   │   │       └── page.tsx    # Edit habit
 │   │   └── new
 │   │       └── page.tsx        # Create habit
+│   ├── groups
+│   │   ├── page.tsx            # Groups list with pagination
+│   │   ├── [id]
+│   │   │   ├── page.tsx        # Group detail with stats and tree
+│   │   │   └── edit
+│   │   │       └── page.tsx    # Edit group (modal-based)
+│   │   └── new
+│   │       └── page.tsx        # Create group
+│   ├── labels
+│   │   ├── page.tsx            # Labels list with stats (modal-based editing)
+│   │   ├── [id]
+│   │   │   ├── page.tsx        # Label detail (removed - shown in listing)
+│   │   │   └── edit
+│   │   │       └── page.tsx    # Edit label (modal-based)
+│   │   └── new
+│   │       └── page.tsx        # Create label
 │   ├── analytics
 │   │   └── page.tsx            # Analytics dashboard
 │   └── settings
@@ -705,60 +720,80 @@ Returns suggestion with:
 │   ├── button.tsx
 │   ├── card.tsx
 │   ├── input.tsx
+│   ├── dialog.tsx
+│   ├── progress.tsx
+│   ├── select.tsx
+│   ├── calendar.tsx
+│   ├── badge.tsx
 │   └── [...]
 ├── layout
-│   ├── sidebar.tsx
-│   ├── header.tsx
-│   └── navigation.tsx
+│   ├── dashboard-layout.tsx    # Main dashboard wrapper
+│   ├── sidebar.tsx             # Navigation sidebar
+│   ├── header.tsx              # Top header with user menu
+│   └── user-menu.tsx           # User dropdown menu
 ├── tasks
-│   ├── task-card.tsx
-│   ├── task-form.tsx
-│   ├── task-list.tsx
-│   ├── task-tree.tsx           # Hierarchical task display
-│   └── task-progress.tsx
+│   ├── task-card.tsx           # Task card with progress and labels
+│   ├── task-form.tsx           # Task create/edit form
+│   └── task-tree.tsx           # Hierarchical task display
 ├── habits
-│   ├── habit-card.tsx
-│   ├── habit-form.tsx
-│   ├── habit-calendar.tsx
-│   ├── habit-log-button.tsx
-│   └── progress-indicator.tsx  # Visual for cumulative progress
+│   ├── habit-card.tsx          # Habit card with progress
+│   ├── habit-form.tsx          # Habit create/edit form
+│   └── habit-calendar.tsx      # Habit calendar view
+├── groups
+│   ├── group-card.tsx          # Group card with progress
+│   └── group-form.tsx          # Group create/edit form
 ├── shared
-│   ├── label-selector.tsx
-│   ├── importance-selector.tsx
-│   ├── progress-bar.tsx
-│   ├── date-picker.tsx
-│   └── loading-skeleton.tsx
+│   ├── tasks-habits-tree.tsx   # Unified tree component for tasks & habits
+│   ├── label-selector.tsx      # Label selection component
+│   ├── importance-indicator.tsx # Importance visual indicator
+│   ├── date-picker.tsx         # Date picker component
+│   ├── loading-skeleton.tsx    # Loading skeleton component
+│   ├── empty-state.tsx         # Empty state component
+│   ├── progress-bar.tsx        # Base progress bar
+│   ├── unified-progress-bar.tsx # Unified progress bar styling
+│   ├── interactive-progress-bar.tsx # Interactive progress with hover/click
+│   └── habit-progress-bar.tsx  # Habit-specific progress bar
 ├── analytics
-│   ├── overview-stats.tsx
-│   ├── progress-chart.tsx
-│   └── label-breakdown.tsx
+│   ├── overview-stats.tsx      # Dashboard overview statistics
+│   ├── progress-chart.tsx      # Time-series progress chart
+│   ├── group-breakdown.tsx     # Group progress breakdown
+│   └── label-stats.tsx         # Label statistics and filtering
 └── suggestions
-    └── suggestion-widget.tsx
+    └── suggestions-carousel.tsx # Suggestions carousel with navigation
 
 /lib
 ├── prisma.ts                   # Prisma client instance
 ├── auth.ts                     # NextAuth config
-├── utils.ts                    # Utility functions
-├── validations.ts              # Zod schemas
-├── progress-calculator.ts      # Progress logic
-└── suggestion-algorithm.ts     # Suggestion logic
+├── utils.ts                    # Utility functions (cn, etc.)
+├── api/
+│   ├── tasks.ts                # Task API client
+│   ├── habits.ts                 # Habit API client
+│   ├── groups.ts               # Group API client
+│   ├── labels.ts               # Label API client
+│   ├── suggestions.ts          # Suggestions API client
+│   └── analytics.ts            # Analytics API client
+├── inheritance-helpers.ts      # Label/group inheritance logic
+├── progress-calculator.ts      # Progress calculation engine
+└── suggestion-algorithm.ts     # Suggestion algorithm
 
 /types
-├── index.ts                    # Shared TypeScript types
-└── api.ts                      # API request/response types
+└── index.ts                    # Shared TypeScript types (Task, Habit, Group, Label, etc.)
 ```
 
 ### State Management Strategy
 
 #### Server State (Data from DB)
-- Use React Server Components for initial data
-- Client components fetch via API routes
-- Consider using SWR or React Query for caching (optional)
+- Client components fetch via API routes using custom API client functions
+- API client functions in `/lib/api/*` handle all data fetching
+- Data fetched on component mount using `useEffect` hooks
+- Optimized updates: Only fetch changed items and their children when updating
 
 #### Client State
-- Local component state for UI interactions
-- React Context for global UI state (theme, sidebar collapsed, etc.)
-- Zustand if complex client state needed (unlikely for MVP)
+- Local component state (`useState`) for UI interactions and form data
+- React Context for global UI state:
+  - `useHeaderAction` context for dashboard header interactions
+  - Session provider for authentication state
+- No external state management library needed (Zustand/Redux) - React hooks sufficient
 
 ### Data Fetching Patterns
 

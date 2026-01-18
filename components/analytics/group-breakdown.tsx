@@ -29,7 +29,11 @@ export function GroupBreakdown({ groups, limit, showViewMore = false }: GroupBre
       <CardContent>
         <div className="space-y-4">
           {displayedGroups.map(({ group, avgProgress, taskCount }) => (
-            <div key={group.id} className="space-y-2">
+            <div 
+              key={group.id} 
+              className="space-y-2 cursor-pointer hover:bg-muted/50 p-2 rounded transition-colors"
+              onClick={() => router.push(`/groups/${group.id}`)}
+            >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   {group.color && (

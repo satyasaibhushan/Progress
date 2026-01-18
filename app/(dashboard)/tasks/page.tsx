@@ -467,6 +467,7 @@ export default function TasksPage() {
             onProgressUpdate={handleProgressUpdate}
             taskRefs={taskRefs.current}
             onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+            highlightedHabitId={searchParams.get("highlightHabit")}
           />
         </div>
       )}
@@ -486,6 +487,7 @@ export default function TasksPage() {
             onProgressUpdate={handleProgressUpdate}
             taskRefs={taskRefs.current}
             onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+            highlightedHabitId={searchParams.get("highlightHabit")}
           />
         </div>
       )}

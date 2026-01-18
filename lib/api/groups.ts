@@ -19,8 +19,17 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return data.data || data;
 }
 
-export async function getGroups(): Promise<Group[]> {
-  const response = await fetch("/api/groups");
+export interface GroupFilters {
+  limit?: number;
+}
+
+export async function getGroups(filters?: GroupFilters): Promise<Group[]> {
+  const params = new URLSearchParams();
+  if (filters?.limit) {
+    params.append("limit", filters.limit.toString());
+  }
+  const url = params.toString() ? `/api/groups?${params.toString()}` : "/api/groups";
+  const response = await fetch(url);
   return handleResponse<Group[]>(response);
 }
 
@@ -56,4 +65,14 @@ export async function deleteGroup(id: string): Promise<void> {
     const error = await response.json().catch(() => ({ error: "Unknown error" }));
     throw new Error(error.error || `HTTP error! status: ${response.status}`);
   }
+}
+
+export interface GroupItems {
+  tasks: any[];
+  habits: any[];
+}
+
+export async function getGroupItems(id: string): Promise<GroupItems> {
+  const response = await fetch(`/api/groups/${id}/items`);
+  return handleResponse<GroupItems>(response);
 }

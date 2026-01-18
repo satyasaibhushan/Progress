@@ -22,10 +22,29 @@ const pageTitles: Record<string, string> = {
   "/analytics": "Analytics",
 };
 
+// Helper to get page title from pathname, handling dynamic routes
+function getPageTitle(pathname: string | null): string {
+  if (!pathname) return "Dashboard";
+  
+  // Check exact match first
+  if (pageTitles[pathname]) {
+    return pageTitles[pathname];
+  }
+  
+  // Check for dynamic routes (e.g., /groups/[id], /labels/[id]/edit)
+  for (const [path, title] of Object.entries(pageTitles)) {
+    if (pathname.startsWith(path + "/")) {
+      return title;
+    }
+  }
+  
+  return "Dashboard";
+}
+
 export function DashboardLayout({ children, onSuggestionsClick, headerRightAction, headerSubtitle }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const pathname = usePathname();
-  const pageTitle = pageTitles[pathname || "/"] || "Dashboard";
+  const pageTitle = getPageTitle(pathname);
 
   return (
     <div className="min-h-screen bg-slate-50">

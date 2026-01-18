@@ -5,12 +5,13 @@ import { TaskCard } from "./task-card";
 import { ChevronRight, ChevronDown, Flame, Calendar, Folder } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
+import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { cn } from "@/lib/utils";
 import { parseISO, isSameDay } from "date-fns";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 interface TaskTreeProps {
   tasks: Task[];
@@ -24,6 +25,9 @@ interface TaskTreeProps {
   onToggleExpand?: (taskId: string) => void;
   taskRefs?: { [key: string]: HTMLDivElement | null } | { [key: string]: (el: HTMLDivElement | null) => void };
   onHabitClick?: (habitId: string) => void;
+  onTaskClick?: (taskId: string) => void;
+  highlightedHabitId?: string | null;
+  highlightedTaskId?: string | null;
 }
 
 function hasChildren(task: Task): boolean {
@@ -119,6 +123,9 @@ export function TaskTree({
   onToggleExpand,
   taskRefs,
   onHabitClick,
+  onTaskClick,
+  highlightedHabitId,
+  highlightedTaskId,
 }: TaskTreeProps) {
   const router = useRouter();
   
@@ -161,7 +168,8 @@ export function TaskTree({
           )}
           {!taskHasChildren && !taskHasHabits && <div className="w-6" />}
           <div 
-            className="flex-1"
+            className={cn("flex-1", onTaskClick && "cursor-pointer")}
+            onClick={() => onTaskClick?.(task.id)}
             ref={taskRefs ? (el) => {
               if (typeof taskRefs[task.id] === 'function') {
                 (taskRefs[task.id] as (el: HTMLDivElement | null) => void)(el);
@@ -219,27 +227,79 @@ export function TaskTree({
               
               // Calculate streak from logs
               const streak = fullHabit.habitLogs ? calculateStreak(fullHabit.habitLogs) : 0;
+              const isHabitHighlighted = highlightedHabitId === habit.id;
               
               return (
-                <div key={habit.id} className="flex items-center gap-2">
-                  <div className="w-6 flex-shrink-0" />
-                  <div className="flex-1">
-                    <Card
-                      className={cn(
-                        "p-3 hover:border-indigo-300 transition-all cursor-pointer",
-                        "bg-indigo-50/50 border-indigo-200"
-                      )}
-                      style={{ marginLeft: `${(currentLevel + 1) * 24}px` }}
-                      onClick={() => onHabitClick?.(habit.id)}
-                    >
+                <HabitCardWithHover
+                  key={habit.id}
+                  habit={habit}
+                  fullHabit={fullHabit}
+                  habitGroup={habitGroup}
+                  habitProgress={habitProgress}
+                  currentCount={currentCount}
+                  streak={streak}
+                  currentLevel={currentLevel}
+                  isHighlighted={isHabitHighlighted}
+                  onHabitClick={() => onHabitClick?.(habit.id)}
+                  onGroupClick={(groupId) => router.push(`/groups/${groupId}`)}
+                />
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Separate component for habit card to manage hover state
+  function HabitCardWithHover({
+    habit,
+    fullHabit,
+    habitGroup,
+    habitProgress,
+    currentCount,
+    streak,
+    currentLevel,
+    isHighlighted,
+    onHabitClick,
+    onGroupClick,
+  }: {
+    habit: Habit;
+    fullHabit: Habit;
+    habitGroup: Group | undefined;
+    habitProgress: number;
+    currentCount: number;
+    streak: number;
+    currentLevel: number;
+    isHighlighted: boolean;
+    onHabitClick: () => void;
+    onGroupClick: (groupId: string) => void;
+  }) {
+    const [isHovered, setIsHovered] = useState(false);
+                
+    return (
+      <div className="flex items-center gap-2">
+        <div className="w-6 flex-shrink-0" />
+        <div className="flex-1">
+          <Card
+            className={cn(
+              "p-3 hover:border-slate-300 transition-all cursor-pointer",
+              "bg-slate-50/50 border-slate-200",
+              isHighlighted && "border-indigo-400 bg-indigo-50/30"
+            )}
+            style={{ marginLeft: `${(currentLevel + 1) * 24}px` }}
+            onClick={onHabitClick}
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+          >
                     <div className="flex items-start gap-3">
                       <div className="w-6 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1">
-                            <h4 className="text-sm font-medium text-indigo-900">{habit.title}</h4>
-                            <Badge variant="outline" className="text-xs border-indigo-300 text-indigo-700 bg-indigo-100">
+                            <h4 className="text-sm font-medium text-slate-900">{habit.title}</h4>
+                            <Badge variant="outline" className="text-xs border-slate-300 text-slate-700 bg-slate-100">
                               Habit
                             </Badge>
                             {habit.countPerPeriod && habit.countPerPeriod > 1 && (
@@ -271,7 +331,7 @@ export function TaskTree({
                               e.stopPropagation();
                               router.push(`/groups/${habitGroup.id}`);
                             }}
-                            className="flex items-center gap-1 hover:text-indigo-600 transition-colors"
+                            className="flex items-center gap-1 hover:text-slate-600 transition-colors"
                           >
                             <Folder className="w-3 h-3" />
                             <span>{habitGroup.name}</span>
@@ -297,10 +357,14 @@ export function TaskTree({
                             <Badge
                               key={label.id}
                               variant="secondary"
-                              className="text-xs"
+                              className="text-xs cursor-pointer hover:opacity-80 transition-opacity"
                               style={{
                                 backgroundColor: `${label.color}20`,
                                 color: label.color,
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                router.push(`/labels?highlight=${label.id}`);
                               }}
                             >
                               {label.name}
@@ -311,16 +375,12 @@ export function TaskTree({
 
                       {/* Progress Bar */}
                       <div className="flex items-center gap-3">
-                        <Progress 
-                          value={habitProgress} 
-                          className="flex-1 h-2"
-                          style={{
-                            ["--progress-background" as string]: "#6366f1", // indigo-500
-                          }}
+                        <UnifiedProgressBar
+                          value={habitProgress}
+                          interactive={false}
+                          isHighlighted={isHighlighted || isHovered}
+                          showPercentageOnHover={true}
                         />
-                        <span className="text-sm text-muted-foreground w-12 text-right">
-                          {habitProgress}%
-                        </span>
                       </div>
                     </div>
                   </div>
@@ -328,12 +388,7 @@ export function TaskTree({
                   </div>
                 </div>
               );
-            })}
-          </div>
-        )}
-      </div>
-    );
-  };
+            }
 
   return (
     <div className="space-y-2">

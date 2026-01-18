@@ -8,7 +8,7 @@ import { deleteTask } from "@/lib/api/tasks";
 import { Task } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { Badge } from "@/components/ui/badge";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
@@ -117,7 +117,11 @@ export default function TaskDetailPage() {
               <span className="text-sm font-medium">Progress</span>
               <span className="text-sm text-muted-foreground">{task.progress}%</span>
             </div>
-            <Progress value={task.progress} className="h-2" />
+            <UnifiedProgressBar
+              value={task.progress}
+              interactive={false}
+              showPercentageOnHover={false}
+            />
           </div>
 
           {/* Meta Info */}
@@ -227,7 +231,11 @@ export default function TaskDetailPage() {
                           </p>
                         </div>
                       </div>
-                      <Progress value={progress} className="h-1.5" />
+                      <UnifiedProgressBar
+                        value={progress}
+                        interactive={false}
+                        showPercentageOnHover={false}
+                      />
                     </Card>
                   );
                 })}

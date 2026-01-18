@@ -5,11 +5,9 @@ import { useRouter } from "next/navigation";
 import { useHeaderAction } from "../layout";
 import { Plus } from "lucide-react";
 import { getGroups } from "@/lib/api/groups";
-import { getTasks } from "@/lib/api/tasks";
-import { getHabits } from "@/lib/api/habits";
 import { getLabels } from "@/lib/api/labels";
 import { createGroup, updateGroup, deleteGroup } from "@/lib/api/groups";
-import { Group, Task, Habit, Label } from "@/types";
+import { Group, Label } from "@/types";
 import { GroupCard } from "@/components/groups/group-card";
 import { GroupForm } from "@/components/groups/group-form";
 import { Button } from "@/components/ui/button";
@@ -32,122 +30,31 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { getHabitLogs } from "@/lib/api/habits";
 
-function getAllLeafTasks(tasks: Task[]): Task[] {
-  const leafTasks: Task[] = [];
-  const traverse = (taskList: Task[]) => {
-    taskList.forEach((task) => {
-      if (task.children && task.children.length > 0) {
-        traverse(task.children);
-      } else {
-        leafTasks.push(task);
-      }
-    });
-  };
-  traverse(tasks);
-  return leafTasks;
-}
-
-// Calculate progress for a task (handles parent tasks)
-function calculateTaskProgress(task: Task & { total_weight?: string; weighted_progress?: string }): number {
-  if (!task.children || task.children.length === 0) {
-    return task.progress || 0;
-  }
-  
-  if (task.total_weight && task.weighted_progress) {
-    const totalWeight = Number(task.total_weight);
-    const weightedProgress = Number(task.weighted_progress);
-    if (totalWeight > 0) {
-      return Math.round((weightedProgress / totalWeight) * 100);
-    }
-  }
-  
-  return 0;
-}
-
-// Calculate habit progress
-async function calculateHabitProgress(habit: Habit): Promise<number> {
-  try {
-    const logs = await getHabitLogs(habit.id);
-    const totalCount = logs.reduce((sum, log) => sum + log.count, 0);
-    if (habit.targetCount === 0) return 0;
-    return Math.min(100, Math.round((totalCount / habit.targetCount) * 100));
-  } catch (error) {
-    console.error("Error calculating habit progress:", error);
-    return 0;
-  }
-}
-
-// Calculate group progress
-async function calculateGroupProgress(
-  groupId: string,
-  tasks: Task[],
-  habits: Habit[]
-): Promise<{ progress: number; taskCount: number; habitCount: number }> {
-  const groupTasks = tasks.filter((t) => t.groupId === groupId && !t.parentId);
-  const groupHabits = habits.filter((h) => h.groupId === groupId && !h.parentTaskId);
-
-  let totalWeight = 0;
-  let weightedProgress = 0;
-
-  // Add task contributions
-  for (const task of groupTasks) {
-    const taskProgress = calculateTaskProgress(task as Task & { total_weight?: string; weighted_progress?: string });
-    const isLeaf = !task.children || task.children.length === 0;
-    
-    if (isLeaf) {
-      totalWeight += task.importance;
-      weightedProgress += taskProgress * task.importance;
-    } else if (task.total_weight && task.weighted_progress) {
-      totalWeight += Number(task.total_weight);
-      weightedProgress += Number(task.weighted_progress);
-    }
-  }
-
-  // Add habit contributions
-  for (const habit of groupHabits) {
-    const habitProgress = await calculateHabitProgress(habit);
-    totalWeight += habit.importance;
-    weightedProgress += habitProgress * habit.importance;
-  }
-
-  const progress = totalWeight > 0 ? Math.round((weightedProgress / totalWeight) * 100) : 0;
-  const allLeafTasks = getAllLeafTasks(groupTasks);
-  
-  return {
-    progress,
-    taskCount: allLeafTasks.length,
-    habitCount: groupHabits.length,
-  };
-}
 
 export default function GroupsPage() {
   const { setHeaderSubtitle } = useHeaderAction();
   const router = useRouter();
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [habits, setHabits] = useState<Habit[]>([]);
+  const [groups, setGroups] = useState<(Group & { progress?: number; taskCount?: number; habitCount?: number })[]>([]);
+  const [allGroups, setAllGroups] = useState<(Group & { progress?: number; taskCount?: number; habitCount?: number })[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [deletingGroup, setDeletingGroup] = useState<Group | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [groupProgress, setGroupProgress] = useState<Record<string, { progress: number; taskCount: number; habitCount: number }>>({});
+  const [showAll, setShowAll] = useState(false);
+  const DISPLAY_LIMIT = 6;
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [groupsData, tasksData, habitsData, labelsData] = await Promise.all([
+        const [allGroupsData, labelsData] = await Promise.all([
           getGroups(),
-          getTasks({ includeChildren: true }),
-          getHabits(),
           getLabels(),
         ]);
-        setGroups(groupsData);
-        setTasks(tasksData);
-        setHabits(habitsData);
+        setAllGroups(allGroupsData);
+        setGroups(allGroupsData.slice(0, DISPLAY_LIMIT));
         setLabels(labelsData);
       } catch (error) {
         console.error("Error loading groups:", error);
@@ -160,24 +67,18 @@ export default function GroupsPage() {
 
   // Set header subtitle with total count
   useEffect(() => {
-    setHeaderSubtitle(groups.length > 0 ? `${groups.length} total` : null);
+    setHeaderSubtitle(allGroups.length > 0 ? `${allGroups.length} total` : null);
     return () => setHeaderSubtitle(null);
-  }, [setHeaderSubtitle, groups.length]);
+  }, [setHeaderSubtitle, allGroups.length]);
 
-  // Calculate progress for all groups
+  // Update displayed groups when showAll changes
   useEffect(() => {
-    async function calculateProgresses() {
-      const progresses: Record<string, { progress: number; taskCount: number; habitCount: number }> = {};
-      for (const group of groups) {
-        const result = await calculateGroupProgress(group.id, tasks, habits);
-        progresses[group.id] = result;
-      }
-      setGroupProgress(progresses);
+    if (showAll) {
+      setGroups(allGroups);
+    } else {
+      setGroups(allGroups.slice(0, DISPLAY_LIMIT));
     }
-    if (groups.length > 0 && tasks.length >= 0 && habits.length >= 0) {
-      calculateProgresses();
-    }
-  }, [groups, tasks, habits]);
+  }, [showAll, allGroups]);
 
   const handleCreate = async (data: any) => {
     setSaving(true);
@@ -214,7 +115,13 @@ export default function GroupsPage() {
     if (!deletingGroup) return;
     try {
       await deleteGroup(deletingGroup.id);
-      setGroups(groups.filter((g) => g.id !== deletingGroup.id));
+      const updatedGroups = allGroups.filter((g) => g.id !== deletingGroup.id);
+      setAllGroups(updatedGroups);
+      if (showAll) {
+        setGroups(updatedGroups);
+      } else {
+        setGroups(updatedGroups.slice(0, DISPLAY_LIMIT));
+      }
       setDeletingGroup(null);
     } catch (error) {
       console.error("Error deleting group:", error);
@@ -251,24 +158,34 @@ export default function GroupsPage() {
           }}
         />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {groups.map((group) => {
-            const progress = groupProgress[group.id] || { progress: 0, taskCount: 0, habitCount: 0 };
-
-            return (
-              <GroupCard
-                key={group.id}
-                group={group}
-                taskCount={progress.taskCount}
-                habitCount={progress.habitCount}
-                avgProgress={progress.progress}
-                onClick={() => router.push(`/groups/${group.id}`)}
-                onEdit={() => setEditingGroup(group)}
-                onDelete={() => setDeletingGroup(group)}
-              />
-            );
-          })}
-        </div>
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {groups.map((group) => {
+              return (
+                <GroupCard
+                  key={group.id}
+                  group={group}
+                  taskCount={group.taskCount || 0}
+                  habitCount={group.habitCount || 0}
+                  avgProgress={group.progress || 0}
+                  onClick={() => router.push(`/groups/${group.id}`)}
+                  onEdit={() => setEditingGroup(group)}
+                  onDelete={() => setDeletingGroup(group)}
+                />
+              );
+            })}
+          </div>
+          {allGroups.length > DISPLAY_LIMIT && (
+            <div className="flex justify-center mt-6">
+              <Button
+                variant="outline"
+                onClick={() => setShowAll(!showAll)}
+              >
+                {showAll ? `Show Less` : `Show More (${allGroups.length - DISPLAY_LIMIT} more)`}
+              </Button>
+            </div>
+          )}
+        </>
       )}
 
       {/* Create Group Dialog */}
