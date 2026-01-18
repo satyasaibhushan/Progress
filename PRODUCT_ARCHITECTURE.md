@@ -163,9 +163,9 @@
                               └──────────────────────┘
 
 Key Changes:
-- Goal model removed - root tasks (parentId = null) are "goals"
 - Subtask model removed - tasks have infinite nesting via parentId
 - Tasks are self-referential with parent-child relationships
+- Root tasks (parentId = null) are top-level tasks
 - Habits can be children of tasks via parentTaskId
 ```
 
@@ -208,7 +208,7 @@ Key Changes:
 }
 ```
 
-#### **Task** (Hierarchical - replaces Goal + Task + Subtask)
+#### **Task** (Hierarchical - replaces Task + Subtask)
 ```typescript
 {
   id: string (UUID)
@@ -218,7 +218,7 @@ Key Changes:
   progress: float (0-100 percentage, manual entry)
   deadline: DateTime?
   groupId: string? (category)
-  parentId: string? (null = root task/"goal", else = child task)
+  parentId: string? (null = root task, else = child task)
   userId: string
   createdAt: DateTime
   updatedAt: DateTime
@@ -234,7 +234,7 @@ Key Changes:
 ```
 
 **Note:**
-- Root tasks (`parentId = null`) effectively serve as "goals"
+- Root tasks (`parentId = null`) are top-level tasks
 - Child tasks can have their own child tasks (infinite nesting)
 - No separate Subtask model - just tasks with a parentId
 - Importance is now 1-100 range (not fixed values)
@@ -345,9 +345,9 @@ Key Changes:
 │   ├── route.ts              (GET all, POST)
 │   └── [id]
 │       └── route.ts          (GET, PUT, DELETE)
-├── tasks                      (Hierarchical - includes "goals")
+├── tasks                      (Hierarchical)
 │   ├── route.ts              (GET all with filters, POST)
-│   │                         (Filters: ?parentId=null for roots/"goals")
+│   │                         (Filters: ?parentId=null for root tasks)
 │   │                         (         ?parentId={id} for children)
 │   │                         (         ?groupId={id} for category)
 │   │                         (         ?include=children for nested)
@@ -530,7 +530,7 @@ Task Progress = (50×80 + 100×60 + 0×40) / (80 + 60 + 40)
               = 55.56%
 ```
 
-#### Root Task ("Goal") Progress with Linked Habits:
+#### Root Task Progress with Linked Habits:
 ```typescript
 rootTaskProgress = (
   (Σ(childTask.progress × childTask.importance) / Σ(childTask.importance)) × taskWeight +
@@ -566,7 +566,7 @@ habitCompletionRate = Σ(habitCompletion) / numberOfLinkedHabits
 
 **Example:**
 ```
-Root Task ("Goal") has:
+Root Task has:
 - 2 Child Tasks: Task1 (60%, importance 80), Task2 (80%, importance 40)
 - 2 Linked Habits: Habit1 (100% - done today), Habit2 (50% - 1/2 daily targets)
 
@@ -632,7 +632,7 @@ Where:
 Returns suggestion with:
 - **Item details:** id, type, title, progress, expectedProgress, progressGap, importance, score
 - **Parent task information** (if item is a child)
-- **Root goal** (traverses up hierarchy to find root task)
+- **Root task** (traverses up hierarchy to find root task)
 - **Group/category** information
 - **Labels** associated with the item
 - **Deadline/endDate** for reference
@@ -659,7 +659,7 @@ Returns suggestion with:
     "score": 1600,
     "deadline": "2024-12-31T23:59:59Z",
     "parent": { "id": "...", "title": "...", "progress": 45 },
-    "rootGoal": { "id": "...", "title": "..." },
+    "rootTask": { "id": "...", "title": "..." },
     "group": { "id": "...", "name": "...", "color": "#..." },
     "labels": [...]
   }
@@ -682,7 +682,7 @@ Returns suggestion with:
 │   ├── layout.tsx              # Main layout with sidebar
 │   ├── page.tsx                # Dashboard/Overview
 │   ├── tasks
-│   │   ├── page.tsx            # Tasks list (can filter for roots/"goals")
+│   │   ├── page.tsx            # Tasks list (can filter for root tasks)
 │   │   ├── [id]
 │   │   │   └── page.tsx        # Task detail with hierarchy
 │   │   └── new
@@ -769,7 +769,7 @@ async function TasksPage() {
   const tasks = await prisma.task.findMany({
     where: {
       userId: session.user.id,
-      parentId: null  // Get root tasks ("goals")
+      parentId: null  // Get root tasks
     }
   })
   return <TasksList tasks={tasks} />
@@ -780,7 +780,7 @@ async function TasksPage() {
 ```typescript
 // Fetch via API route
 async function TasksPage() {
-  // Get root tasks ("goals")
+  // Get root tasks
   const { data } = await fetch('/api/tasks?parentId=null')
   return <TasksList tasks={data} />
 }

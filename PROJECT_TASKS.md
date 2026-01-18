@@ -1,7 +1,7 @@
 # Progress App - Project Tasks & Roadmap
 
 ## Project Overview
-Building a comprehensive progress tracking application with goals, tasks, habits, and intelligent suggestions.
+Building a comprehensive progress tracking application with tasks, habits, and intelligent suggestions.
 
 ---
 
@@ -53,12 +53,11 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 **What to do:**
 - Define User model (with Google auth fields)
 - Define Group/Category model
-- Define Goal model (with labels, deadline)
 - Define Task model (with importance, labels, deadline, progress)
 - Define Subtask model (with importance, progress, deadline)
 - Define Habit model (with type, end date, labels)
 - Define HabitLog model (for daily tracking)
-- Define Label model (many-to-many with goals/tasks/habits)
+- Define Label model (many-to-many with tasks/habits)
 - Define relationships between all models
 - Add indexes for common queries
 
@@ -123,7 +122,7 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 **What to do:**
 - Create API routes: `/api/tasks` (GET, POST, PUT, DELETE)
 - Implement hierarchy support (parentId for infinite nesting)
-- Root tasks (parentId = null) are effectively "goals"
+- Root tasks (parentId = null) are top-level tasks
 - Implement importance as 1-100 weightage
 - Progress as 0-100 percentage slider
 - Handle labels association
@@ -152,7 +151,7 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 **Description:** Create label management system.
 **What to do:**
 - Create API routes: `/api/labels` (GET, POST, PUT, DELETE)
-- Implement label assignment to goals/tasks/habits
+- Implement label assignment to tasks/habits
 - Create endpoint to fetch all items by label
 - Test all endpoints
 
@@ -180,11 +179,11 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 - Integrated into task create/update/delete API routes
 - Uses BIGINT to prevent overflow with large hierarchies
 
-### Task 5.2: Goal Progress Calculation (Aggregate-Based)
+### Task 5.2: Root Task Progress Calculation (Aggregate-Based)
 **Status:** ✅ Completed
-**Description:** Implement goal progress from tasks and linked habits using aggregate approach.
+**Description:** Implement root task progress from child tasks and linked habits using aggregate approach.
 **What was done:**
-- Root tasks (goals) use same aggregate system as parent tasks
+- Root tasks use same aggregate system as parent tasks
 - Child tasks contribute their `total_weight` and `weighted_progress` to parent
 - Linked habits (via `parentTaskId`) contribute their weight and weighted progress
 - Formula: `weighted_progress / total_weight` where:
@@ -247,7 +246,7 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 - Returns suggestion with full context:
   - Item details (task/habit with progress, expected progress, score)
   - Parent task information (if applicable)
-  - Root goal (traverses up hierarchy to find root)
+  - Root task (traverses up hierarchy to find root)
   - Group/category information
   - Labels
   - Score breakdown (importance, progress gap, calculated score)
@@ -263,7 +262,7 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 **Description:** Create main dashboard layout and navigation.
 **What to do:**
 - Design responsive layout with sidebar
-- Create navigation menu (Dashboard, Goals, Habits, Analytics)
+- Create navigation menu (Dashboard, Tasks, Habits, Analytics)
 - Add breadcrumbs
 - Implement responsive mobile view
 
@@ -274,31 +273,25 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 - Create groups list view
 - Add create/edit/delete group forms
 - Implement group card component
-- Show goals/habits count per group
+- Show tasks/habits count per group
 
-### Task 7.3: Goals Management UI
+### Task 7.3: Tasks Management UI
 **Status:** Pending
-**Description:** Build comprehensive goals interface.
+**Description:** Build comprehensive tasks interface with hierarchical support.
 **What to do:**
-- Create goals list/grid view
-- Add filters (by group, label, status)
-- Create goal detail page
-- Build goal create/edit form with:
+- Create tasks list/grid view (filter by parentId=null for root tasks)
+- Add filters (by group, label, status, parent task)
+- Create task detail page with hierarchical view
+- Build task create/edit form with:
   - Labels selection/creation
   - Deadline picker
   - Group assignment
+  - Parent task selection (for nested tasks)
   - Linked habits selection
 - Display progress visualization (progress bar, percentage)
-- Show associated tasks
-
-### Task 7.4: Tasks Management UI
-**Status:** Pending
-**Description:** Build tasks interface.
-**What to do:**
-- Create task list within goal view
-- Add importance level selector (red/yellow/green)
-- Build task create/edit form
-- Implement deadline validation (within goal deadline)
+- Show child tasks and linked habits
+- Add importance level selector (1-100 weightage)
+- Implement deadline validation (within parent task deadline if applicable)
 - Show subtasks inline
 - Add progress slider for manual entry
 - Display labels and filters
@@ -363,7 +356,7 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 - Display overall completion percentage
 - Show progress by group
 - Show progress by label
-- Add summary statistics (total goals, tasks completed, active habits)
+- Add summary statistics (total tasks, tasks completed, active habits)
 - Create visual progress indicators
 
 ### Task 8.2: Time-Series Visualization
@@ -374,7 +367,7 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 - Create line/bar chart showing tasks completed over time
 - Add date range selector (week/month/year)
 - Show habit completion trends
-- Display goal completion timeline
+- Display task completion timeline
 
 ### Task 8.3: Progress by Label/Group View
 **Status:** Pending
@@ -474,14 +467,14 @@ Building a comprehensive progress tracking application with goals, tasks, habits
 
 ## Future Enhancements (Post-MVP)
 
-- [ ] Team/collaborative goals
+- [ ] Team/collaborative tasks
 - [ ] Reminders and notifications
 - [ ] Data export (CSV, JSON)
 - [ ] Mobile app (React Native)
 - [ ] Integrations (Google Calendar, Notion, etc.)
 - [ ] AI-powered insights
 - [ ] Recurring tasks
-- [ ] Templates for common goals
+- [ ] Templates for common tasks
 - [ ] Social features (share progress)
 - [ ] Dark mode
 - [ ] Custom themes
