@@ -37,4 +37,5 @@ export const updateTaskSchema = z.object({
   deadline: z.string().datetime().optional().nullable(),
   groupId: z.string().optional().nullable(),
   parentId: z.string().optional().nullable(),
+  labelIds: z.array(z.string()).optional(),
 })

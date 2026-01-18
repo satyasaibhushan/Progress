@@ -4,11 +4,10 @@ import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useHeaderAction } from "../layout";
 import { Plus } from "lucide-react";
-import { getTasks } from "@/lib/api/tasks";
+import { getTasks, getTask, updateTask, deleteTask, createTask, CreateTaskInput } from "@/lib/api/tasks";
 import { getGroups } from "@/lib/api/groups";
 import { getHabits } from "@/lib/api/habits";
 import { getLabels } from "@/lib/api/labels";
-import { updateTask, deleteTask, createTask, CreateTaskInput } from "@/lib/api/tasks";
 import { Task, Group, Habit, Label } from "@/types";
 import { TaskTree } from "@/components/tasks/task-tree";
 import { TaskForm } from "@/components/tasks/task-form";
@@ -264,6 +263,71 @@ export default function TasksPage() {
     }
   };
 
+  // Helper function to update a task in the tree
+  const updateTaskInTree = useCallback((taskList: Task[], taskId: string, updatedTask: Task): Task[] => {
+    return taskList.map((task) => {
+      if (task.id === taskId) {
+        // Replace the task with all its data including habits and children
+        return updatedTask;
+      }
+      if (task.children && task.children.length > 0) {
+        // Recursively update children
+        return {
+          ...task,
+          children: updateTaskInTree(task.children, taskId, updatedTask),
+        };
+      }
+      return task;
+    });
+  }, []);
+
+  // Helper function to remove a task from the tree
+  const removeTaskFromTree = useCallback((taskList: Task[], taskId: string): Task[] => {
+    return taskList
+      .filter((task) => task.id !== taskId)
+      .map((task) => {
+        if (task.children && task.children.length > 0) {
+          return {
+            ...task,
+            children: removeTaskFromTree(task.children, taskId),
+          };
+        }
+        return task;
+      });
+  }, []);
+
+  // Helper function to add a task to the tree at the correct parent
+  const addTaskToTree = useCallback((taskList: Task[], task: Task): Task[] => {
+    if (!task.parentId) {
+      // Root task - add to root level
+      const existingIndex = taskList.findIndex((t) => t.id === task.id);
+      if (existingIndex >= 0) {
+        // Replace existing
+        const newList = [...taskList];
+        newList[existingIndex] = task;
+        return newList;
+      }
+      return [...taskList, task];
+    }
+    
+    // Find parent and add as child
+    return taskList.map((t) => {
+      if (t.id === task.parentId) {
+        return {
+          ...t,
+          children: t.children ? [...t.children, task] : [task],
+        };
+      }
+      if (t.children && t.children.length > 0) {
+        return {
+          ...t,
+          children: addTaskToTree(t.children, task),
+        };
+      }
+      return t;
+    });
+  }, []);
+
   const handleEdit = async (data: { title: string; importance: number; description?: string; progress?: number; deadline?: string | null; groupId?: string | null; parentId?: string | null; labelIds?: string[] }) => {
     if (!editingTask) return;
     setSaving(true);
@@ -279,10 +343,46 @@ export default function TasksPage() {
         parentId: data.parentId || undefined,
         labelIds: data.labelIds,
       };
-      await updateTask(updateData);
-      // Reload tasks
-      const tasksData = await getTasks({ includeChildren: true, parentId: null });
-      setTasks(tasksData);
+      // The PUT endpoint now returns the task with all children and habits recursively
+      const fullUpdatedTask: Task = await updateTask(updateData);
+      
+      // Extract all habits from the updated task tree to update the habits state
+      const extractHabitsFromTask = (task: Task): Habit[] => {
+        const habits: Habit[] = [...(task.habits || [])];
+        if (task.children) {
+          task.children.forEach((child) => {
+            habits.push(...extractHabitsFromTask(child));
+          });
+        }
+        return habits;
+      };
+      const updatedHabits = extractHabitsFromTask(fullUpdatedTask);
+      
+      // Update habits state with the updated habits from the task
+      setHabits((prevHabits) => {
+        const habitMap = new Map(prevHabits.map((h) => [h.id, h]));
+        // Update or add habits from the task
+        updatedHabits.forEach((habit) => {
+          habitMap.set(habit.id, habit);
+        });
+        return Array.from(habitMap.values());
+      });
+      
+      // Check if parent changed
+      const parentChanged = data.parentId !== undefined && data.parentId !== editingTask.parentId;
+      
+      if (parentChanged) {
+        // Remove from old location and add to new location
+        setTasks((prevTasks) => {
+          let newTasks = removeTaskFromTree(prevTasks, editingTask.id);
+          newTasks = addTaskToTree(newTasks, fullUpdatedTask);
+          return newTasks;
+        });
+      } else {
+        // Just update in place
+        setTasks((prevTasks) => updateTaskInTree(prevTasks, editingTask.id, fullUpdatedTask));
+      }
+      
       setEditingTask(null);
     } catch (error) {
       console.error("Error updating task:", error);

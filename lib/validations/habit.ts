@@ -30,6 +30,7 @@ export const createHabitSchema = z.object({
     .nullable(), // Required for WEEKLY habits, optional for others
   groupId: z.string().optional().nullable(),
   parentTaskId: z.string().optional().nullable(),
+  labelIds: z.array(z.string()).optional(),
 })
 
 export const updateHabitSchema = z.object({
@@ -60,6 +61,7 @@ export const updateHabitSchema = z.object({
     .nullable(),
   groupId: z.string().optional().nullable(),
   parentTaskId: z.string().optional().nullable(),
+  labelIds: z.array(z.string()).optional(),
 })
 
 export const logHabitSchema = z.object({

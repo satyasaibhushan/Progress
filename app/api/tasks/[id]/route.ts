@@ -10,6 +10,13 @@ import {
   removeChildFromTask,
 } from "@/lib/progress-calculator"
 import { serializeTask } from "@/lib/utils"
+import {
+  getInheritedLabelsFromTask,
+  getInheritedGroupFromTask,
+  canChangeTaskGroup,
+  propagateLabelsToChildren,
+  propagateGroupToChildren,
+} from "@/lib/inheritance-helpers"
 
 // GET /api/tasks/[id] - Get a specific task
 export async function GET(
@@ -22,6 +29,88 @@ export async function GET(
     const { searchParams } = new URL(request.url)
     const includeChildren = searchParams.get("include") === "children"
 
+    if (includeChildren) {
+      // Fetch all tasks for this user to build the tree recursively
+      const allTasks = await prisma.task.findMany({
+        where: { userId },
+        include: {
+          group: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+          parent: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+          taskLabels: {
+            include: {
+              label: true,
+            },
+          },
+          habits: {
+            include: {
+              habitLabels: {
+                include: {
+                  label: true,
+                },
+              },
+              group: {
+                select: {
+                  id: true,
+                  name: true,
+                  color: true,
+                },
+              },
+            },
+          },
+          _count: {
+            select: {
+              children: true,
+              habits: true,
+            },
+          },
+        },
+        orderBy: [
+          {
+            importance: "desc",
+          },
+          {
+            createdAt: "desc",
+          },
+        ],
+      })
+
+      // Find the requested task
+      const task = allTasks.find((t) => t.id === id)
+
+      if (!task) {
+        return NextResponse.json({ error: "Task not found" }, { status: 404 })
+      }
+
+      // Build the tree structure recursively starting from this task
+      const buildTaskTree = (parentId: string | null): typeof allTasks => {
+        return allTasks
+          .filter((t) => t.parentId === parentId)
+          .map((t) => ({
+            ...t,
+            children: buildTaskTree(t.id),
+          }))
+      }
+
+      const taskWithChildren = {
+        ...task,
+        children: buildTaskTree(task.id),
+      }
+
+      return NextResponse.json({ data: serializeTask(taskWithChildren) })
+    }
+
+    // If not including children, fetch just the task
     const task = await prisma.task.findFirst({
       where: {
         id,
@@ -53,6 +142,13 @@ export async function GET(
                 label: true,
               },
             },
+            group: {
+              select: {
+                id: true,
+                name: true,
+                color: true,
+              },
+            },
           },
         },
         _count: {
@@ -61,23 +157,6 @@ export async function GET(
             habits: true,
           },
         },
-        ...(includeChildren && {
-          children: {
-            include: {
-              taskLabels: {
-                include: {
-                  label: true,
-                },
-              },
-              _count: {
-                select: {
-                  children: true,
-                  habits: true,
-                },
-              },
-            },
-          },
-        }),
       },
     })
 
@@ -223,6 +302,21 @@ export async function PUT(
       }
     }
 
+    // Check if group can be changed (not inherited from parent)
+    if (validatedData.groupId !== undefined) {
+      const canChange = await canChangeTaskGroup(id, userId)
+      if (!canChange) {
+        const inheritedGroup = await getInheritedGroupFromTask(id, userId)
+        return NextResponse.json(
+          { 
+            error: "Cannot change group. This task inherits its group from a parent task. Unlink it from the parent task to change the group.",
+            inheritedGroupId: inheritedGroup,
+          },
+          { status: 400 }
+        )
+      }
+    }
+
     // Prevent progress updates for tasks with children or habits
     if (validatedData.progress !== undefined) {
       const hasChildren = existingTask._count.children > 0
@@ -237,7 +331,7 @@ export async function PUT(
     }
 
     // Convert deadline string to Date if provided
-    const { deadline: deadlineStr, ...rest } = validatedData
+    const { deadline: deadlineStr, labelIds, ...rest } = validatedData
     const updateData: {
       title?: string
       description?: string | null
@@ -286,6 +380,187 @@ export async function PUT(
       },
     })
 
+    // If parent changed, inherit labels and group from new parent
+    if (parentChanged && task.parentId) {
+      const inheritedLabels = await getInheritedLabelsFromTask(task.id, userId)
+      // Get direct parent labels
+      const newParent = await prisma.task.findFirst({
+        where: { id: task.parentId, userId },
+        include: {
+          taskLabels: {
+            select: { labelId: true },
+          },
+        },
+      })
+      
+      if (newParent) {
+        const parentLabelIds = newParent.taskLabels.map((tl) => tl.labelId)
+        const allInheritedLabels = [...new Set([...inheritedLabels, ...parentLabelIds])]
+        
+        // Add inherited labels to the task
+        for (const labelId of allInheritedLabels) {
+          await prisma.taskLabel.create({
+            data: {
+              taskId: task.id,
+              labelId,
+            },
+          }).catch(() => {
+            // Ignore if label already exists
+          })
+        }
+
+        // Inherit group from parent if not explicitly set
+        if (!validatedData.groupId && newParent.groupId) {
+          await prisma.task.update({
+            where: { id: task.id },
+            data: { groupId: newParent.groupId },
+          })
+          task.groupId = newParent.groupId
+        }
+      }
+    }
+
+    // If group changed, propagate to all children
+    if (validatedData.groupId !== undefined) {
+      await propagateGroupToChildren(task.id, task.groupId, userId)
+    }
+
+    // Handle labelIds update if provided
+    if (labelIds !== undefined) {
+      // Get current labels
+      const currentLabels = await prisma.taskLabel.findMany({
+        where: { taskId: id },
+        select: { labelId: true },
+      })
+      const currentLabelIds = currentLabels.map((tl) => tl.labelId)
+      
+      // Get inherited labels that cannot be removed
+      const inheritedLabels = await getInheritedLabelsFromTask(id, userId)
+      
+      // Labels to add (in labelIds but not in current)
+      const labelsToAdd = labelIds.filter((lid) => !currentLabelIds.includes(lid))
+      
+      // Labels to remove (in current but not in labelIds, and not inherited)
+      const labelsToRemove = currentLabelIds.filter(
+        (lid) => !labelIds.includes(lid) && !inheritedLabels.includes(lid)
+      )
+      
+      // Add new labels
+      for (const labelId of labelsToAdd) {
+        // Verify label belongs to user
+        const label = await prisma.label.findFirst({
+          where: { id: labelId, userId },
+        })
+        if (label) {
+          await prisma.taskLabel.create({
+            data: {
+              taskId: id,
+              labelId,
+            },
+          }).catch(() => {
+            // Ignore if already exists
+          })
+        }
+      }
+      
+      // Remove labels (only non-inherited ones)
+      for (const labelId of labelsToRemove) {
+        await prisma.taskLabel.delete({
+          where: {
+            taskId_labelId: {
+              taskId: id,
+              labelId,
+            },
+          },
+        }).catch(() => {
+          // Ignore if doesn't exist
+        })
+      }
+      
+      // Propagate newly added labels to children
+      if (labelsToAdd.length > 0) {
+        await propagateLabelsToChildren(id, labelsToAdd, userId)
+      }
+    }
+
+    // Reload task to get updated labels, children, and habits
+    // Fetch all tasks to build the tree recursively with all habits
+    const allTasks = await prisma.task.findMany({
+      where: { userId },
+      include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        parent: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
+        taskLabels: {
+          include: {
+            label: true,
+          },
+        },
+        habits: {
+          include: {
+            habitLabels: {
+              include: {
+                label: true,
+              },
+            },
+            group: {
+              select: {
+                id: true,
+                name: true,
+                color: true,
+              },
+            },
+          },
+        },
+        _count: {
+          select: {
+            children: true,
+            habits: true,
+          },
+        },
+      },
+      orderBy: [
+        {
+          importance: "desc",
+        },
+        {
+          createdAt: "desc",
+        },
+      ],
+    })
+
+    // Find the updated task
+    const updatedTask = allTasks.find((t) => t.id === task.id)
+
+    if (!updatedTask) {
+      return NextResponse.json({ error: "Task not found" }, { status: 404 })
+    }
+
+    // Build the tree structure recursively starting from this task
+    const buildTaskTree = (parentId: string | null): typeof allTasks => {
+      return allTasks
+        .filter((t) => t.parentId === parentId)
+        .map((t) => ({
+          ...t,
+          children: buildTaskTree(t.id),
+        }))
+    }
+
+    const taskWithChildren = {
+      ...updatedTask,
+      children: buildTaskTree(updatedTask.id),
+    }
+
     const isLeaf = task._count.children === 0 && task._count.habits === 0
     const existingProgress = (existingTask as { progress?: number | null }).progress ?? 0
     const newProgress = (task as { progress?: number | null }).progress ?? 0
@@ -328,7 +603,7 @@ export async function PUT(
       }
     }
 
-    return NextResponse.json({ data: serializeTask(task) })
+    return NextResponse.json({ data: serializeTask(taskWithChildren) })
   } catch (error) {
     return handleApiError(error)
   }

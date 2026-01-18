@@ -6,6 +6,11 @@ import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
 import { addHabitToTask, calculateHabitCompletion } from "@/lib/progress-calculator"
 import { calculateTargetCount } from "@/lib/habit-helpers"
 import { HabitType } from "@/lib/generated/prisma"
+import {
+  getInheritedLabelsFromHabit,
+  getInheritedGroupFromHabit,
+} from "@/lib/inheritance-helpers"
+import { serializeHabits, serializeHabit } from "@/lib/utils"
 
 // GET /api/habits - Get all habits for the authenticated user with optional filters
 export async function GET(request: Request) {
@@ -80,14 +85,14 @@ export async function GET(request: Request) {
       },
     })
 
-    // Calculate progress for each habit
+    // Calculate progress for each habit and serialize
     const habitsWithProgress = await Promise.all(
       habits.map(async (habit) => {
         const progress = await calculateHabitCompletion(habit.id)
-        return {
+        return serializeHabit({
           ...habit,
           progress,
-        }
+        })
       })
     )
 
@@ -158,11 +163,17 @@ export async function POST(request: Request) {
     }
 
     // If parentTaskId is provided, verify it exists and belongs to user
+    let parentTask = null
     if (validatedData.parentTaskId) {
-      const parentTask = await prisma.task.findFirst({
+      parentTask = await prisma.task.findFirst({
         where: {
           id: validatedData.parentTaskId,
           userId,
+        },
+        include: {
+          taskLabels: {
+            select: { labelId: true },
+          },
         },
       })
 
@@ -171,6 +182,11 @@ export async function POST(request: Request) {
           { error: "Parent task not found" },
           { status: 404 }
         )
+      }
+
+      // Inherit group from parent if not explicitly set
+      if (!validatedData.groupId && parentTask.groupId) {
+        validatedData.groupId = parentTask.groupId
       }
     }
 
@@ -248,12 +264,82 @@ export async function POST(request: Request) {
       },
     })
 
+    // Add labels from labelIds if provided
+    if (validatedData.labelIds && validatedData.labelIds.length > 0) {
+      for (const labelId of validatedData.labelIds) {
+        // Verify label belongs to user
+        const label = await prisma.label.findFirst({
+          where: { id: labelId, userId },
+        })
+        if (label) {
+          await prisma.habitLabel.create({
+            data: {
+              habitId: habit.id,
+              labelId,
+            },
+          }).catch(() => {
+            // Ignore if already exists
+          })
+        }
+      }
+    }
+
+    // If habit has a parent task, inherit labels from parent
+    if (habit.parentTaskId && parentTask) {
+      const parentLabelIds = parentTask.taskLabels.map((tl) => tl.labelId)
+      // Also get inherited labels from parent's ancestors
+      const inheritedLabels = await getInheritedLabelsFromHabit(habit.id, userId)
+      const allInheritedLabels = [...new Set([...inheritedLabels, ...parentLabelIds])]
+      
+      // Add inherited labels to the new habit (avoid duplicates)
+      for (const labelId of allInheritedLabels) {
+        await prisma.habitLabel.create({
+          data: {
+            habitId: habit.id,
+            labelId,
+          },
+        }).catch(() => {
+          // Ignore if label already exists
+        })
+      }
+    }
+
     // Add habit to parent task's aggregates if linked to a task
     if (habit.parentTaskId) {
       await addHabitToTask(habit.id)
     }
 
-    return NextResponse.json({ data: habit }, { status: 201 })
+    // Reload habit with updated labels
+    const updatedHabit = await prisma.habit.findUnique({
+      where: { id: habit.id },
+      include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        parentTask: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
+        habitLabels: {
+          include: {
+            label: true,
+          },
+        },
+        _count: {
+          select: {
+            habitLogs: true,
+          },
+        },
+      },
+    })
+
+    return NextResponse.json({ data: serializeHabit(updatedHabit!) }, { status: 201 })
   } catch (error) {
     return handleApiError(error)
   }

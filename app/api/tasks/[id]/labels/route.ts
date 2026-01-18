@@ -3,6 +3,10 @@ import { prisma } from "@/lib/prisma"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { serializeTask } from "@/lib/utils"
 import { z } from "zod"
+import {
+  canRemoveLabelFromTask,
+  propagateLabelsToChildren,
+} from "@/lib/inheritance-helpers"
 
 const addLabelSchema = z.object({
   labelId: z.string().min(1, "Label ID is required"),
@@ -73,19 +77,41 @@ export async function POST(
       },
     })
 
+    // Propagate label to all children (sub-tasks and linked habits)
+    await propagateLabelsToChildren(id, [labelId], userId)
+
     // Return updated task with labels
     const updatedTask = await prisma.task.findUnique({
       where: { id },
       include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        parent: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
         taskLabels: {
           include: {
             label: true,
           },
         },
+        _count: {
+          select: {
+            children: true,
+            habits: true,
+          },
+        },
       },
     })
 
-    return NextResponse.json({ data: serializeTask(updatedTask) })
+    return NextResponse.json({ data: serializeTask(updatedTask!) })
   } catch (error) {
     return handleApiError(error)
   }
@@ -132,6 +158,17 @@ export async function DELETE(
       )
     }
 
+    // Check if label can be removed (not inherited from parent)
+    const canRemove = await canRemoveLabelFromTask(id, labelId, userId)
+    if (!canRemove) {
+      return NextResponse.json(
+        { 
+          error: "Cannot remove label. This label is inherited from a parent task. Unlink this task from its parent to remove the label.",
+        },
+        { status: 400 }
+      )
+    }
+
     // Remove association
     await prisma.taskLabel.delete({
       where: {
@@ -146,15 +183,34 @@ export async function DELETE(
     const updatedTask = await prisma.task.findUnique({
       where: { id },
       include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        parent: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
         taskLabels: {
           include: {
             label: true,
           },
         },
+        _count: {
+          select: {
+            children: true,
+            habits: true,
+          },
+        },
       },
     })
 
-    return NextResponse.json({ data: serializeTask(updatedTask) })
+    return NextResponse.json({ data: serializeTask(updatedTask!) })
   } catch (error) {
     return handleApiError(error)
   }

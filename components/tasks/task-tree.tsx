@@ -2,7 +2,7 @@
 
 import { Task, Group, Habit, HabitLog } from "@/types";
 import { TaskCard } from "./task-card";
-import { ChevronRight, ChevronDown, Flame, Calendar } from "lucide-react";
+import { ChevronRight, ChevronDown, Flame, Calendar, Folder } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { cn } from "@/lib/utils";
 import { parseISO, isSameDay } from "date-fns";
+import { useRouter } from "next/navigation";
 
 interface TaskTreeProps {
   tasks: Task[];
@@ -119,6 +120,8 @@ export function TaskTree({
   taskRefs,
   onHabitClick,
 }: TaskTreeProps) {
+  const router = useRouter();
+  
   const handleToggleExpand = (taskId: string) => {
     if (onToggleExpand) {
       onToggleExpand(taskId);
@@ -197,6 +200,9 @@ export function TaskTree({
               // Find the full habit data with logs from the habits prop
               const fullHabit = habits.find((h) => h.id === habit.id) || habit;
               
+              // Get group from habit or groups array
+              const habitGroup = (fullHabit as any).group || groups.find((g) => g.id === fullHabit.groupId);
+              
               // Calculate habit progress from logs if available, otherwise use currentCount
               let habitProgress = 0;
               let currentCount = 0;
@@ -259,6 +265,18 @@ export function TaskTree({
                         <Badge variant="secondary" className="text-xs">
                           {habit.type}
                         </Badge>
+                        {habitGroup && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              router.push(`/groups/${habitGroup.id}`);
+                            }}
+                            className="flex items-center gap-1 hover:text-indigo-600 transition-colors"
+                          >
+                            <Folder className="w-3 h-3" />
+                            <span>{habitGroup.name}</span>
+                          </button>
+                        )}
                         {streak > 0 && (
                           <div className="flex items-center gap-1 text-orange-500">
                             <Flame className="w-3 h-3" />
@@ -271,6 +289,25 @@ export function TaskTree({
                           </span>
                         )}
                       </div>
+
+                      {/* Labels */}
+                      {fullHabit.labels && fullHabit.labels.length > 0 && (
+                        <div className="flex gap-1 mb-2 flex-wrap">
+                          {fullHabit.labels.map((label) => (
+                            <Badge
+                              key={label.id}
+                              variant="secondary"
+                              className="text-xs"
+                              style={{
+                                backgroundColor: `${label.color}20`,
+                                color: label.color,
+                              }}
+                            >
+                              {label.name}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
 
                       {/* Progress Bar */}
                       <div className="flex items-center gap-3">

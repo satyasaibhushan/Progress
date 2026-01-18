@@ -5,6 +5,12 @@ import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueTaskTitle } from "@/lib/validations/uniqueness"
 import { addChildToTask } from "@/lib/progress-calculator"
 import { serializeTask, serializeTasks } from "@/lib/utils"
+import {
+  getInheritedLabelsFromTask,
+  getInheritedGroupFromTask,
+  propagateLabelsToChildren,
+  propagateGroupToChildren,
+} from "@/lib/inheritance-helpers"
 
 // GET /api/tasks - Get all tasks for the authenticated user with optional filters
 export async function GET(request: Request) {
@@ -196,6 +202,11 @@ export async function POST(request: Request) {
         select: {
           id: true,
           deadline: true,
+          groupId: true,
+          parentId: true,
+          taskLabels: {
+            select: { labelId: true },
+          },
         },
       })
 
@@ -217,6 +228,11 @@ export async function POST(request: Request) {
             { status: 400 }
           )
         }
+      }
+
+      // Inherit group from parent if not explicitly set
+      if (!validatedData.groupId && parentTask.groupId) {
+        validatedData.groupId = parentTask.groupId
       }
     }
 
@@ -283,6 +299,36 @@ export async function POST(request: Request) {
       },
     })
 
+    // If task has a parent, inherit labels from parent
+    if (task.parentId && parentTask && parentTask.taskLabels) {
+      // Get direct parent labels
+      const parentLabelIds = parentTask.taskLabels.map((tl) => tl.labelId)
+      
+      // Also get labels from parent's ancestors (if parent has a parent)
+      let ancestorLabels: string[] = []
+      if (parentTask.parentId) {
+        ancestorLabels = await getInheritedLabelsFromTask(parentTask.id, userId)
+      }
+      
+      const allInheritedLabels = [...new Set([...parentLabelIds, ...ancestorLabels])]
+      
+      // Add inherited labels to the new task
+      if (allInheritedLabels.length > 0) {
+        await Promise.all(
+          allInheritedLabels.map((labelId) =>
+            prisma.taskLabel.create({
+              data: {
+                taskId: task.id,
+                labelId,
+              },
+            }).catch(() => {
+              // Ignore if label already exists
+            })
+          )
+        )
+      }
+    }
+
     // If this is a leaf task (no children, no habits) and has a parent, add it to parent's aggregates
     const isLeaf = task._count.children === 0 && task._count.habits === 0
     if (isLeaf && task.parentId) {
@@ -292,7 +338,38 @@ export async function POST(request: Request) {
       await addChildToTask(task.parentId, weight, weightedProgress)
     }
 
-    return NextResponse.json({ data: serializeTask(task) }, { status: 201 })
+    // Reload task with updated labels
+    const updatedTask = await prisma.task.findUnique({
+      where: { id: task.id },
+      include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        parent: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
+        taskLabels: {
+          include: {
+            label: true,
+          },
+        },
+        _count: {
+          select: {
+            children: true,
+            habits: true,
+          },
+        },
+      },
+    })
+
+    return NextResponse.json({ data: serializeTask(updatedTask!) }, { status: 201 })
   } catch (error) {
     return handleApiError(error)
   }

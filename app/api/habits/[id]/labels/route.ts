@@ -2,6 +2,10 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { z } from "zod"
+import {
+  canRemoveLabelFromHabit,
+} from "@/lib/inheritance-helpers"
+import { serializeHabit } from "@/lib/utils"
 
 const addLabelSchema = z.object({
   labelId: z.string().min(1, "Label ID is required"),
@@ -76,15 +80,33 @@ export async function POST(
     const updatedHabit = await prisma.habit.findUnique({
       where: { id: id },
       include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        parentTask: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
         habitLabels: {
           include: {
             label: true,
           },
         },
+        _count: {
+          select: {
+            habitLogs: true,
+          },
+        },
       },
     })
 
-    return NextResponse.json({ data: updatedHabit })
+    return NextResponse.json({ data: serializeHabit(updatedHabit!) })
   } catch (error) {
     return handleApiError(error)
   }
@@ -131,6 +153,17 @@ export async function DELETE(
       )
     }
 
+    // Check if label can be removed (not inherited from parent)
+    const canRemove = await canRemoveLabelFromHabit(id, labelId, userId)
+    if (!canRemove) {
+      return NextResponse.json(
+        { 
+          error: "Cannot remove label. This label is inherited from a parent task. Unlink this habit from its parent task to remove the label.",
+        },
+        { status: 400 }
+      )
+    }
+
     // Remove association
     await prisma.habitLabel.delete({
       where: {
@@ -145,15 +178,33 @@ export async function DELETE(
     const updatedHabit = await prisma.habit.findUnique({
       where: { id: id },
       include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        parentTask: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
         habitLabels: {
           include: {
             label: true,
           },
         },
+        _count: {
+          select: {
+            habitLogs: true,
+          },
+        },
       },
     })
 
-    return NextResponse.json({ data: updatedHabit })
+    return NextResponse.json({ data: serializeHabit(updatedHabit!) })
   } catch (error) {
     return handleApiError(error)
   }

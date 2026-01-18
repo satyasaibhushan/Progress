@@ -230,6 +230,15 @@ else
     echo ""
 fi
 
+# Source comprehensive inheritance tests
+# This will run all inheritance-related tests including label and group propagation
+if [ -f "$(dirname "$0")/test-inheritance.sh" ]; then
+    source "$(dirname "$0")/test-inheritance.sh"
+else
+    echo "⚠️  Warning: test-inheritance.sh not found, skipping comprehensive inheritance tests"
+    echo ""
+fi
+
 echo "========================================="
 echo "Testing Complete"
 echo "========================================="

@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
-import { Flame, Repeat, ArrowRight, ListTodo, MoreVertical } from "lucide-react";
+import { Flame, Repeat, ArrowRight, ListTodo, MoreVertical, Folder } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
@@ -13,6 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useRouter } from "next/navigation";
 
 interface HabitCardProps {
   habit: Habit;
@@ -41,6 +42,8 @@ export function HabitCard({
   progress: propProgress,
   currentCount: propCurrentCount,
 }: HabitCardProps) {
+  const router = useRouter();
+  
   // Use provided progress/count or calculate from habit
   const currentCount = propCurrentCount ?? habit.currentCount ?? 0;
   const progress = propProgress ?? (
@@ -48,6 +51,9 @@ export function HabitCard({
       ? Math.round((habit.currentCount / habit.targetCount) * 100)
       : 0
   );
+  
+  // Get group from habit if not provided as prop
+  const displayGroup = group || (habit as any).group;
 
   return (
     <Card
@@ -70,12 +76,42 @@ export function HabitCard({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1 flex-wrap">
             <Badge variant="secondary" className="text-xs">
               {habit.type}
             </Badge>
-            {group && <span>{group.name}</span>}
+            {displayGroup && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push(`/groups/${displayGroup.id}`);
+                }}
+                className="flex items-center gap-1 hover:text-indigo-600 transition-colors"
+              >
+                <Folder className="w-3 h-3" />
+                <span>{displayGroup.name}</span>
+              </button>
+            )}
           </div>
+          
+          {/* Labels */}
+          {habit.labels && habit.labels.length > 0 && (
+            <div className="flex gap-1 mb-2 flex-wrap">
+              {habit.labels.map((label) => (
+                <Badge
+                  key={label.id}
+                  variant="secondary"
+                  className="text-xs"
+                  style={{
+                    backgroundColor: `${label.color}20`,
+                    color: label.color,
+                  }}
+                >
+                  {label.name}
+                </Badge>
+              ))}
+            </div>
+          )}
           {linkedTaskTitle && (
             <button
               onClick={(e) => {

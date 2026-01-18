@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { ArrowLeft, Edit, Trash2 } from "lucide-react";
+import { ArrowLeft, Edit, Trash2, Folder } from "lucide-react";
 import { getTask } from "@/lib/api/tasks";
 import { deleteTask } from "@/lib/api/tasks";
 import { Task } from "@/types";
@@ -161,7 +161,7 @@ export default function TaskDetailPage() {
           {task.children && task.children.length > 0 && (
             <div>
               <p className="text-sm font-medium mb-3">Subtasks</p>
-              <TaskTree tasks={task.children} groups={[]} />
+              <TaskTree tasks={task.children} groups={[]} habits={[]} />
             </div>
           )}
 
@@ -174,24 +174,60 @@ export default function TaskDetailPage() {
                   const progress = habit.currentCount && habit.targetCount
                     ? Math.round((habit.currentCount / habit.targetCount) * 100)
                     : 0;
+                  const habitGroup = (habit as any).group;
                   return (
                     <Card
                       key={habit.id}
                       className="p-3 cursor-pointer hover:border-indigo-300"
                       onClick={() => router.push(`/habits/${habit.id}`)}
                     >
-                      <div className="flex items-center justify-between">
-                        <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex-1">
                           <p className="text-sm font-medium">{habit.title}</p>
-                          <p className="text-xs text-muted-foreground">{habit.type}</p>
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            <Badge variant="secondary" className="text-xs">
+                              {habit.type}
+                            </Badge>
+                            {habitGroup && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  router.push(`/groups/${habitGroup.id}`);
+                                }}
+                                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-indigo-600 transition-colors"
+                              >
+                                <Folder className="w-3 h-3" />
+                                <span>{habitGroup.name}</span>
+                              </button>
+                            )}
+                          </div>
+                          {/* Labels */}
+                          {habit.labels && habit.labels.length > 0 && (
+                            <div className="flex gap-1 mt-2 flex-wrap">
+                              {habit.labels.map((label) => (
+                                <Badge
+                                  key={label.id}
+                                  variant="secondary"
+                                  className="text-xs"
+                                  style={{
+                                    backgroundColor: `${label.color}20`,
+                                    color: label.color,
+                                  }}
+                                >
+                                  {label.name}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <div className="text-right">
+                        <div className="text-right ml-4">
                           <p className="text-sm font-medium">{progress}%</p>
                           <p className="text-xs text-muted-foreground">
                             {habit.currentCount || 0} / {habit.targetCount}
                           </p>
                         </div>
                       </div>
+                      <Progress value={progress} className="h-1.5" />
                     </Card>
                   );
                 })}

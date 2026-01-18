@@ -155,6 +155,30 @@ Building a comprehensive progress tracking application with tasks, habits, and i
 - Create endpoint to fetch all items by label
 - Test all endpoints
 
+### Task 4.5: Label and Group Inheritance
+**Status:** ✅ Completed
+**Description:** Implement inheritance rules for labels and groups in task hierarchies.
+**What was done:**
+- **Label Inheritance:** If a task has a label, all its sub-tasks and linked habits automatically inherit that label
+  - Inherited labels cannot be removed from child tasks/habits unless they are unlinked from the parent
+  - Child tasks can add additional labels beyond inherited ones
+- **Group Inheritance:** If a task is part of a group, all sub-tasks and linked habits must be in the same group
+  - Group cannot be changed on child tasks/habits unless they are unlinked from the parent
+- Created helper functions in `lib/inheritance-helpers.ts`:
+  - `getInheritedLabelsFromTask()` - Get labels inherited from parent chain
+  - `getInheritedGroupFromTask()` - Get group inherited from parent chain
+  - `propagateLabelsToChildren()` - Propagate labels to all descendants
+  - `propagateGroupToChildren()` - Propagate group to all descendants
+  - Validation functions to check if labels/groups can be removed/changed
+- Updated API routes:
+  - Task creation/update: Automatically inherit labels and groups from parent
+  - Habit creation/update: Automatically inherit labels and groups from parent task
+  - Label add endpoint: Propagates labels to all children when added to parent
+  - Label remove endpoint: Prevents removal of inherited labels
+  - Group update: Prevents changing inherited groups
+- Created migration script `prisma/migrations/migrate-inheritance.ts` to migrate existing data
+- Added comprehensive test suite `tests/test-inheritance.sh` covering all inheritance scenarios
+
 ---
 
 ## Phase 5: Progress Calculation Engine

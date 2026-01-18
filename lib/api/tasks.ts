@@ -46,8 +46,13 @@ export async function getTasks(filters?: TaskFilters): Promise<Task[]> {
   return handleResponse<Task[]>(response);
 }
 
-export async function getTask(id: string): Promise<Task> {
-  const response = await fetch(`/api/tasks/${id}`);
+export async function getTask(id: string, includeChildren?: boolean): Promise<Task> {
+  const params = new URLSearchParams();
+  if (includeChildren) {
+    params.append("include", "children");
+  }
+  const url = `/api/tasks/${id}${params.toString() ? `?${params.toString()}` : ""}`;
+  const response = await fetch(url);
   return handleResponse<Task>(response);
 }
 

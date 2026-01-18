@@ -5,6 +5,12 @@ import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
 import { addHabitToTask, removeHabitFromTask, calculateHabitCompletion } from "@/lib/progress-calculator"
 import { calculateTargetCount } from "@/lib/habit-helpers"
+import {
+  getInheritedLabelsFromHabit,
+  getInheritedGroupFromHabit,
+  canChangeHabitGroup,
+} from "@/lib/inheritance-helpers"
+import { serializeHabit } from "@/lib/utils"
 
 // GET /api/habits/[id] - Get a specific habit
 export async function GET(
@@ -61,10 +67,10 @@ export async function GET(
     const progress = await calculateHabitCompletion(habit.id)
 
     return NextResponse.json({
-      data: {
+      data: serializeHabit({
         ...habit,
         progress,
-      },
+      }),
     })
   } catch (error) {
     return handleApiError(error)
@@ -94,15 +100,18 @@ export async function PUT(
 
     const body = await request.json()
     const validatedData = updateHabitSchema.parse(body)
+    
+    // Extract labelIds from validated data
+    const { labelIds, ...updateFields } = validatedData
 
     // Validate unique title (if title is being updated)
-    if (validatedData.title) {
-      await validateUniqueHabitTitle(userId, validatedData.title, id)
+    if (updateFields.title) {
+      await validateUniqueHabitTitle(userId, updateFields.title, id)
     }
 
     // Validate activeDays for WEEKLY habits
-    const finalType = validatedData.type ?? existingHabit.type
-    const finalActiveDays = validatedData.activeDays ?? existingHabit.activeDays
+    const finalType = updateFields.type ?? existingHabit.type
+    const finalActiveDays = updateFields.activeDays ?? existingHabit.activeDays
     
     if (finalType === "WEEKLY") {
       if (!finalActiveDays || finalActiveDays.length === 0) {
@@ -156,27 +165,40 @@ export async function PUT(
     }
 
     // If parentTaskId is being updated, verify it exists and belongs to user
-    if (validatedData.parentTaskId !== undefined && validatedData.parentTaskId !== null) {
-      const parentTask = await prisma.task.findFirst({
+    let newParentTask = null
+    const parentTaskChanged = updateFields.parentTaskId !== undefined && updateFields.parentTaskId !== existingHabit.parentTaskId
+    
+    if (updateFields.parentTaskId !== undefined && updateFields.parentTaskId !== null) {
+      newParentTask = await prisma.task.findFirst({
         where: {
-          id: validatedData.parentTaskId,
+          id: updateFields.parentTaskId,
           userId,
+        },
+        include: {
+          taskLabels: {
+            select: { labelId: true },
+          },
         },
       })
 
-      if (!parentTask) {
+      if (!newParentTask) {
         return NextResponse.json(
           { error: "Parent task not found" },
           { status: 404 }
         )
       }
+
+      // Inherit group from parent if not explicitly set
+      if (!updateFields.groupId && newParentTask.groupId) {
+        updateFields.groupId = newParentTask.groupId
+      }
     }
 
     // If groupId is being updated, verify it exists and belongs to user
-    if (validatedData.groupId !== undefined && validatedData.groupId !== null) {
+    if (updateFields.groupId !== undefined && updateFields.groupId !== null) {
       const group = await prisma.group.findFirst({
         where: {
-          id: validatedData.groupId,
+          id: updateFields.groupId,
           userId,
         },
       })
@@ -189,19 +211,34 @@ export async function PUT(
       }
     }
 
+    // Check if group can be changed (not inherited from parent)
+    if (updateFields.groupId !== undefined && !parentTaskChanged) {
+      const canChange = await canChangeHabitGroup(id, userId)
+      if (!canChange) {
+        const inheritedGroup = await getInheritedGroupFromHabit(id, userId)
+        return NextResponse.json(
+          { 
+            error: "Cannot change group. This habit inherits its group from a parent task. Unlink it from the parent task to change the group.",
+            inheritedGroupId: inheritedGroup,
+          },
+          { status: 400 }
+        )
+      }
+    }
+
     // Prepare update data - use Record type to allow dynamic property assignment
     const updateData: Record<string, unknown> = {}
 
-    if (validatedData.title !== undefined) updateData.title = validatedData.title
-    if (validatedData.description !== undefined) updateData.description = validatedData.description ?? null
-    if (validatedData.type !== undefined) updateData.type = validatedData.type
-    if (validatedData.importance !== undefined) updateData.importance = validatedData.importance
-    if (validatedData.groupId !== undefined) updateData.groupId = validatedData.groupId ?? null
-    if (validatedData.parentTaskId !== undefined) updateData.parentTaskId = validatedData.parentTaskId ?? null
+    if (updateFields.title !== undefined) updateData.title = updateFields.title
+    if (updateFields.description !== undefined) updateData.description = updateFields.description ?? null
+    if (updateFields.type !== undefined) updateData.type = updateFields.type
+    if (updateFields.importance !== undefined) updateData.importance = updateFields.importance
+    if (updateFields.groupId !== undefined) updateData.groupId = updateFields.groupId ?? null
+    if (updateFields.parentTaskId !== undefined) updateData.parentTaskId = updateFields.parentTaskId ?? null
 
     // Set countPerPeriod if changed
-    if (validatedData.countPerPeriod !== undefined) {
-      updateData.countPerPeriod = validatedData.countPerPeriod
+    if (updateFields.countPerPeriod !== undefined) {
+      updateData.countPerPeriod = updateFields.countPerPeriod
     }
 
     // Set targetCount (use calculated if auto-calculated, otherwise use provided or existing)
@@ -210,18 +247,18 @@ export async function PUT(
     }
     
     // Set endDate
-    if (validatedData.endDate !== undefined) {
-      updateData.endDate = validatedData.endDate ? new Date(validatedData.endDate) : null
+    if (updateFields.endDate !== undefined) {
+      updateData.endDate = updateFields.endDate ? new Date(updateFields.endDate) : null
     }
     
     // Set activeDays
-    if (validatedData.activeDays !== undefined) {
+    if (updateFields.activeDays !== undefined) {
       if (finalType === "WEEKLY") {
-        updateData.activeDays = validatedData.activeDays || []
+        updateData.activeDays = updateFields.activeDays || []
       } else {
         updateData.activeDays = []
       }
-    } else if (validatedData.type !== undefined && validatedData.type !== "WEEKLY") {
+    } else if (updateFields.type !== undefined && updateFields.type !== "WEEKLY") {
       // If type changed from WEEKLY to something else, clear activeDays
       updateData.activeDays = []
     }
@@ -258,9 +295,88 @@ export async function PUT(
       },
     })
 
-    // Update aggregates if parentTaskId changed
-    const parentTaskChanged = validatedData.parentTaskId !== undefined && validatedData.parentTaskId !== existingHabit.parentTaskId
+    // Handle labelIds update if provided
+    if (labelIds !== undefined) {
+      // Get current labels
+      const currentLabels = await prisma.habitLabel.findMany({
+        where: { habitId: id },
+        select: { labelId: true },
+      })
+      const currentLabelIds = currentLabels.map((hl) => hl.labelId)
+      
+      // Get inherited labels that cannot be removed
+      const inheritedLabels = await getInheritedLabelsFromHabit(id, userId)
+      
+      // Labels to add (in labelIds but not in current)
+      const labelsToAdd = labelIds.filter((lid) => !currentLabelIds.includes(lid))
+      
+      // Labels to remove (in current but not in labelIds, and not inherited)
+      const labelsToRemove = currentLabelIds.filter(
+        (lid) => !labelIds.includes(lid) && !inheritedLabels.includes(lid)
+      )
+      
+      // Add new labels
+      for (const labelId of labelsToAdd) {
+        // Verify label belongs to user
+        const label = await prisma.label.findFirst({
+          where: { id: labelId, userId },
+        })
+        if (label) {
+          await prisma.habitLabel.create({
+            data: {
+              habitId: id,
+              labelId,
+            },
+          }).catch(() => {
+            // Ignore if already exists
+          })
+        }
+      }
+      
+      // Remove labels (only non-inherited ones)
+      for (const labelId of labelsToRemove) {
+        await prisma.habitLabel.delete({
+          where: {
+            habitId_labelId: {
+              habitId: id,
+              labelId,
+            },
+          },
+        }).catch(() => {
+          // Ignore if doesn't exist
+        })
+      }
+    }
 
+    // If parent changed, inherit labels and group from new parent
+    if (parentTaskChanged && habit.parentTaskId && newParentTask) {
+      const parentLabelIds = newParentTask.taskLabels.map((tl) => tl.labelId)
+      const inheritedLabels = await getInheritedLabelsFromHabit(habit.id, userId)
+      const allInheritedLabels = [...new Set([...inheritedLabels, ...parentLabelIds])]
+      
+      // Add inherited labels to the habit
+      for (const labelId of allInheritedLabels) {
+        await prisma.habitLabel.create({
+          data: {
+            habitId: habit.id,
+            labelId,
+          },
+        }).catch(() => {
+          // Ignore if label already exists
+        })
+      }
+
+      // Inherit group from parent if not explicitly set
+      if (updateFields.groupId === undefined && newParentTask.groupId) {
+        await prisma.habit.update({
+          where: { id: habit.id },
+          data: { groupId: newParentTask.groupId },
+        })
+        habit.groupId = newParentTask.groupId
+      }
+    }
+
+    // Update aggregates if parentTaskId changed
     if (parentTaskChanged) {
       // Remove from old parent task (if existed)
       if (existingHabit.parentTaskId) {
@@ -276,14 +392,44 @@ export async function PUT(
       }
     }
 
+    // Reload habit to get updated labels
+    const updatedHabit = await prisma.habit.findUnique({
+      where: { id: habit.id },
+      include: {
+        group: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        parentTask: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
+        habitLabels: {
+          include: {
+            label: true,
+          },
+        },
+        _count: {
+          select: {
+            habitLogs: true,
+          },
+        },
+      },
+    })
+
     // Calculate progress on-demand
     const progress = await calculateHabitCompletion(habit.id)
 
     return NextResponse.json({
-      data: {
-        ...habit,
+      data: serializeHabit({
+        ...updatedHabit!,
         progress,
-      },
+      }),
     })
   } catch (error) {
     return handleApiError(error)

@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 interface TaskCardProps {
   task: Task;
@@ -45,6 +46,10 @@ export function TaskCard({
   onProgressUpdate,
   onHabitClick,
 }: TaskCardProps) {
+  const router = useRouter();
+  
+  // Get group from task if not provided as prop
+  const displayGroup = group || (task as any).group;
   // Calculate display progress - cap at 100% and ensure it's valid
   let rawProgress = calculatedProgress !== undefined ? calculatedProgress : (task.progress || 0);
   
@@ -176,11 +181,17 @@ export function TaskCard({
               <ImportanceIndicator importance={task.importance} size="sm" />
               <span>{task.importance}</span>
             </div>
-            {group && (
-              <div className="flex items-center gap-1">
+            {displayGroup && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push(`/groups/${displayGroup.id}`);
+                }}
+                className="flex items-center gap-1 hover:text-indigo-600 transition-colors"
+              >
                 <Folder className="w-3 h-3" />
-                <span>{group.name}</span>
-              </div>
+                <span>{displayGroup.name}</span>
+              </button>
             )}
             {task.deadline && (
               <div className="flex items-center gap-1">

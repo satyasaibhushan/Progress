@@ -28,7 +28,7 @@ export default function EditTaskPage() {
     async function loadData() {
       try {
         const [taskData, groupsData, labelsData, tasksData] = await Promise.all([
-          getTask(taskId),
+          getTask(taskId, true), // Fetch task with children for group conflict checking
           getGroups(),
           getLabels(),
           getTasks({ includeChildren: true }),
