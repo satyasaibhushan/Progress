@@ -24,7 +24,11 @@ export default function NewGroupPage() {
       router.push(`/groups/${newGroup.id}`);
     } catch (error) {
       console.error("Error creating group:", error);
-      alert("Failed to create group. Please try again.");
+      // Re-throw with a user-friendly message if it's an Error
+      if (error instanceof Error) {
+        throw new Error(error.message);
+      }
+      throw new Error("Failed to create group. Please try again.");
     } finally {
       setSubmitting(false);
     }

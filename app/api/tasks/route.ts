@@ -184,6 +184,21 @@ export async function POST(request: Request) {
     const body = await request.json()
     const validatedData = createTaskSchema.parse(body)
 
+    // Validate that deadline is not in the past
+    if (validatedData.deadline) {
+      const deadline = new Date(validatedData.deadline)
+      const now = new Date()
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+      deadline.setHours(0, 0, 0, 0)
+
+      if (deadline < today) {
+        return NextResponse.json(
+          { error: "Cannot create task with deadline in the past" },
+          { status: 400 }
+        )
+      }
+    }
+
     // Validate unique title at this parent level
     await validateUniqueTaskTitle(
       userId,

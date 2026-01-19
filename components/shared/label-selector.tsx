@@ -39,7 +39,7 @@ export function LabelSelector({
 
   return (
     <div className={cn("space-y-2", className)}>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto">
         {labels.map((label) => (
           <Badge
             key={label.id}

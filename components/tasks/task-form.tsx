@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -31,7 +31,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { format } from "date-fns";
 
 const formSchema = createTaskSchema.extend({
   labelIds: z.array(z.string()).optional(),
@@ -88,7 +87,6 @@ export function TaskForm({
 
   const importance = watch("importance");
   const selectedLabelIds = watch("labelIds") || [];
-  const selectedGroupId = watch("groupId");
   const [showGroupWarning, setShowGroupWarning] = useState(false);
   const [pendingSubmitData, setPendingSubmitData] = useState<TaskFormData | null>(null);
   const [conflictInfo, setConflictInfo] = useState<{
@@ -96,6 +94,7 @@ export function TaskForm({
     habitsCount: number;
     affectedGroups: string[];
   } | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   // Check if task is a leaf task (no children, no habits)
   // For editing, check if task has children or habits
@@ -224,6 +223,9 @@ export function TaskForm({
   });
 
   const handleFormSubmit = async (data: TaskFormData) => {
+    // Clear any previous API errors
+    setApiError(null);
+    
     // Check for group conflicts only when editing and group is being changed
     if (task) {
       const currentGroupId = task.groupId || undefined;
@@ -244,16 +246,25 @@ export function TaskForm({
   };
 
   const proceedWithSubmit = async (data: TaskFormData) => {
-    // Remove progress from data if it's a non-leaf task (progress is auto-calculated)
-    if (isNonLeafTask && 'progress' in data) {
-      const { progress, ...dataWithoutProgress } = data;
-      await onSubmit(dataWithoutProgress as TaskFormData);
-    } else {
-      await onSubmit(data);
+    try {
+      setApiError(null);
+      // Remove progress from data if it's a non-leaf task (progress is auto-calculated)
+      if (isNonLeafTask && 'progress' in data) {
+        const { progress, ...dataWithoutProgress } = data;
+        await onSubmit(dataWithoutProgress as TaskFormData);
+      } else {
+        await onSubmit(data);
+      }
+      setShowGroupWarning(false);
+      setPendingSubmitData(null);
+      setConflictInfo(null);
+    } catch (error) {
+      // Extract error message
+      const errorMessage = error instanceof Error ? error.message : "An error occurred. Please try again.";
+      setApiError(errorMessage);
+      // Re-throw to prevent form from closing if needed
+      throw error;
     }
-    setShowGroupWarning(false);
-    setPendingSubmitData(null);
-    setConflictInfo(null);
   };
 
   const handleWarningConfirm = async () => {
@@ -270,6 +281,13 @@ export function TaskForm({
 
   return (
     <form onSubmit={handleSubmit(handleFormSubmit as any)} className="space-y-6">
+      {/* API Error Display */}
+      {apiError && (
+        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-md">
+          <p className="text-sm font-medium">{apiError}</p>
+        </div>
+      )}
+      
       {/* Title */}
       <div>
         <FormLabel htmlFor="title">Title *</FormLabel>
@@ -406,6 +424,7 @@ export function TaskForm({
             setValue("deadline", date ? date.toISOString() : undefined)
           }
           placeholder="Pick a deadline"
+          disablePast={true}
         />
       </div>
 

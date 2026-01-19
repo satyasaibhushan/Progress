@@ -46,6 +46,16 @@ export async function POST(
       logDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
     }
 
+    // Validate that the log date is not in the future
+    const now = new Date()
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+    if (logDate > today) {
+      return NextResponse.json(
+        { error: "Cannot log habit for future dates" },
+        { status: 400 }
+      )
+    }
+
     // Calculate old progress before logging
     const oldProgress = await calculateHabitCompletion(id)
 

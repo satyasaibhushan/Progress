@@ -18,6 +18,8 @@ interface DatePickerProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  disablePast?: boolean;
+  disableFuture?: boolean;
 }
 
 export function DatePicker({
@@ -25,8 +27,24 @@ export function DatePicker({
   onSelect,
   placeholder = "Pick a date",
   disabled = false,
-  className
+  className,
+  disablePast = false,
+  disableFuture = false,
 }: DatePickerProps) {
+  const getDisabledDates = () => {
+    if (disablePast) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return { before: today };
+    }
+    if (disableFuture) {
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      return { after: today };
+    }
+    return undefined;
+  };
+
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -49,6 +67,7 @@ export function DatePicker({
           selected={date}
           onSelect={onSelect}
           initialFocus
+          disabled={getDisabledDates()}
         />
       </PopoverContent>
     </Popover>

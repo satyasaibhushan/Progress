@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -62,13 +63,30 @@ export function GroupForm({
   });
 
   const selectedColor = watch("color");
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const handleFormSubmit = async (data: GroupFormData) => {
-    await onSubmit(data);
+    try {
+      setApiError(null);
+      await onSubmit(data);
+    } catch (error) {
+      // Extract error message
+      const errorMessage = error instanceof Error ? error.message : "An error occurred. Please try again.";
+      setApiError(errorMessage);
+      // Re-throw to prevent form from closing if needed
+      throw error;
+    }
   };
 
   return (
     <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-6">
+      {/* API Error Display */}
+      {apiError && (
+        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-md">
+          <p className="text-sm font-medium">{apiError}</p>
+        </div>
+      )}
+      
       {/* Name */}
       <div>
         <FormLabel htmlFor="name">Name *</FormLabel>

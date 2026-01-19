@@ -58,7 +58,11 @@ export default function NewTaskPage() {
       router.push(`/tasks/${newTask.id}`);
     } catch (error) {
       console.error("Error creating task:", error);
-      alert("Failed to create task. Please try again.");
+      // Re-throw with a user-friendly message if it's an Error
+      if (error instanceof Error) {
+        throw new Error(error.message);
+      }
+      throw new Error("Failed to create task. Please try again.");
     } finally {
       setSubmitting(false);
     }

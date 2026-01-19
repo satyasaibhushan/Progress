@@ -204,6 +204,21 @@ export async function PUT(
     const body = await request.json()
     const validatedData = updateTaskSchema.parse(body)
 
+    // Validate that deadline is not in the past (if deadline is being updated)
+    if (validatedData.deadline !== undefined && validatedData.deadline !== null) {
+      const deadline = new Date(validatedData.deadline)
+      const now = new Date()
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+      deadline.setHours(0, 0, 0, 0)
+
+      if (deadline < today) {
+        return NextResponse.json(
+          { error: "Cannot set task deadline to a past date" },
+          { status: 400 }
+        )
+      }
+    }
+
     // Validate unique title at parent level (if title or parentId is being updated)
     const titleChanged = validatedData.title && validatedData.title !== existingTask.title
     const parentChanged = validatedData.parentId !== undefined && validatedData.parentId !== existingTask.parentId

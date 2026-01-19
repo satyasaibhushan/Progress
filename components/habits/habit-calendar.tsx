@@ -135,18 +135,20 @@ export function HabitCalendar({
           const isComplete = count >= countPerPeriod;
           // Only allow going overboard if countPerPeriod > 1
           const isOverboard = countPerPeriod > 1 && count > countPerPeriod;
+          // Check if date is in the future
+          const isFuture = day > new Date(new Date().setHours(23, 59, 59, 999));
 
           return (
             <button
               key={dayKey}
-              onClick={() => !isLogging && onDateClick?.(day, false)}
+              onClick={() => !isLogging && !isFuture && onDateClick?.(day, false)}
               onContextMenu={(e) => {
                 e.preventDefault();
-                if (!isLogging && countPerPeriod > 1 && isLogged) {
+                if (!isLogging && !isFuture && countPerPeriod > 1 && isLogged) {
                   onDateClick?.(day, true);
                 }
               }}
-              disabled={isLogging}
+              disabled={isLogging || isFuture}
               className={cn(
                 "rounded text-xs transition-all relative flex flex-col items-center justify-center w-full aspect-square p-0.5",
                 isToday && "border-2 border-indigo-600",
@@ -157,7 +159,8 @@ export function HabitCalendar({
                   : "bg-muted hover:bg-muted/80",
                 isOverboard && "bg-orange-100 border border-orange-300",
                 !isActive && habit.type === "WEEKLY" && "opacity-40",
-                isLogging && "opacity-50 cursor-wait"
+                isLogging && "opacity-50 cursor-wait",
+                isFuture && "opacity-30 cursor-not-allowed blur-[0.5px]"
               )}
             >
               <span className={cn(

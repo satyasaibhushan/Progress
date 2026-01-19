@@ -251,7 +251,7 @@ export function SuggestionsCarousel({
 
             {/* Labels */}
             {currentSuggestion.labels && currentSuggestion.labels.length > 0 && (
-              <div className="flex gap-2 mb-4">
+              <div className="flex gap-2 mb-4 flex-wrap max-h-20 overflow-y-auto">
                 {currentSuggestion.labels.map((label) => (
                   <Badge
                     key={label.id}

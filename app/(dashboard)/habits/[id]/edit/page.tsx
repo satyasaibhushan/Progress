@@ -68,7 +68,11 @@ export default function EditHabitPage() {
       router.push(`/habits/${habitId}`);
     } catch (error) {
       console.error("Error updating habit:", error);
-      alert("Failed to update habit. Please try again.");
+      // Re-throw with a user-friendly message if it's an Error
+      if (error instanceof Error) {
+        throw new Error(error.message);
+      }
+      throw new Error("Failed to update habit. Please try again.");
     } finally {
       setSubmitting(false);
     }
