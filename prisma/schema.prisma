@@ -105,6 +105,7 @@ model Task {
   progress          Float?      @default(0)
   total_weight      BigInt?
   weighted_progress BigInt?
+  startDate         DateTime?
   deadline          DateTime?
   groupId           String?
   parentId          String?
@@ -118,6 +119,7 @@ model Task {
   children          Task[]      @relation("TaskToTask")
   user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([startDate])
   @@index([deadline])
   @@index([groupId])
   @@index([parentId])
@@ -143,6 +145,7 @@ model Habit {
   targetCount    Int
   countPerPeriod Int          @default(1)
   importance     Int          @default(50)
+  startDate      DateTime?
   endDate        DateTime?
   userId         String
   groupId        String?
@@ -156,6 +159,7 @@ model Habit {
   parentTask     Task?        @relation(fields: [parentTaskId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([startDate])
   @@index([groupId])
   @@index([parentTaskId])
   @@index([userId])

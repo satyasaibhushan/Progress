@@ -72,7 +72,7 @@ export function DashboardLayout({ children, onSuggestionsClick, headerRightActio
       </div>
 
       {/* Main Content */}
-      <div className="lg:pl-64 h-screen">
+      <div className="lg:pl-64 min-h-screen">
         <Header
           title={pageTitle}
           subtitle={headerSubtitle}
@@ -80,7 +80,7 @@ export function DashboardLayout({ children, onSuggestionsClick, headerRightActio
           onSuggestionsClick={onSuggestionsClick}
           rightAction={headerRightAction}
         />
-        <main className="p-4 lg:p-8 h-[calc(100%_-_5rem)]">{children}</main>
+        <main className="p-4 lg:p-8 min-h-[calc(100vh_-_5rem)]">{children}</main>
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ export interface CreateTaskInput {
   description?: string;
   importance: number;
   progress?: number;
+  startDate?: string;
   deadline?: string;
   groupId?: string;
   parentId?: string;

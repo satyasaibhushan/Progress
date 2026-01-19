@@ -268,20 +268,17 @@ export async function POST(request: Request) {
       }
     }
 
-    // Convert deadline string to Date if provided
+    // Convert startDate and deadline strings to Date if provided
     const taskData = {
       title: validatedData.title,
       description: validatedData.description ?? null,
       importance: validatedData.importance,
       progress: validatedData.progress ?? 0,
+      startDate: validatedData.startDate ? new Date(validatedData.startDate) : null,
       deadline: validatedData.deadline ? new Date(validatedData.deadline) : null,
       groupId: validatedData.groupId ?? null,
       parentId: validatedData.parentId ?? null,
       userId,
-    }
-
-    if (validatedData.deadline) {
-      taskData.deadline = new Date(validatedData.deadline)
     }
 
     const task = await prisma.task.create({

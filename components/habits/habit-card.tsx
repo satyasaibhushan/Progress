@@ -5,8 +5,10 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
-import { Flame, Repeat, ArrowRight, ListTodo, MoreVertical, Folder } from "lucide-react";
+import { Flame, Repeat, ArrowRight, ListTodo, MoreVertical, Folder, Clock, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isPending } from "@/lib/date-helpers";
+import { format } from "date-fns";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -158,6 +160,24 @@ export function HabitCard({
                 <span>{linkedTaskTitle}</span>
                 <ArrowRight className="w-3 h-3" />
               </button>
+            )}
+            {habit.startDate && (
+              <div className="flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                <span>Start: {format(new Date(habit.startDate), "MMM d")}</span>
+              </div>
+            )}
+            {habit.endDate && (
+              <div className="flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                <span>End: {format(new Date(habit.endDate), "MMM d, yyyy")}</span>
+              </div>
+            )}
+            {isPending(habit.startDate) && (
+              <Badge variant="outline" className="text-xs flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-200">
+                <Clock className="w-3 h-3" />
+                Pending
+              </Badge>
             )}
           </div>
 

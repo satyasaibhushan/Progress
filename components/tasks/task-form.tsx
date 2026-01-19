@@ -73,6 +73,7 @@ export function TaskForm({
           description: task.description || "",
           importance: task.importance,
           progress: task.progress,
+          startDate: task.startDate || undefined,
           deadline: task.deadline || undefined,
           groupId: task.groupId || undefined,
           parentId: task.parentId || undefined,
@@ -415,17 +416,30 @@ export function TaskForm({
         )}
       </div>
 
-      {/* Deadline */}
-      <div>
-        <FormLabel>Deadline</FormLabel>
-        <DatePicker
-          date={watch("deadline") ? new Date(watch("deadline")!) : undefined}
-          onSelect={(date) =>
-            setValue("deadline", date ? date.toISOString() : undefined)
-          }
-          placeholder="Pick a deadline"
-          disablePast={true}
-        />
+      {/* Start Date and Deadline */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <FormLabel>Start Date</FormLabel>
+          <DatePicker
+            date={watch("startDate") ? new Date(watch("startDate")!) : undefined}
+            onSelect={(date) =>
+              setValue("startDate", date ? date.toISOString() : undefined)
+            }
+            placeholder="Pick a start date"
+          />
+        </div>
+
+        <div>
+          <FormLabel>Deadline</FormLabel>
+          <DatePicker
+            date={watch("deadline") ? new Date(watch("deadline")!) : undefined}
+            onSelect={(date) =>
+              setValue("deadline", date ? date.toISOString() : undefined)
+            }
+            placeholder="Pick a deadline"
+            disablePast={true}
+          />
+        </div>
       </div>
 
       {/* Labels */}

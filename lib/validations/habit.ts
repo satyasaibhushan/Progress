@@ -23,6 +23,7 @@ export const createHabitSchema = z.object({
     .min(1, "Importance must be at least 1")
     .max(100, "Importance must be at most 100")
     .default(50),
+  startDate: z.string().datetime().optional().nullable(),
   endDate: z.string().datetime().optional().nullable(),
   activeDays: z
     .array(z.number().int().min(0).max(6)) // 0=Sun, 1=Mon, ..., 6=Sat
@@ -54,6 +55,7 @@ export const updateHabitSchema = z.object({
     .min(1, "Importance must be at least 1")
     .max(100, "Importance must be at most 100")
     .optional(),
+  startDate: z.string().datetime().optional().nullable(),
   endDate: z.string().datetime().optional().nullable(),
   activeDays: z
     .array(z.number().int().min(0).max(6)) // 0=Sun, 1=Mon, ..., 6=Sat
@@ -88,6 +90,7 @@ export const habitFormSchema = z.object({
     .max(100, "Importance must be at most 100")
     .default(50)
     .optional(),
+  startDate: z.string().datetime().optional().nullable(),
   endDate: z.string().datetime().optional().nullable(),
   activeDays: z
     .array(z.number().int().min(0).max(6))

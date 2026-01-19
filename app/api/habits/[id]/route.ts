@@ -245,7 +245,12 @@ export async function PUT(
     if (targetCount !== existingHabit.targetCount) {
       updateData.targetCount = targetCount
     }
-    
+
+    // Set startDate
+    if (updateFields.startDate !== undefined) {
+      updateData.startDate = updateFields.startDate ? new Date(updateFields.startDate) : null
+    }
+
     // Set endDate
     if (updateFields.endDate !== undefined) {
       updateData.endDate = updateFields.endDate ? new Date(updateFields.endDate) : null

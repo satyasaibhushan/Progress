@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useHeaderAction } from "../layout";
 import { Plus } from "lucide-react";
 import { getTasks, getTask, updateTask, deleteTask, createTask, CreateTaskInput } from "@/lib/api/tasks";
+import { isPending } from "@/lib/date-helpers";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getGroups } from "@/lib/api/groups";
 import { getHabits } from "@/lib/api/habits";
 import { getLabels } from "@/lib/api/labels";
@@ -73,6 +75,7 @@ export default function TasksPage() {
   const [deletingTask, setDeletingTask] = useState<Task | null>(null);
   const [creatingTask, setCreatingTask] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<"active" | "future" | "completed">("active");
   const taskRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const processedHighlightRef = useRef<string | null>(null);
 
@@ -237,12 +240,13 @@ export default function TasksPage() {
     setExpandedTasks(newExpanded);
   };
 
-  const handleCreate = async (data: { title: string; importance: number; description?: string; progress?: number; deadline?: string | null; groupId?: string | null; parentId?: string | null; labelIds?: string[] }) => {
+  const handleCreate = async (data: { title: string; importance: number; description?: string; progress?: number; startDate?: string | null; deadline?: string | null; groupId?: string | null; parentId?: string | null; labelIds?: string[] }) => {
     const createData: CreateTaskInput = {
       title: data.title,
       importance: data.importance,
       description: data.description,
       progress: data.progress,
+      startDate: data.startDate || undefined,
       deadline: data.deadline || undefined,
       groupId: data.groupId || undefined,
       parentId: data.parentId || undefined,
@@ -328,7 +332,7 @@ export default function TasksPage() {
     });
   }, []);
 
-  const handleEdit = async (data: { title: string; importance: number; description?: string; progress?: number; deadline?: string | null; groupId?: string | null; parentId?: string | null; labelIds?: string[] }) => {
+  const handleEdit = async (data: { title: string; importance: number; description?: string; progress?: number; startDate?: string | null; deadline?: string | null; groupId?: string | null; parentId?: string | null; labelIds?: string[] }) => {
     if (!editingTask) return;
     setSaving(true);
     try {
@@ -338,6 +342,7 @@ export default function TasksPage() {
         importance: data.importance,
         description: data.description,
         progress: data.progress,
+        startDate: data.startDate || undefined,
         deadline: data.deadline || undefined,
         groupId: data.groupId || undefined,
         parentId: data.parentId || undefined,
@@ -416,9 +421,13 @@ export default function TasksPage() {
     }
   };
 
-  // Separate active and completed tasks
+  // Separate pending, active and completed tasks
+  const pendingTasks = useMemo(() => {
+    return tasks.filter((task) => !isTaskCompleted(task) && isPending(task.startDate));
+  }, [tasks]);
+
   const activeTasks = useMemo(() => {
-    return tasks.filter((task) => !isTaskCompleted(task));
+    return tasks.filter((task) => !isTaskCompleted(task) && !isPending(task.startDate));
   }, [tasks]);
 
   const completedTasks = useMemo(() => {
@@ -428,7 +437,11 @@ export default function TasksPage() {
   const allLeafTasks = useMemo(() => getAllLeafTasks(tasks), [tasks]);
   const totalTasks = allLeafTasks.length;
 
-  // Count active and completed tasks (leaf tasks only)
+  // Count pending, active and completed tasks (leaf tasks only)
+  const pendingLeafTasks = useMemo(() => {
+    return getAllLeafTasks(pendingTasks);
+  }, [pendingTasks]);
+
   const activeLeafTasks = useMemo(() => {
     return getAllLeafTasks(activeTasks);
   }, [activeTasks]);
@@ -460,60 +473,7 @@ export default function TasksPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      {/* Active Tasks Section */}
-      {activeTasks.length > 0 && (
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold">
-            Active Tasks
-            <span className="text-sm text-muted-foreground font-normal ml-2">
-              ({activeLeafTasks.length})
-            </span>
-          </h3>
-          <TaskTree
-            tasks={activeTasks}
-            groups={groups}
-            habits={habits}
-            expandedTasks={expandedTasks}
-            onToggleExpand={handleToggleExpand}
-            onEdit={(task) => setEditingTask(task)}
-            onDelete={(task) => setDeletingTask(task)}
-            onProgressUpdate={handleProgressUpdate}
-            taskRefs={taskRefs.current}
-            onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
-            highlightedHabitId={searchParams.get("highlightHabit")}
-            isTaskCompleted={isTaskCompleted}
-          />
-        </div>
-      )}
-
-      {/* Completed Tasks Section */}
-      {completedTasks.length > 0 && (
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold">
-            Completed Tasks
-            <span className="text-sm text-muted-foreground font-normal ml-2">
-              ({completedLeafTasks.length})
-            </span>
-          </h3>
-          <TaskTree
-            tasks={completedTasks}
-            groups={groups}
-            habits={habits}
-            expandedTasks={expandedTasks}
-            onToggleExpand={handleToggleExpand}
-            onEdit={(task) => setEditingTask(task)}
-            onDelete={(task) => setDeletingTask(task)}
-            onProgressUpdate={handleProgressUpdate}
-            taskRefs={taskRefs.current}
-            onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
-            highlightedHabitId={searchParams.get("highlightHabit")}
-            isTaskCompleted={isTaskCompleted}
-          />
-        </div>
-      )}
-
-      {/* Empty State */}
-      {tasks.length === 0 && (
+      {tasks.length === 0 ? (
         <EmptyState
           icon={CheckSquare}
           title="No tasks found"
@@ -523,6 +483,92 @@ export default function TasksPage() {
             onClick: () => setCreatingTask(true),
           }}
         />
+      ) : (
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="active">
+              Active
+              <span className="ml-2 text-xs text-muted-foreground">
+                ({activeLeafTasks.length})
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="future">
+              Future
+              <span className="ml-2 text-xs text-muted-foreground">
+                ({pendingLeafTasks.length})
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="completed">
+              Completed
+              <span className="ml-2 text-xs text-muted-foreground">
+                ({completedLeafTasks.length})
+              </span>
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="active" className="space-y-4 mt-6">
+            {activeTasks.length > 0 ? (
+              <TaskTree
+                tasks={activeTasks}
+                groups={groups}
+                habits={habits}
+                expandedTasks={expandedTasks}
+                onToggleExpand={handleToggleExpand}
+                onEdit={(task) => setEditingTask(task)}
+                onDelete={(task) => setDeletingTask(task)}
+                onProgressUpdate={handleProgressUpdate}
+                taskRefs={taskRefs.current}
+                onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+                highlightedHabitId={searchParams.get("highlightHabit")}
+                isTaskCompleted={isTaskCompleted}
+              />
+            ) : (
+              <p className="text-center text-muted-foreground py-8">No active tasks</p>
+            )}
+          </TabsContent>
+
+          <TabsContent value="future" className="space-y-4 mt-6">
+            {pendingTasks.length > 0 ? (
+              <TaskTree
+                tasks={pendingTasks}
+                groups={groups}
+                habits={habits}
+                expandedTasks={expandedTasks}
+                onToggleExpand={handleToggleExpand}
+                onEdit={(task) => setEditingTask(task)}
+                onDelete={(task) => setDeletingTask(task)}
+                onProgressUpdate={handleProgressUpdate}
+                taskRefs={taskRefs.current}
+                onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+                highlightedHabitId={searchParams.get("highlightHabit")}
+                isTaskCompleted={isTaskCompleted}
+              />
+            ) : (
+              <p className="text-center text-muted-foreground py-8">No future tasks</p>
+            )}
+          </TabsContent>
+
+          <TabsContent value="completed" className="space-y-4 mt-6">
+            {completedTasks.length > 0 ? (
+              <TaskTree
+                tasks={completedTasks}
+                groups={groups}
+                habits={habits}
+                expandedTasks={expandedTasks}
+                onToggleExpand={handleToggleExpand}
+                onEdit={(task) => setEditingTask(task)}
+                onDelete={(task) => setDeletingTask(task)}
+                onProgressUpdate={handleProgressUpdate}
+                taskRefs={taskRefs.current}
+                onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+                highlightedHabitId={searchParams.get("highlightHabit")}
+                isTaskCompleted={isTaskCompleted}
+              />
+            ) : (
+              <p className="text-center text-muted-foreground py-8">No completed tasks</p>
+            )}
+          </TabsContent>
+        </Tabs>
       )}
 
       {/* Create Task Dialog */}

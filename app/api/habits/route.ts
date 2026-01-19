@@ -218,21 +218,9 @@ export async function POST(request: Request) {
       userId,
       groupId: validatedData.groupId ?? null,
       parentTaskId: validatedData.parentTaskId ?? null,
+      startDate: validatedData.startDate ? new Date(validatedData.startDate) : null,
       endDate: validatedData.endDate ? new Date(validatedData.endDate) : null,
       activeDays: validatedData.type === "WEEKLY" ? (validatedData.activeDays || []) : [],
-    }
-
-    if (validatedData.endDate) {
-      habitData.endDate = new Date(validatedData.endDate)
-    } else {
-      habitData.endDate = null
-    }
-
-    // Set activeDays (empty array for non-weekly habits, or provided array for weekly)
-    if (validatedData.type === "WEEKLY") {
-      habitData.activeDays = validatedData.activeDays || []
-    } else {
-      habitData.activeDays = []
     }
 
     const habit = await prisma.habit.create({

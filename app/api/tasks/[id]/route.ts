@@ -345,18 +345,22 @@ export async function PUT(
       }
     }
 
-    // Convert deadline string to Date if provided
-    const { deadline: deadlineStr, labelIds, ...rest } = validatedData
+    // Convert startDate and deadline strings to Date if provided
+    const { startDate: startDateStr, deadline: deadlineStr, labelIds, ...rest } = validatedData
     const updateData: {
       title?: string
       description?: string | null
       importance?: number
       progress?: number
+      startDate?: Date | null
       deadline?: Date | null
       groupId?: string | null
       parentId?: string | null
     } = {
       ...rest,
+      ...(startDateStr !== undefined && {
+        startDate: startDateStr ? new Date(startDateStr) : null,
+      }),
       ...(deadlineStr !== undefined && {
         deadline: deadlineStr ? new Date(deadlineStr) : null,
       }),

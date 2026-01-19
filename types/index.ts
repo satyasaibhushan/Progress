@@ -27,6 +27,7 @@ export interface Task {
   description?: string;
   importance: number;
   progress: number;
+  startDate?: string;
   deadline?: string;
   groupId?: string;
   parentId?: string;
@@ -49,6 +50,7 @@ export interface Habit {
   targetCount: number;
   countPerPeriod?: number; // How many times per period (defaults to 1)
   importance: number;
+  startDate?: string;
   endDate?: string;
   activeDays?: number[];
   groupId?: string;

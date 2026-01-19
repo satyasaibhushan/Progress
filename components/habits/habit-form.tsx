@@ -71,6 +71,7 @@ export function HabitForm({
           type: habit.type,
           targetCount: habit.targetCount,
           importance: habit.importance,
+          startDate: habit.startDate || undefined,
           endDate: habit.endDate || undefined,
           activeDays: habit.activeDays || [],
           groupId: habit.groupId || undefined,
@@ -240,19 +241,35 @@ export function HabitForm({
         </p>
       </div>
 
-      {/* End Date */}
-      <div>
-        <FormLabel>End Date</FormLabel>
-        <DatePicker
-          date={watch("endDate") ? new Date(watch("endDate")!) : undefined}
-          onSelect={(date) =>
-            setValue("endDate", date ? date.toISOString() : undefined)
-          }
-          placeholder="Pick an end date"
-        />
-        <p className="text-xs text-muted-foreground mt-1">
-          Used for auto-calculating target count and urgency
-        </p>
+      {/* Start Date and End Date */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <FormLabel>Start Date</FormLabel>
+          <DatePicker
+            date={watch("startDate") ? new Date(watch("startDate")!) : undefined}
+            onSelect={(date) =>
+              setValue("startDate", date ? date.toISOString() : undefined)
+            }
+            placeholder="Pick a start date"
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            When to start this habit
+          </p>
+        </div>
+
+        <div>
+          <FormLabel>End Date</FormLabel>
+          <DatePicker
+            date={watch("endDate") ? new Date(watch("endDate")!) : undefined}
+            onSelect={(date) =>
+              setValue("endDate", date ? date.toISOString() : undefined)
+            }
+            placeholder="Pick an end date"
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Used for auto-calculating target count
+          </p>
+        </div>
       </div>
 
       {/* Parent Task */}

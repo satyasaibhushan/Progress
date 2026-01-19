@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
-import { Calendar, Folder, MoreVertical, ListTodo, CheckCircle2, Circle } from "lucide-react";
+import { Calendar, Folder, MoreVertical, ListTodo, CheckCircle2, Circle, Clock } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { isPending } from "@/lib/date-helpers";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -191,11 +192,23 @@ export function TaskCard({
                 <span>{displayGroup.name}</span>
               </button>
             )}
+            {task.startDate && (
+              <div className="flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                <span>Start: {format(new Date(task.startDate), "MMM d")}</span>
+              </div>
+            )}
             {task.deadline && (
               <div className="flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
-                <span>{format(new Date(task.deadline), "MMM d, yyyy")}</span>
+                <span>Due: {format(new Date(task.deadline), "MMM d, yyyy")}</span>
               </div>
+            )}
+            {isPending(task.startDate) && (
+              <Badge variant="outline" className="text-xs flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-200">
+                <Clock className="w-3 h-3" />
+                Pending
+              </Badge>
             )}
           </div>
 
