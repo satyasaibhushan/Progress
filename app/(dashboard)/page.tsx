@@ -216,11 +216,12 @@ export default function DashboardPage() {
       if (h.labels?.some((l) => l.id === selectedLabel.id)) return true;
       // Check if parent task (or ancestor) has the label
       if (h.parentTaskId) {
-        let currentTask = tasks.find((t) => t.id === h.parentTaskId);
+        let currentTask: Task | undefined = tasks.find((t) => t.id === h.parentTaskId);
         while (currentTask) {
           if (currentTask.labels?.some((l) => l.id === selectedLabel.id)) return true;
           if (!currentTask.parentId) break;
-          currentTask = tasks.find((t) => t.id === currentTask.parentId);
+          const parentId = currentTask.parentId;
+          currentTask = parentId ? tasks.find((t) => t.id === parentId) : undefined;
         }
       }
       return false;

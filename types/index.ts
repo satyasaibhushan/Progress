@@ -36,6 +36,9 @@ export interface Task {
   labels?: Label[];
   children?: Task[];
   habits?: Habit[];
+  // Aggregate fields for parent task progress calculation
+  total_weight?: number | bigint;
+  weighted_progress?: number | bigint;
 }
 
 export interface Habit {

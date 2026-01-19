@@ -329,7 +329,7 @@ export default function HabitsPage() {
     }
   };
 
-  const handleCreate = async (data: { title: string; type: "DAILY" | "WEEKLY" | "MONTHLY"; targetCount: number; importance: number; description?: string; endDate?: string | null; activeDays?: number[]; groupId?: string | null; parentTaskId?: string | null; labelIds?: string[] }) => {
+  const handleCreate = async (data: any) => {
     setSaving(true);
     try {
       const createData: CreateHabitInput = {
@@ -359,7 +359,7 @@ export default function HabitsPage() {
     }
   };
 
-  const handleEdit = async (data: { title: string; type: "DAILY" | "WEEKLY" | "MONTHLY"; targetCount: number; importance: number; description?: string; endDate?: string | null; activeDays?: number[]; groupId?: string | null; parentTaskId?: string | null; labelIds?: string[] }) => {
+  const handleEdit = async (data: any) => {
     if (!editingHabit) return;
     setSaving(true);
     try {

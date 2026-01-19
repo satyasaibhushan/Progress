@@ -49,7 +49,7 @@ function getAllLeafTasks(tasks: Task[]): Task[] {
 
 
 // Check if a task is completed (all leaf tasks are 100%)
-function isTaskCompleted(task: Task & { total_weight?: string; weighted_progress?: string }): boolean {
+function isTaskCompleted(task: Task): boolean {
   const leafTasks = getAllLeafTasks([task]);
   // A task is completed only if it has leaf tasks and ALL of them are 100%
   if (leafTasks.length === 0) return false;
@@ -62,7 +62,7 @@ function isTaskCompleted(task: Task & { total_weight?: string; weighted_progress
 export default function TasksPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { setHeaderSubtitle } = useHeaderAction();
+  const { setHeaderRightAction, setHeaderSubtitle } = useHeaderAction();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
@@ -428,11 +428,27 @@ export default function TasksPage() {
   const allLeafTasks = useMemo(() => getAllLeafTasks(tasks), [tasks]);
   const totalTasks = allLeafTasks.length;
 
-  // Set header subtitle with total count
+  // Count active and completed tasks (leaf tasks only)
+  const activeLeafTasks = useMemo(() => {
+    return getAllLeafTasks(activeTasks);
+  }, [activeTasks]);
+
+  const completedLeafTasks = useMemo(() => {
+    return getAllLeafTasks(completedTasks);
+  }, [completedTasks]);
+
+  // Set header action and subtitle
   useEffect(() => {
-    setHeaderSubtitle(totalTasks > 0 ? `${totalTasks} total` : null);
-    return () => setHeaderSubtitle(null);
-  }, [setHeaderSubtitle, totalTasks]);
+    setHeaderRightAction(
+      <Button onClick={() => setCreatingTask(true)}>
+        <Plus className="w-4 h-4 mr-2" />
+        New Task
+      </Button>
+    );
+    return () => {
+      setHeaderRightAction(null);
+    };
+  }, [setHeaderRightAction]);
 
   if (loading) {
     return (
@@ -444,18 +460,15 @@ export default function TasksPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-end mb-6">
-        <Button onClick={() => setCreatingTask(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          New Task
-        </Button>
-      </div>
-
       {/* Active Tasks Section */}
       {activeTasks.length > 0 && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold">Active Tasks</h3>
+          <h3 className="text-lg font-semibold">
+            Active Tasks
+            <span className="text-sm text-muted-foreground font-normal ml-2">
+              ({activeLeafTasks.length})
+            </span>
+          </h3>
           <TaskTree
             tasks={activeTasks}
             groups={groups}
@@ -468,6 +481,7 @@ export default function TasksPage() {
             taskRefs={taskRefs.current}
             onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
             highlightedHabitId={searchParams.get("highlightHabit")}
+            isTaskCompleted={isTaskCompleted}
           />
         </div>
       )}
@@ -475,7 +489,12 @@ export default function TasksPage() {
       {/* Completed Tasks Section */}
       {completedTasks.length > 0 && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold">Completed Tasks</h3>
+          <h3 className="text-lg font-semibold">
+            Completed Tasks
+            <span className="text-sm text-muted-foreground font-normal ml-2">
+              ({completedLeafTasks.length})
+            </span>
+          </h3>
           <TaskTree
             tasks={completedTasks}
             groups={groups}
@@ -488,6 +507,7 @@ export default function TasksPage() {
             taskRefs={taskRefs.current}
             onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
             highlightedHabitId={searchParams.get("highlightHabit")}
+            isTaskCompleted={isTaskCompleted}
           />
         </div>
       )}

@@ -28,6 +28,7 @@ interface TaskTreeProps {
   onTaskClick?: (taskId: string) => void;
   highlightedHabitId?: string | null;
   highlightedTaskId?: string | null;
+  isTaskCompleted?: (task: Task) => boolean;
 }
 
 function hasChildren(task: Task): boolean {
@@ -126,6 +127,7 @@ export function TaskTree({
   onTaskClick,
   highlightedHabitId,
   highlightedTaskId,
+  isTaskCompleted,
 }: TaskTreeProps) {
   const router = useRouter();
   
@@ -148,6 +150,9 @@ export function TaskTree({
     
     // Expand if task has habits and is expanded
     const showHabits = taskHasHabits && isExpanded;
+    
+    // Cross out task if it's completed (progress is 100%)
+    const shouldCrossOut = isTaskCompleted ? isTaskCompleted(task) : false;
 
     return (
       <div key={task.id} className="space-y-2">
@@ -190,6 +195,7 @@ export function TaskTree({
               onDelete={() => onDelete?.(task)}
               onProgressUpdate={isLeaf ? (progress) => onProgressUpdate?.(task.id, progress) : undefined}
               onHabitClick={onHabitClick}
+              crossOut={shouldCrossOut}
             />
           </div>
         </div>

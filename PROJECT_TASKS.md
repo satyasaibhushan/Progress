@@ -132,19 +132,29 @@ Building a comprehensive progress tracking application with tasks, habits, and i
 
 ### Task 4.3: Habits API
 **Status:** ✅ Completed
-**Description:** Create CRUD operations for habits with cumulative progress tracking.
+**Description:** Create CRUD operations for habits with cumulative progress tracking and countPerPeriod support.
 **What to do:**
 - Create API routes: `/api/habits` (GET, POST, PUT, DELETE)
 - Implement habit types (DAILY, WEEKLY, MONTHLY)
 - Implement targetCount (required, can be auto-calculated from endDate)
+- Implement countPerPeriod field for "N per day/week/month" habits
+  - Default value: 1
+  - Multiplier for period targets (e.g., 5 push-ups per day = countPerPeriod of 5)
+  - Auto-calculation: targetCount = period_count × countPerPeriod
 - Implement activeDays field for WEEKLY habits (array of day numbers 0-6)
+  - Now used as UI constraint only (which days user can log)
+  - Does NOT affect targetCount calculation
 - Handle labels association
 - Support parentTaskId (habit can be child of a task)
 - Create habit logging endpoint `/api/habits/[id]/log` (allows logging on any day, increments count)
 - Implement cumulative progress calculation: (total logs / targetCount) × 100
 - Auto-calculate targetCount from endDate if not provided
+  - DAILY: days × countPerPeriod
+  - WEEKLY: weeks × countPerPeriod
+  - MONTHLY: months × countPerPeriod
 - Validate activeDays for WEEKLY habits
-- Test all endpoints
+- Validate countPerPeriod (must be positive integer)
+- Test all endpoints including countPerPeriod variations
 
 ### Task 4.4: Labels API
 **Status:** ✅ Completed

@@ -1,6 +1,7 @@
 "use client";
 
 import { ImportancePreset } from "@/types";
+import { cn } from "@/lib/utils";
 
 interface ImportanceIndicatorProps {
   importance: number;
@@ -9,29 +10,35 @@ interface ImportanceIndicatorProps {
   showValue?: boolean;
 }
 
-export function ImportanceIndicator({ 
-  importance, 
-  preset, 
-  size = 'md', 
-  showValue = false 
+interface ImportanceInfo {
+  dotClasses: string;
+  textClasses: string;
+  name: string;
+}
+
+export function ImportanceIndicator({
+  importance,
+  preset,
+  size = 'md',
+  showValue = false
 }: ImportanceIndicatorProps) {
-  // Map preset to color and icon
-  const getPresetInfo = (preset?: ImportancePreset) => {
+  // Map preset to Tailwind classes
+  const getPresetInfo = (preset?: ImportancePreset): ImportanceInfo => {
     switch (preset) {
       case 'CRITICAL':
-        return { bg: '#dc2626', border: '#991b1b', name: 'Critical', text: '#dc2626' };
+        return { dotClasses: 'bg-red-600 border-red-900', name: 'Critical', textClasses: 'text-red-600' };
       case 'HIGH':
-        return { bg: '#f59e0b', border: '#d97706', name: 'High', text: '#f59e0b' };
+        return { dotClasses: 'bg-amber-600 border-amber-700', name: 'High', textClasses: 'text-amber-600' };
       case 'MEDIUM':
-        return { bg: '#3b82f6', border: '#2563eb', name: 'Medium', text: '#3b82f6' };
+        return { dotClasses: 'bg-blue-600 border-blue-700', name: 'Medium', textClasses: 'text-blue-600' };
       case 'LOW':
-        return { bg: '#22c55e', border: '#16a34a', name: 'Low', text: '#22c55e' };
+        return { dotClasses: 'bg-green-600 border-green-700', name: 'Low', textClasses: 'text-green-600' };
       default:
         // If no preset, use importance number to determine color
-        if (importance >= 90) return { bg: '#dc2626', border: '#991b1b', name: 'Critical', text: '#dc2626' };
-        if (importance >= 70) return { bg: '#f59e0b', border: '#d97706', name: 'High', text: '#f59e0b' };
-        if (importance >= 40) return { bg: '#3b82f6', border: '#2563eb', name: 'Medium', text: '#3b82f6' };
-        return { bg: '#22c55e', border: '#16a34a', name: 'Low', text: '#22c55e' };
+        if (importance >= 90) return { dotClasses: 'bg-red-600 border-red-900', name: 'Critical', textClasses: 'text-red-600' };
+        if (importance >= 70) return { dotClasses: 'bg-amber-600 border-amber-700', name: 'High', textClasses: 'text-amber-600' };
+        if (importance >= 40) return { dotClasses: 'bg-blue-600 border-blue-700', name: 'Medium', textClasses: 'text-blue-600' };
+        return { dotClasses: 'bg-green-600 border-green-700', name: 'Low', textClasses: 'text-green-600' };
     }
   };
 
@@ -45,16 +52,16 @@ export function ImportanceIndicator({
 
   return (
     <div className="flex items-center gap-1.5">
-      <div 
-        className={`${sizeClasses[size]} rounded-full border-2`}
-        style={{ 
-          backgroundColor: info.bg,
-          borderColor: info.border
-        }}
+      <div
+        className={cn(
+          sizeClasses[size],
+          'rounded-full border-2',
+          info.dotClasses
+        )}
         title={`Importance: ${info.name} (${importance}/100)`}
       />
       {showValue && (
-        <span className="text-xs" style={{ color: info.text }}>{info.name}</span>
+        <span className={cn('text-xs', info.textClasses)}>{info.name}</span>
       )}
     </div>
   );

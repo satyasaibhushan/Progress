@@ -5,12 +5,11 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Habit, Group, Label, Task } from "@/types";
-import { HabitType } from "@prisma/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label as FormLabel } from "@/components/ui/label";
-import { createHabitSchema } from "@/lib/validations/habit";
+import { createHabitSchema, habitFormSchema } from "@/lib/validations/habit";
 import {
   Select,
   SelectContent,
@@ -24,18 +23,7 @@ import { DatePicker } from "@/components/shared/date-picker";
 import { LabelSelector } from "@/components/shared/label-selector";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 
-const formSchema = z.object({
-  title: z.string().min(1, "Title is required").max(200, "Title too long"),
-  description: z.string().max(2000, "Description too long").optional(),
-  type: z.enum(["DAILY", "WEEKLY", "MONTHLY"]),
-  targetCount: z.number().int().positive("Target count must be positive"),
-  importance: z.number().int().min(1).max(100).default(50),
-  endDate: z.string().datetime().optional().nullable(),
-  activeDays: z.array(z.number().int().min(0).max(6)).optional(),
-  groupId: z.string().optional().nullable(),
-  parentTaskId: z.string().optional().nullable(),
-  labelIds: z.array(z.string()).optional(),
-});
+const formSchema = habitFormSchema;
 
 type HabitFormData = z.infer<typeof formSchema>;
 
@@ -75,7 +63,7 @@ export function HabitForm({
     setValue,
     watch,
   } = useForm<HabitFormData>({
-    resolver: zodResolver(formSchema),
+    resolver: zodResolver(habitFormSchema),
     defaultValues: habit
       ? {
           title: habit.title,
@@ -99,7 +87,7 @@ export function HabitForm({
   });
 
   const type = watch("type");
-  const importance = watch("importance");
+  const importance = watch("importance") ?? 50;
   const selectedLabelIds = watch("labelIds") || [];
   const activeDays = watch("activeDays") || [];
 

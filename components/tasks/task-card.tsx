@@ -30,6 +30,7 @@ interface TaskCardProps {
   onDelete?: () => void;
   onProgressUpdate?: (progress: number) => void;
   onHabitClick?: (habitId: string) => void;
+  crossOut?: boolean;
 }
 
 export function TaskCard({
@@ -44,6 +45,7 @@ export function TaskCard({
   onDelete,
   onProgressUpdate,
   onHabitClick,
+  crossOut = false,
 }: TaskCardProps) {
   const router = useRouter();
   
@@ -134,7 +136,7 @@ export function TaskCard({
               <h4
                 className={cn(
                   "text-sm font-medium mb-1",
-                  isCompleted && "line-through text-muted-foreground"
+                  (isCompleted || crossOut) && "line-through text-muted-foreground"
                 )}
               >
                 {task.title}
@@ -231,7 +233,7 @@ export function TaskCard({
                 min={1}
                 max={100}
                 interactive={isLeaf && !!onProgressUpdate}
-                showPercentageOnHover={false}
+                showPercentageOnHover={true}
               />
             </div>
           </div>

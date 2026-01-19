@@ -247,9 +247,10 @@ Key Changes:
   description: string?
   type: enum (DAILY, WEEKLY, MONTHLY)
   targetCount: int (required - total cumulative count, can be auto-calculated from endDate)
+  countPerPeriod: int (default 1, multiplier for target calculation)
   importance: int (1-100 weightage)
   endDate: DateTime? (used for auto-calculating targetCount and urgency)
-  activeDays: int[] (for WEEKLY habits: [0=Sun, 1=Mon, ..., 6=Sat])
+  activeDays: int[] (for WEEKLY habits: [0=Sun, 1=Mon, ..., 6=Sat] - UI constraint only, not used in calculation)
   userId: string
   groupId: string?
   parentTaskId: string? (habit can be child of a task)
@@ -553,11 +554,19 @@ For each linked habit (habit.parentTaskId = task.id):
 - **DAILY:** Can be logged multiple times per day, progress = (total logs / targetCount) × 100
 - **WEEKLY:** Can be logged n times per week on specific days (activeDays), progress = (total logs / targetCount) × 100
 - **MONTHLY:** Can be logged n times per month, progress = (total logs / targetCount) × 100
-- **targetCount:** Required, can be provided manually or auto-calculated from endDate:
-  - DAILY: days between start and endDate
-  - WEEKLY: count of active days in date range
-  - MONTHLY: number of months between start and endDate
+- **targetCount:** Required, can be provided manually or auto-calculated from endDate
+  - Auto-calculated as: `<period_count> × countPerPeriod`
+  - DAILY: `days between start and endDate × countPerPeriod`
+  - WEEKLY: `weeks between start and endDate × countPerPeriod`
+  - MONTHLY: `months between start and endDate × countPerPeriod`
+  - Example: 10 days with countPerPeriod=5 → targetCount=50 (5 per day for 10 days)
+- **countPerPeriod:** Multiplier for how many completions per period (default 1)
+  - DAILY: "N times per day" (e.g., countPerPeriod=5 means 5 times per day)
+  - WEEKLY: "N times per week" (e.g., countPerPeriod=3 means 3 times per week)
+  - MONTHLY: "N times per month" (e.g., countPerPeriod=2 means 2 times per month)
 - **activeDays:** Required for WEEKLY habits (array of day numbers 0-6)
+  - Now used as UI constraint/reminder only (which days user can log)
+  - Does NOT affect targetCount calculation (based on total weeks instead)
 - **Logging:** All habits allow logging on any day (activeDays used for suggestions only)
 
 **Example:**
