@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { subDays, subMonths, subQuarters, subYears, format } from "date-fns";
+import { useHeaderAction } from "./layout";
 
 type TimePeriod = "week" | "month" | "quarter" | "year";
 
@@ -39,6 +40,7 @@ function getAllLeafTasks(tasks: Task[]): Task[] {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { setHeaderRightAction } = useHeaderAction();
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("week");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
@@ -46,6 +48,27 @@ export default function DashboardPage() {
   const [labels, setLabels] = useState<Label[]>([]);
   const [selectedLabel, setSelectedLabel] = useState<Label | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Set time period selector in header
+  useEffect(() => {
+    setHeaderRightAction(
+      <Select value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
+        <SelectTrigger className="w-[180px]">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="week">This Week</SelectItem>
+          <SelectItem value="month">This Month</SelectItem>
+          <SelectItem value="quarter">This Quarter</SelectItem>
+          <SelectItem value="year">This Year</SelectItem>
+        </SelectContent>
+      </Select>
+    );
+    
+    return () => {
+      setHeaderRightAction(null);
+    };
+  }, [timePeriod, setHeaderRightAction]);
 
   useEffect(() => {
     async function loadData() {
@@ -267,22 +290,6 @@ export default function DashboardPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-end gap-4 mb-6">
-
-        <Select value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="week">This Week</SelectItem>
-            <SelectItem value="month">This Month</SelectItem>
-            <SelectItem value="quarter">This Quarter</SelectItem>
-            <SelectItem value="year">This Year</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
       {/* Stats */}
       <OverviewStats
         completionRate={completionRate}
