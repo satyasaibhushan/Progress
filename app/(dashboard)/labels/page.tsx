@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { useHeaderAction } from "../layout";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, Tag, Edit, Trash2 } from "lucide-react";
@@ -55,7 +55,7 @@ function getAllLeafTasks(tasks: Task[]): Task[] {
   return leafTasks;
 }
 
-export default function LabelsPage() {
+function LabelsPageContent() {
   const { setHeaderSubtitle, setHeaderRightAction } = useHeaderAction();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -505,5 +505,13 @@ export default function LabelsPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+export default function LabelsPage() {
+  return (
+    <Suspense fallback={<LoadingSkeleton count={10} />}>
+      <LabelsPageContent />
+    </Suspense>
   );
 }

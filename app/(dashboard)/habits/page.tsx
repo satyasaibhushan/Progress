@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
 import { useHeaderAction } from "../layout";
@@ -92,7 +92,7 @@ function calculateHabitProgress(habit: Habit, logs: HabitLog[]): number {
   return Math.min(100, Math.round((totalCount / habit.targetCount) * 100));
 }
 
-export default function HabitsPage() {
+function HabitsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setHeaderRightAction, setHeaderSubtitle } = useHeaderAction();
@@ -819,5 +819,13 @@ export default function HabitsPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+export default function HabitsPage() {
+  return (
+    <Suspense fallback={<LoadingSkeleton count={10} />}>
+      <HabitsPageContent />
+    </Suspense>
   );
 }

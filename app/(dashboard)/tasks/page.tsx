@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useHeaderAction } from "../layout";
 import { Plus } from "lucide-react";
@@ -61,7 +61,7 @@ function isTaskCompleted(task: Task): boolean {
   });
 }
 
-export default function TasksPage() {
+function TasksPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setHeaderRightAction, setHeaderSubtitle } = useHeaderAction();
@@ -630,5 +630,13 @@ export default function TasksPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+export default function TasksPage() {
+  return (
+    <Suspense fallback={<LoadingSkeleton count={10} />}>
+      <TasksPageContent />
+    </Suspense>
   );
 }

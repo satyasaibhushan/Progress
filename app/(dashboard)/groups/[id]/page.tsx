@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { ArrowLeft, Edit, Trash2 } from "lucide-react";
 import { getGroup, deleteGroup, getGroupItems, updateGroup, UpdateGroupInput } from "@/lib/api/groups";
@@ -45,7 +45,7 @@ function getAllLeafTasks(tasks: Task[]): Task[] {
   return leafTasks;
 }
 
-export default function GroupDetailPage() {
+function GroupDetailPageContent() {
   const router = useRouter();
   const params = useParams();
   const searchParams = useSearchParams();
@@ -371,5 +371,13 @@ export default function GroupDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+export default function GroupDetailPage() {
+  return (
+    <Suspense fallback={<LoadingSkeleton count={10} />}>
+      <GroupDetailPageContent />
+    </Suspense>
   );
 }
