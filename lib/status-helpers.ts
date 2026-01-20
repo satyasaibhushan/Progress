@@ -1,4 +1,4 @@
-import { HabitType } from "@/lib/generated/prisma"
+import { HabitType } from "@prisma/client"
 
 /**
  * Check if a task is marked as done based on progress

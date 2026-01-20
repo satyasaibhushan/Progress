@@ -1,4 +1,4 @@
-import { HabitType } from "./generated/prisma"
+import { HabitType } from "@prisma/client"
 
 /**
  * Calculate targetCount from endDate if not provided

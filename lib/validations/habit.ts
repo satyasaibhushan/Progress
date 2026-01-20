@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { HabitType } from "@/lib/generated/prisma"
+import { HabitType } from "@prisma/client"
 
 export const createHabitSchema = z.object({
   title: z.string().min(1, "Title is required").max(200, "Title too long"),

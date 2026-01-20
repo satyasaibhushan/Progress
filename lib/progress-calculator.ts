@@ -10,7 +10,7 @@
  */
 
 import { prisma } from './prisma';
-import { HabitType } from './generated/prisma';
+import { HabitType } from '@prisma/client';
 
 /**
  * Round a number to 2 decimal places

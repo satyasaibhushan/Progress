@@ -5,7 +5,7 @@ import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
 import { addHabitToTask, calculateHabitCompletion } from "@/lib/progress-calculator"
 import { calculateTargetCount } from "@/lib/habit-helpers"
-import { HabitType } from "@/lib/generated/prisma"
+import { HabitType } from "@prisma/client"
 import {
   getInheritedLabelsFromHabit,
   getInheritedGroupFromHabit,
