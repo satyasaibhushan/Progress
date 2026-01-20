@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: progress-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-progress}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-progress_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups  # Mount for database backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-progress}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  # Next.js Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: progress-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${DB_USER:-progress}:${DB_PASSWORD}@db:5432/${DB_NAME:-progress_db}?schema=public
+
+      # NextAuth
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+
+      # Google OAuth
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+
+      # Node
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+    # Run database migrations on startup
+    command: sh -c "npx prisma migrate deploy && node server.js"
+
+  # Nginx Reverse Proxy (optional - for SSL termination)
+  nginx:
+    image: nginx:alpine
+    container_name: progress-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      - app
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge
