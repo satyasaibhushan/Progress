@@ -5,7 +5,7 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Check if user has a session cookie
-  const sessionCookie = request.cookies.get("authjs.session-token")
+  const sessionCookie = request.cookies.get("authjs.session-token") || request.cookies.get("__Secure-authjs.session-token")
   const isAuthenticated = !!sessionCookie
 
   const isAuthPage = pathname.startsWith("/auth/signin")
