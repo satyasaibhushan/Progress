@@ -78,31 +78,9 @@ export function DatePicker({
   const handleTextChange = (value: string) => {
     setTextInput(value);
     
-    // Try to parse the date as user types
-    const parsed = parseDateString(value);
-    if (parsed) {
-      const parsedDate = new Date(parsed);
-      // Validate date constraints (parseDateString already checks 2-year limit)
-      let isValid = true;
-      if (disablePast) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        if (parsedDate < today) {
-          isValid = false;
-        }
-      }
-      if (disableFuture) {
-        const today = new Date();
-        today.setHours(23, 59, 59, 999);
-        if (parsedDate > today) {
-          isValid = false;
-        }
-      }
-      if (isValid) {
-        onSelect?.(parsedDate);
-      }
-    } else if (value.trim() === "") {
-      // Clear date if input is empty
+    // Only clear date if input is completely empty
+    // Don't parse while typing - wait for blur to avoid premature parsing
+    if (value.trim() === "") {
       onSelect?.(undefined);
     }
   };
