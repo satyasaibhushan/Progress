@@ -311,6 +311,26 @@ export async function POST(request: Request) {
       },
     })
 
+    // Add labels from labelIds if provided
+    if (validatedData.labelIds && validatedData.labelIds.length > 0) {
+      for (const labelId of validatedData.labelIds) {
+        // Verify label belongs to user
+        const label = await prisma.label.findFirst({
+          where: { id: labelId, userId },
+        })
+        if (label) {
+          await prisma.taskLabel.create({
+            data: {
+              taskId: task.id,
+              labelId,
+            },
+          }).catch(() => {
+            // Ignore if already exists
+          })
+        }
+      }
+    }
+
     // If task has a parent, inherit labels from parent
     if (task.parentId && parentTask && parentTask.taskLabels) {
       // Get direct parent labels

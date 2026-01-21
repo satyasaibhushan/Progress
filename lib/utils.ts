@@ -6,6 +6,71 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Parse a date string flexibly - accepts any text and tries to parse it as a date
+ * Supports formats: dd/mm/yy, dd-mm-yy, dd-mm-yyyy, and standard date formats
+ * Returns ISO datetime string if valid, null if invalid or empty
+ * Rejects dates more than 2 years in the future
+ */
+export function parseDateString(dateStr: string | null | undefined): string | null {
+  if (!dateStr || typeof dateStr !== 'string') return null
+  
+  const trimmed = dateStr.trim()
+  if (trimmed === '') return null
+  
+  let date: Date | null = null
+  
+  // Try to parse dd/mm/yy, dd-mm-yy, or dd-mm-yyyy formats first
+  const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/)
+  const dashMatch = trimmed.match(/^(\d{1,2})-(\d{1,2})-(\d{2,4})$/)
+  
+  if (slashMatch || dashMatch) {
+    const match = slashMatch || dashMatch
+    if (match) {
+      const day = parseInt(match[1], 10)
+      const month = parseInt(match[2], 10)
+      let year = parseInt(match[3], 10)
+      
+      // Handle 2-digit years: assume 20xx for years 00-99
+      if (year < 100) {
+        year = 2000 + year
+      }
+      
+      // Validate day and month ranges
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+        // Create date (month is 0-indexed in Date constructor)
+        date = new Date(year, month - 1, day)
+        
+        // Verify the date is valid (handles cases like 31/02/26)
+        if (date.getDate() !== day || date.getMonth() !== month - 1 || date.getFullYear() !== year) {
+          date = null
+        }
+      }
+    }
+  }
+  
+  // If not matched by dd/mm/yy format, try standard Date parsing
+  if (!date) {
+    date = new Date(trimmed)
+    // Check if the date is valid
+    if (isNaN(date.getTime())) {
+      return null
+    }
+  }
+  
+  // Check if date is more than 2 years in the future
+  const twoYearsFromNow = new Date()
+  twoYearsFromNow.setFullYear(twoYearsFromNow.getFullYear() + 2)
+  twoYearsFromNow.setHours(23, 59, 59, 999) // End of day
+  
+  if (date > twoYearsFromNow) {
+    return null
+  }
+  
+  // Return ISO string
+  return date.toISOString()
+}
+
+/**
  * Convert BigInt fields in a task object to strings for JSON serialization
  * Recursively handles nested tasks (children)
  * Transforms taskLabels to labels array

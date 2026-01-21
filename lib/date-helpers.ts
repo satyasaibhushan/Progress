@@ -3,6 +3,28 @@
  */
 
 /**
+ * Parse a date string flexibly - accepts any text and tries to parse it as a date
+ * Returns ISO datetime string if valid, null if invalid or empty
+ */
+export function parseDateString(dateStr: string | null | undefined): string | null {
+  if (!dateStr || typeof dateStr !== 'string') return null
+  
+  const trimmed = dateStr.trim()
+  if (trimmed === '') return null
+  
+  // Try to parse the date
+  const date = new Date(trimmed)
+  
+  // Check if the date is valid
+  if (isNaN(date.getTime())) {
+    return null
+  }
+  
+  // Return ISO string
+  return date.toISOString()
+}
+
+/**
  * Check if a start date is in the future (task/habit hasn't started yet)
  */
 export function isPending(startDate: Date | string | null | undefined): boolean {

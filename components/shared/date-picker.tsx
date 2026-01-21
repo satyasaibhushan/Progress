@@ -3,8 +3,9 @@
 import * as React from "react";
 import { format } from "date-fns";
 import { Calendar as CalendarIcon } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, parseDateString } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Calendar } from "@/components/ui/calendar";
 import {
   Popover,
@@ -31,45 +32,173 @@ export function DatePicker({
   disablePast = false,
   disableFuture = false,
 }: DatePickerProps) {
+  const [textInput, setTextInput] = React.useState<string>(
+    date ? format(date, "PPP") : ""
+  );
+  const [isOpen, setIsOpen] = React.useState(false);
+
+  // Update text input when date prop changes
+  React.useEffect(() => {
+    if (date) {
+      setTextInput(format(date, "PPP"));
+    } else {
+      setTextInput("");
+    }
+  }, [date]);
+
   const getDisabledDates = () => {
+    const twoYearsFromNow = new Date();
+    twoYearsFromNow.setFullYear(twoYearsFromNow.getFullYear() + 2);
+    twoYearsFromNow.setHours(23, 59, 59, 999);
+    
+    const matchers: Array<{ before: Date } | { after: Date }> = [];
+    
     if (disablePast) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      return { before: today };
+      matchers.push({ before: today });
     }
+    
+    // Always disable dates more than 2 years in the future
+    // If disableFuture is true, also disable dates after today (whichever is earlier)
     if (disableFuture) {
       const today = new Date();
       today.setHours(23, 59, 59, 999);
-      return { after: today };
+      // Use the earlier of today or 2 years from now
+      const limit = today < twoYearsFromNow ? today : twoYearsFromNow;
+      matchers.push({ after: limit });
+    } else {
+      matchers.push({ after: twoYearsFromNow });
     }
-    return undefined;
+    
+    // Return array of matchers
+    return matchers.length > 0 ? matchers : undefined;
+  };
+
+  const handleTextChange = (value: string) => {
+    setTextInput(value);
+    
+    // Try to parse the date as user types
+    const parsed = parseDateString(value);
+    if (parsed) {
+      const parsedDate = new Date(parsed);
+      // Validate date constraints (parseDateString already checks 2-year limit)
+      let isValid = true;
+      if (disablePast) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (parsedDate < today) {
+          isValid = false;
+        }
+      }
+      if (disableFuture) {
+        const today = new Date();
+        today.setHours(23, 59, 59, 999);
+        if (parsedDate > today) {
+          isValid = false;
+        }
+      }
+      if (isValid) {
+        onSelect?.(parsedDate);
+      }
+    } else if (value.trim() === "") {
+      // Clear date if input is empty
+      onSelect?.(undefined);
+    }
+  };
+
+  const handleTextBlur = () => {
+    // On blur, format the date if valid, otherwise reset
+    const parsed = parseDateString(textInput);
+    if (parsed) {
+      const parsedDate = new Date(parsed);
+      // Validate date constraints (parseDateString already checks 2-year limit)
+      let isValid = true;
+      if (disablePast) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (parsedDate < today) {
+          isValid = false;
+        }
+      }
+      if (disableFuture) {
+        const today = new Date();
+        today.setHours(23, 59, 59, 999);
+        if (parsedDate > today) {
+          isValid = false;
+        }
+      }
+      if (isValid) {
+        // Format the valid date
+        setTextInput(format(parsedDate, "PPP"));
+        onSelect?.(parsedDate);
+      } else {
+        // Reset to current date or empty if invalid
+        if (date) {
+          setTextInput(format(date, "PPP"));
+        } else {
+          setTextInput("");
+          onSelect?.(undefined);
+        }
+      }
+    } else if (textInput.trim() !== "") {
+      // Invalid date text, reset to current date or empty
+      if (date) {
+        setTextInput(format(date, "PPP"));
+      } else {
+        setTextInput("");
+        onSelect?.(undefined);
+      }
+    }
+  };
+
+  const handleCalendarSelect = (selectedDate: Date | undefined) => {
+    onSelect?.(selectedDate);
+    setIsOpen(false);
   };
 
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          variant={"outline"}
-          className={cn(
-            "w-full justify-start text-left font-normal",
-            !date && "text-muted-foreground",
-            className
-          )}
+    <div className="relative">
+      <div className="flex gap-2">
+        <Input
+          type="text"
+          value={textInput}
+          onChange={(e) => handleTextChange(e.target.value)}
+          onBlur={handleTextBlur}
+          placeholder={placeholder}
           disabled={disabled}
-        >
-          <CalendarIcon className="mr-2 h-4 w-4" />
-          {date ? format(date, "PPP") : <span>{placeholder}</span>}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
-        <Calendar
-          mode="single"
-          selected={date}
-          onSelect={onSelect}
-          initialFocus
-          disabled={getDisabledDates()}
+          className={cn("flex-1", className)}
         />
-      </PopoverContent>
-    </Popover>
+        <Popover open={isOpen} onOpenChange={setIsOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant={"outline"}
+              size="icon"
+              disabled={disabled}
+              className="shrink-0"
+            >
+              <CalendarIcon className="h-4 w-4" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent 
+            className="w-auto p-0 h-[320px]" 
+            align="start"
+            side="bottom"
+            sideOffset={4}
+          >
+            <div className="h-full flex items-start justify-start">
+              <Calendar
+                mode="single"
+                selected={date}
+                onSelect={handleCalendarSelect}
+                initialFocus
+                disabled={getDisabledDates()}
+              />
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
   );
 }
