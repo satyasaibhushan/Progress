@@ -49,6 +49,7 @@ export default function NewHabitPage() {
         description: data.description,
         type: data.type,
         targetCount: data.targetCount,
+        countPerPeriod: data.countPerPeriod,
         importance: data.importance,
         endDate: data.endDate,
         activeDays: data.activeDays,

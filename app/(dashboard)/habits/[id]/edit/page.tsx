@@ -57,6 +57,7 @@ export default function EditHabitPage() {
         description: data.description,
         type: data.type,
         targetCount: data.targetCount,
+        countPerPeriod: data.countPerPeriod,
         importance: data.importance,
         endDate: data.endDate,
         activeDays: data.activeDays,

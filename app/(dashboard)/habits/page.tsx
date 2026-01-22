@@ -339,6 +339,7 @@ function HabitsPageContent() {
         title: data.title,
         type: data.type,
         targetCount: data.targetCount,
+        countPerPeriod: data.countPerPeriod,
         importance: data.importance,
         description: data.description,
         startDate: data.startDate || undefined,
@@ -372,6 +373,7 @@ function HabitsPageContent() {
         title: data.title,
         type: data.type,
         targetCount: data.targetCount,
+        countPerPeriod: data.countPerPeriod,
         importance: data.importance,
         description: data.description,
         startDate: data.startDate || undefined,
@@ -700,13 +702,21 @@ function HabitsPageContent() {
                                   ) : null;
                                 })()}
                     </div>
-                    <div className="flex items-center gap-2 ml-4">
-                      <span className="text-sm text-muted-foreground">Importance:</span>
-                      <ImportanceIndicator
-                        importance={selectedHabit.importance}
-                        size="md"
-                        showValue
-                      />
+                    <div className="flex items-center gap-4 ml-4">
+                      {selectedHabit.countPerPeriod && selectedHabit.countPerPeriod > 1 && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-sm text-muted-foreground">Per {selectedHabit.type.toLowerCase()}:</span>
+                          <span className="text-sm font-medium">{selectedHabit.countPerPeriod}x</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">Importance:</span>
+                        <ImportanceIndicator
+                          importance={selectedHabit.importance}
+                          size="md"
+                          showValue
+                        />
+                      </div>
                     </div>
                   </div>
                 </CardHeader>

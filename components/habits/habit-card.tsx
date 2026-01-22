@@ -138,6 +138,11 @@ export function HabitCard({
             <Badge variant="secondary" className="text-xs">
               {habit.type}
             </Badge>
+            {habit.countPerPeriod && habit.countPerPeriod > 1 && (
+              <Badge variant="outline" className="text-xs">
+                {habit.countPerPeriod}x per {habit.type.toLowerCase()}
+              </Badge>
+            )}
             {displayGroup && (
               <button
                 onClick={(e) => {

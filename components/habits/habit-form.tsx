@@ -67,12 +67,13 @@ export function HabitForm({
     watch,
   } = useForm<HabitFormData>({
     resolver: zodResolver(habitFormSchema),
-    defaultValues: habit
+      defaultValues: habit
       ? {
           title: habit.title,
           description: habit.description || "",
           type: habit.type,
           targetCount: habit.targetCount,
+          countPerPeriod: habit.countPerPeriod || 1,
           importance: habit.importance,
           startDate: habit.startDate || undefined,
           endDate: habit.endDate || undefined,
@@ -84,6 +85,7 @@ export function HabitForm({
       : {
           type: "DAILY",
           targetCount: 30,
+          countPerPeriod: 1,
           importance: 50,
           activeDays: [],
           parentTaskId: initialParentTaskId || undefined,
@@ -231,25 +233,47 @@ export function HabitForm({
         </div>
       )}
 
-      {/* Target Count */}
-      <div>
-        <FormLabel htmlFor="targetCount">Target Count *</FormLabel>
-        <Input
-          id="targetCount"
-          type="number"
-          min="1"
-          {...register("targetCount", { valueAsNumber: true })}
-          placeholder="e.g., 30"
-          className={errors.targetCount ? "border-red-500" : ""}
-        />
-        {errors.targetCount && (
-          <p className="text-sm text-red-500 mt-1">
-            {errors.targetCount.message}
+      {/* Target Count and Count Per Period */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <FormLabel htmlFor="targetCount">Target Count *</FormLabel>
+          <Input
+            id="targetCount"
+            type="number"
+            min="1"
+            {...register("targetCount", { valueAsNumber: true })}
+            placeholder="e.g., 30"
+            className={errors.targetCount ? "border-red-500" : ""}
+          />
+          {errors.targetCount && (
+            <p className="text-sm text-red-500 mt-1">
+              {errors.targetCount.message}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground mt-1">
+            Total cumulative count. Can be auto-calculated from end date.
           </p>
-        )}
-        <p className="text-xs text-muted-foreground mt-1">
-          Total cumulative count. Can be auto-calculated from end date.
-        </p>
+        </div>
+
+        <div>
+          <FormLabel htmlFor="countPerPeriod">Count Per Period</FormLabel>
+          <Input
+            id="countPerPeriod"
+            type="number"
+            min="1"
+            {...register("countPerPeriod", { valueAsNumber: true })}
+            placeholder="e.g., 1"
+            className={errors.countPerPeriod ? "border-red-500" : ""}
+          />
+          {errors.countPerPeriod && (
+            <p className="text-sm text-red-500 mt-1">
+              {errors.countPerPeriod.message}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground mt-1">
+            How many times per {type.toLowerCase()}. Default: 1
+          </p>
+        </div>
       </div>
 
       {/* Start Date and End Date */}

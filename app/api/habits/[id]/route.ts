@@ -212,7 +212,10 @@ export async function PUT(
     }
 
     // Check if group can be changed (not inherited from parent)
-    if (updateFields.groupId !== undefined && !parentTaskChanged) {
+    // Only check if groupId is actually being changed (not just present in the request)
+    const groupChanged = updateFields.groupId !== undefined && 
+      updateFields.groupId !== existingHabit.groupId
+    if (groupChanged && !parentTaskChanged) {
       const canChange = await canChangeHabitGroup(id, userId)
       if (!canChange) {
         const inheritedGroup = await getInheritedGroupFromHabit(id, userId)

@@ -5,6 +5,7 @@ export interface CreateHabitInput {
   description?: string;
   type: "DAILY" | "WEEKLY" | "MONTHLY";
   targetCount: number;
+  countPerPeriod?: number;
   importance: number;
   startDate?: string;
   endDate?: string;
