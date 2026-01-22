@@ -26,6 +26,8 @@ interface TaskTreeProps {
   taskRefs?: { [key: string]: HTMLDivElement | null } | { [key: string]: (el: HTMLDivElement | null) => void };
   onHabitClick?: (habitId: string) => void;
   onTaskClick?: (taskId: string) => void;
+  onAddTask?: (parentTask: Task) => void;
+  onAddHabit?: (parentTask: Task) => void;
   highlightedHabitId?: string | null;
   highlightedTaskId?: string | null;
   isTaskCompleted?: (task: Task) => boolean;
@@ -125,6 +127,8 @@ export function TaskTree({
   taskRefs,
   onHabitClick,
   onTaskClick,
+  onAddTask,
+  onAddHabit,
   highlightedHabitId,
   highlightedTaskId,
   isTaskCompleted,
@@ -195,6 +199,8 @@ export function TaskTree({
               onDelete={() => onDelete?.(task)}
               onProgressUpdate={isLeaf ? (progress) => onProgressUpdate?.(task.id, progress) : undefined}
               onHabitClick={onHabitClick}
+              onAddTask={onAddTask ? () => onAddTask(task) : undefined}
+              onAddHabit={onAddHabit ? () => onAddHabit(task) : undefined}
               crossOut={shouldCrossOut}
             />
           </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -32,6 +33,7 @@ interface HabitFormProps {
   groups: Group[];
   labels: Label[];
   availableTasks?: Task[];
+  initialParentTaskId?: string;
   onSubmit: (data: HabitFormData) => Promise<void>;
   onCancel?: () => void;
   loading?: boolean;
@@ -52,6 +54,7 @@ export function HabitForm({
   groups,
   labels,
   availableTasks = [],
+  initialParentTaskId,
   onSubmit,
   onCancel,
   loading = false,
@@ -83,9 +86,17 @@ export function HabitForm({
           targetCount: 30,
           importance: 50,
           activeDays: [],
+          parentTaskId: initialParentTaskId || undefined,
           labelIds: [],
         },
   });
+
+  // Set initial parent task ID if provided and not editing
+  React.useEffect(() => {
+    if (!habit && initialParentTaskId) {
+      setValue("parentTaskId", initialParentTaskId);
+    }
+  }, [initialParentTaskId, habit, setValue]);
 
   const type = watch("type");
   const importance = watch("importance") ?? 50;

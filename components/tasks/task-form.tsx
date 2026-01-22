@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -45,6 +46,7 @@ interface TaskFormProps {
   groups: Group[];
   labels: Label[];
   availableTasks?: Task[];
+  initialParentId?: string;
   onSubmit: (data: TaskFormData) => Promise<void>;
   onCancel?: () => void;
   loading?: boolean;
@@ -55,6 +57,7 @@ export function TaskForm({
   groups,
   labels,
   availableTasks = [],
+  initialParentId,
   onSubmit,
   onCancel,
   loading = false,
@@ -82,9 +85,17 @@ export function TaskForm({
       : {
           importance: 50,
           progress: 0,
+          parentId: initialParentId || undefined,
           labelIds: [],
         },
   });
+
+  // Set initial parent ID if provided and not editing
+  React.useEffect(() => {
+    if (!task && initialParentId) {
+      setValue("parentId", initialParentId);
+    }
+  }, [initialParentId, task, setValue]);
 
   const importance = watch("importance");
   const selectedLabelIds = watch("labelIds") || [];

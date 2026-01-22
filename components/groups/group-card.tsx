@@ -3,7 +3,7 @@
 import { Group } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Folder, MoreVertical, ArrowRight } from "lucide-react";
+import { Folder, MoreVertical, ArrowRight, Edit, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
@@ -72,6 +72,7 @@ export function GroupCard({
                       onEdit();
                     }}
                   >
+                    <Edit className="w-4 h-4 mr-2" />
                     Edit
                   </DropdownMenuItem>
                 )}
@@ -83,6 +84,7 @@ export function GroupCard({
                     }}
                     className="text-red-600"
                   >
+                    <Trash2 className="w-4 h-4 mr-2" />
                     Delete
                   </DropdownMenuItem>
                 )}

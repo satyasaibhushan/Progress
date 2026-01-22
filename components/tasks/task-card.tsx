@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
-import { Calendar, Folder, MoreVertical, ListTodo, CheckCircle2, Circle, Clock } from "lucide-react";
+import { Calendar, Folder, MoreVertical, ListTodo, CheckCircle2, Circle, Clock, Plus, Edit, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { isPending } from "@/lib/date-helpers";
@@ -31,6 +31,8 @@ interface TaskCardProps {
   onDelete?: () => void;
   onProgressUpdate?: (progress: number) => void;
   onHabitClick?: (habitId: string) => void;
+  onAddTask?: () => void;
+  onAddHabit?: () => void;
   crossOut?: boolean;
 }
 
@@ -46,6 +48,8 @@ export function TaskCard({
   onDelete,
   onProgressUpdate,
   onHabitClick,
+  onAddTask,
+  onAddHabit,
   crossOut = false,
 }: TaskCardProps) {
   const router = useRouter();
@@ -148,7 +152,7 @@ export function TaskCard({
                 </p>
               )}
             </div>
-            {(onEdit || onDelete) && (
+            {(onEdit || onDelete || onAddTask || onAddHabit) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button className="p-1 hover:bg-slate-100 rounded">
@@ -156,8 +160,22 @@ export function TaskCard({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  {onAddTask && (
+                    <DropdownMenuItem onClick={onAddTask}>
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Task
+                    </DropdownMenuItem>
+                  )}
+                  {onAddHabit && (
+                    <DropdownMenuItem onClick={onAddHabit}>
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Habit
+                    </DropdownMenuItem>
+                  )}
+                  {onAddTask || onAddHabit ? <div className="my-1 h-px bg-border" /> : null}
                   {onEdit && (
                     <DropdownMenuItem onClick={onEdit}>
+                      <Edit className="w-4 h-4 mr-2" />
                       Edit
                     </DropdownMenuItem>
                   )}
@@ -166,6 +184,7 @@ export function TaskCard({
                       onClick={onDelete}
                       className="text-red-600"
                     >
+                      <Trash2 className="w-4 h-4 mr-2" />
                       Delete
                     </DropdownMenuItem>
                   )}

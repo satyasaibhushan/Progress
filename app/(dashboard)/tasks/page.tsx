@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useHeaderAction } from "../layout";
 import { Plus } from "lucide-react";
 import { getTasks, getTask, updateTask, deleteTask, createTask, CreateTaskInput } from "@/lib/api/tasks";
+import { createHabit } from "@/lib/api/habits";
+import type { CreateHabitInput } from "@/lib/api/habits";
 import { isPending } from "@/lib/date-helpers";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getGroups } from "@/lib/api/groups";
@@ -13,6 +15,7 @@ import { getLabels } from "@/lib/api/labels";
 import { Task, Group, Habit, Label } from "@/types";
 import { TaskTree } from "@/components/tasks/task-tree";
 import { TaskForm } from "@/components/tasks/task-form";
+import { HabitForm } from "@/components/habits/habit-form";
 import { Button } from "@/components/ui/button";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -74,6 +77,8 @@ function TasksPageContent() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [deletingTask, setDeletingTask] = useState<Task | null>(null);
   const [creatingTask, setCreatingTask] = useState(false);
+  const [creatingTaskWithParent, setCreatingTaskWithParent] = useState<Task | null>(null);
+  const [creatingHabitWithParent, setCreatingHabitWithParent] = useState<Task | null>(null);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<"active" | "future" | "completed">("active");
   const taskRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
@@ -259,8 +264,39 @@ function TasksPageContent() {
       const tasksData = await getTasks({ includeChildren: true, parentId: null });
       setTasks(tasksData);
       setCreatingTask(false);
+      setCreatingTaskWithParent(null);
     } catch (error) {
       console.error("Error creating task:", error);
+      throw error;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCreateHabit = async (data: any) => {
+    const createData: CreateHabitInput = {
+      title: data.title,
+      description: data.description,
+      type: data.type,
+      targetCount: data.targetCount,
+      countPerPeriod: data.countPerPeriod,
+      importance: data.importance,
+      startDate: data.startDate || undefined,
+      endDate: data.endDate || undefined,
+      activeDays: data.activeDays,
+      groupId: data.groupId || undefined,
+      parentTaskId: data.parentTaskId || undefined,
+      labelIds: data.labelIds,
+    };
+    setSaving(true);
+    try {
+      await createHabit(createData);
+      // Reload tasks to show the new habit
+      const tasksData = await getTasks({ includeChildren: true, parentId: null });
+      setTasks(tasksData);
+      setCreatingHabitWithParent(null);
+    } catch (error) {
+      console.error("Error creating habit:", error);
       throw error;
     } finally {
       setSaving(false);
@@ -519,6 +555,8 @@ function TasksPageContent() {
                 onProgressUpdate={handleProgressUpdate}
                 taskRefs={taskRefs.current}
                 onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+                onAddTask={(task) => setCreatingTaskWithParent(task)}
+                onAddHabit={(task) => setCreatingHabitWithParent(task)}
                 highlightedHabitId={searchParams.get("highlightHabit")}
                 isTaskCompleted={isTaskCompleted}
               />
@@ -540,6 +578,8 @@ function TasksPageContent() {
                 onProgressUpdate={handleProgressUpdate}
                 taskRefs={taskRefs.current}
                 onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+                onAddTask={(task) => setCreatingTaskWithParent(task)}
+                onAddHabit={(task) => setCreatingHabitWithParent(task)}
                 highlightedHabitId={searchParams.get("highlightHabit")}
                 isTaskCompleted={isTaskCompleted}
               />
@@ -561,6 +601,8 @@ function TasksPageContent() {
                 onProgressUpdate={handleProgressUpdate}
                 taskRefs={taskRefs.current}
                 onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+                onAddTask={(task) => setCreatingTaskWithParent(task)}
+                onAddHabit={(task) => setCreatingHabitWithParent(task)}
                 highlightedHabitId={searchParams.get("highlightHabit")}
                 isTaskCompleted={isTaskCompleted}
               />
@@ -572,7 +614,12 @@ function TasksPageContent() {
       )}
 
       {/* Create Task Dialog */}
-      <Dialog open={creatingTask} onOpenChange={setCreatingTask}>
+      <Dialog open={creatingTask || !!creatingTaskWithParent} onOpenChange={(open) => {
+        if (!open) {
+          setCreatingTask(false);
+          setCreatingTaskWithParent(null);
+        }
+      }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Task</DialogTitle>
@@ -581,8 +628,34 @@ function TasksPageContent() {
             groups={groups}
             labels={labels}
             availableTasks={tasks}
+            initialParentId={creatingTaskWithParent?.id}
             onSubmit={handleCreate}
-            onCancel={() => setCreatingTask(false)}
+            onCancel={() => {
+              setCreatingTask(false);
+              setCreatingTaskWithParent(null);
+            }}
+            loading={saving}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Habit Dialog */}
+      <Dialog open={!!creatingHabitWithParent} onOpenChange={(open) => {
+        if (!open) {
+          setCreatingHabitWithParent(null);
+        }
+      }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Create Habit</DialogTitle>
+          </DialogHeader>
+          <HabitForm
+            groups={groups}
+            labels={labels}
+            availableTasks={tasks}
+            initialParentTaskId={creatingHabitWithParent?.id}
+            onSubmit={handleCreateHabit}
+            onCancel={() => setCreatingHabitWithParent(null)}
             loading={saving}
           />
         </DialogContent>

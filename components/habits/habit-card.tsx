@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
-import { Flame, Repeat, ArrowRight, ListTodo, MoreVertical, Folder, Clock, Calendar } from "lucide-react";
+import { Flame, Repeat, ArrowRight, ListTodo, MoreVertical, Folder, Clock, Calendar, Edit, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isPending } from "@/lib/date-helpers";
 import { format } from "date-fns";
@@ -108,6 +108,7 @@ export function HabitCard({
                       e.stopPropagation();
                       onEdit();
                     }}>
+                      <Edit className="w-4 h-4 mr-2" />
                       Edit
                     </DropdownMenuItem>
                   )}
@@ -119,6 +120,7 @@ export function HabitCard({
                       }}
                       className="text-red-600"
                     >
+                      <Trash2 className="w-4 h-4 mr-2" />
                       Delete
                     </DropdownMenuItem>
                   )}
