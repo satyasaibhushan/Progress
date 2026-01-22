@@ -473,17 +473,17 @@ function TasksPageContent() {
   const allLeafTasks = useMemo(() => getAllLeafTasks(tasks), [tasks]);
   const totalTasks = allLeafTasks.length;
 
-  // Count pending, active and completed tasks (leaf tasks only)
-  const pendingLeafTasks = useMemo(() => {
-    return getAllLeafTasks(pendingTasks);
+  // Count pending, active and completed tasks (parent tasks only)
+  const pendingParentTasks = useMemo(() => {
+    return pendingTasks.length;
   }, [pendingTasks]);
 
-  const activeLeafTasks = useMemo(() => {
-    return getAllLeafTasks(activeTasks);
+  const activeParentTasks = useMemo(() => {
+    return activeTasks.length;
   }, [activeTasks]);
 
-  const completedLeafTasks = useMemo(() => {
-    return getAllLeafTasks(completedTasks);
+  const completedParentTasks = useMemo(() => {
+    return completedTasks.length;
   }, [completedTasks]);
 
   // Set header action and subtitle
@@ -525,19 +525,19 @@ function TasksPageContent() {
             <TabsTrigger value="active">
               Active
               <span className="ml-2 text-xs text-muted-foreground">
-                ({activeLeafTasks.length})
+                ({activeParentTasks})
               </span>
             </TabsTrigger>
             <TabsTrigger value="future">
               Future
               <span className="ml-2 text-xs text-muted-foreground">
-                ({pendingLeafTasks.length})
+                ({pendingParentTasks})
               </span>
             </TabsTrigger>
             <TabsTrigger value="completed">
               Completed
               <span className="ml-2 text-xs text-muted-foreground">
-                ({completedLeafTasks.length})
+                ({completedParentTasks})
               </span>
             </TabsTrigger>
           </TabsList>
