@@ -33,7 +33,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { updateLabel, UpdateLabelInput } from "@/lib/api/labels";
+import { updateLabel, UpdateLabelInput, createLabel, CreateLabelInput } from "@/lib/api/labels";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -67,6 +67,7 @@ function LabelsPageContent() {
   const [loading, setLoading] = useState(true);
   const [deleteLabelId, setDeleteLabelId] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState<Label | null>(null);
+  const [creatingLabel, setCreatingLabel] = useState(false);
   const [saving, setSaving] = useState(false);
   const processedHighlightRef = useRef<string | null>(null);
 
@@ -147,7 +148,7 @@ function LabelsPageContent() {
   useEffect(() => {
     setHeaderSubtitle(labels.length > 0 ? `${labels.length} total` : null);
     setHeaderRightAction(
-      <Button onClick={() => router.push("/labels/new")}>
+      <Button onClick={() => setCreatingLabel(true)}>
         <Plus className="w-4 h-4 mr-2" />
         New Label
       </Button>
@@ -156,7 +157,7 @@ function LabelsPageContent() {
       setHeaderSubtitle(null);
       setHeaderRightAction(null);
     };
-  }, [setHeaderSubtitle, setHeaderRightAction, labels.length, router]);
+  }, [setHeaderSubtitle, setHeaderRightAction, labels.length]);
 
   // Load label items when selected label changes
   useEffect(() => {
@@ -203,6 +204,26 @@ function LabelsPageContent() {
       setDeleteLabelId(null);
     } catch (error) {
       console.error("Error deleting label:", error);
+    }
+  };
+
+  const handleCreate = async (data: z.infer<typeof formSchema>) => {
+    setSaving(true);
+    try {
+      const input: CreateLabelInput = {
+        name: data.name,
+        color: data.color,
+      };
+      await createLabel(input);
+      const updatedLabels = await getLabels();
+      setLabels(updatedLabels);
+      setCreatingLabel(false);
+      reset();
+    } catch (error) {
+      console.error("Error creating label:", error);
+      throw error;
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -293,7 +314,7 @@ function LabelsPageContent() {
           description="Create labels to organize your tasks and habits"
           action={{
             label: "Create Label",
-            onClick: () => router.push("/labels/new"),
+            onClick: () => setCreatingLabel(true),
           }}
         />
       ) : (
@@ -407,6 +428,80 @@ function LabelsPageContent() {
           )}
         </div>
       )}
+
+      {/* Create Label Dialog */}
+      <Dialog open={creatingLabel} onOpenChange={setCreatingLabel}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create New Label</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit(handleCreate)} className="space-y-6">
+            {/* Name */}
+            <div>
+              <FormLabel htmlFor="create-name">Name *</FormLabel>
+              <Input
+                id="create-name"
+                {...register("name")}
+                placeholder="e.g., Urgent, Important"
+                className={errors.name ? "border-red-500" : ""}
+              />
+              {errors.name && (
+                <p className="text-sm text-red-500 mt-1">{errors.name.message}</p>
+              )}
+            </div>
+
+            {/* Color */}
+            <div>
+              <FormLabel>Color *</FormLabel>
+              <div className="grid grid-cols-8 gap-2 mt-2">
+                {COLOR_OPTIONS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setValue("color", color)}
+                    className={cn(
+                      "w-10 h-10 rounded-lg border-2 transition-colors",
+                      watch("color") === color
+                        ? "border-slate-900 scale-110"
+                        : "border-transparent hover:border-slate-300"
+                    )}
+                    style={{ backgroundColor: color }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Preview */}
+            <div className="bg-muted rounded-lg p-3">
+              <p className="text-sm text-muted-foreground mb-2">Preview</p>
+              <Badge
+                variant="secondary"
+                style={{
+                  backgroundColor: `${watch("color")}20`,
+                  color: watch("color"),
+                }}
+              >
+                <Tag className="w-3 h-3 inline mr-1" />
+                {watch("name") || "Label Name"}
+              </Badge>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreatingLabel(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={saving}>
+                {saving ? "Creating..." : "Create Label"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Label Dialog */}
       <Dialog open={!!editingLabel} onOpenChange={(open) => !open && setEditingLabel(null)}>
