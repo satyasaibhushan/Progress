@@ -53,6 +53,15 @@ export function HabitCard({
       ? Math.round((habit.currentCount / habit.targetCount) * 100)
       : 0
   );
+  const isOverdue = (() => {
+    if (!habit.endDate) return false;
+    if (progress >= 100) return false;
+    const endDate = new Date(habit.endDate);
+    endDate.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return endDate < today;
+  })();
   
   // Get group from habit if not provided as prop
   const displayGroup = group || (habit as any).group;
@@ -184,6 +193,12 @@ export function HabitCard({
               <Badge variant="outline" className="text-xs flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-200">
                 <Clock className="w-3 h-3" />
                 Pending
+              </Badge>
+            )}
+            {isOverdue && (
+              <Badge variant="outline" className="text-xs flex items-center gap-1 bg-red-50 text-red-700 border-red-200">
+                <Clock className="w-3 h-3" />
+                Overdue
               </Badge>
             )}
           </div>

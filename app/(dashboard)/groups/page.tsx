@@ -1,18 +1,18 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useHeaderAction } from "../layout";
 import { Plus } from "lucide-react";
 import { getGroups } from "@/lib/api/groups";
-import { getLabels } from "@/lib/api/labels";
 import { createGroup, updateGroup, deleteGroup } from "@/lib/api/groups";
-import { Group, Label } from "@/types";
+import { Group } from "@/types";
 import { GroupCard } from "@/components/groups/group-card";
 import { GroupForm } from "@/components/groups/group-form";
 import { Button } from "@/components/ui/button";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LazyList } from "@/components/shared/lazy-list";
 import { Folder } from "lucide-react";
 import {
   Dialog,
@@ -35,27 +35,21 @@ import {
 export default function GroupsPage() {
   const { setHeaderSubtitle } = useHeaderAction();
   const router = useRouter();
-  const [groups, setGroups] = useState<(Group & { progress?: number; taskCount?: number; habitCount?: number })[]>([]);
   const [allGroups, setAllGroups] = useState<(Group & { progress?: number; taskCount?: number; habitCount?: number })[]>([]);
-  const [labels, setLabels] = useState<Label[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [deletingGroup, setDeletingGroup] = useState<Group | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [showAll, setShowAll] = useState(false);
-  const DISPLAY_LIMIT = 6;
+  const GROUPS_PAGE_SIZE = 8;
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [allGroupsData, labelsData] = await Promise.all([
+        const [allGroupsData] = await Promise.all([
           getGroups(),
-          getLabels(),
         ]);
         setAllGroups(allGroupsData);
-        setGroups(allGroupsData.slice(0, DISPLAY_LIMIT));
-        setLabels(labelsData);
       } catch (error) {
         console.error("Error loading groups:", error);
       } finally {
@@ -71,21 +65,12 @@ export default function GroupsPage() {
     return () => setHeaderSubtitle(null);
   }, [setHeaderSubtitle, allGroups.length]);
 
-  // Update displayed groups when showAll changes
-  useEffect(() => {
-    if (showAll) {
-      setGroups(allGroups);
-    } else {
-      setGroups(allGroups.slice(0, DISPLAY_LIMIT));
-    }
-  }, [showAll, allGroups]);
-
   const handleCreate = async (data: any) => {
     setSaving(true);
     try {
       await createGroup(data);
       const groupsData = await getGroups();
-      setGroups(groupsData);
+      setAllGroups(groupsData);
       setCreatingGroup(false);
     } catch (error) {
       console.error("Error creating group:", error);
@@ -101,7 +86,7 @@ export default function GroupsPage() {
     try {
       await updateGroup({ id: editingGroup.id, ...data });
       const groupsData = await getGroups();
-      setGroups(groupsData);
+      setAllGroups(groupsData);
       setEditingGroup(null);
     } catch (error) {
       console.error("Error updating group:", error);
@@ -117,11 +102,6 @@ export default function GroupsPage() {
       await deleteGroup(deletingGroup.id);
       const updatedGroups = allGroups.filter((g) => g.id !== deletingGroup.id);
       setAllGroups(updatedGroups);
-      if (showAll) {
-        setGroups(updatedGroups);
-      } else {
-        setGroups(updatedGroups.slice(0, DISPLAY_LIMIT));
-      }
       setDeletingGroup(null);
     } catch (error) {
       console.error("Error deleting group:", error);
@@ -147,7 +127,7 @@ export default function GroupsPage() {
       </div>
 
       {/* Groups Grid */}
-      {groups.length === 0 ? (
+      {allGroups.length === 0 ? (
         <EmptyState
           icon={Folder}
           title="No groups yet"
@@ -159,32 +139,28 @@ export default function GroupsPage() {
         />
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {groups.map((group) => {
-              return (
-                <GroupCard
-                  key={group.id}
-                  group={group}
-                  taskCount={group.taskCount || 0}
-                  habitCount={group.habitCount || 0}
-                  avgProgress={group.progress || 0}
-                  onClick={() => router.push(`/groups/${group.id}`)}
-                  onEdit={() => setEditingGroup(group)}
-                  onDelete={() => setDeletingGroup(group)}
-                />
-              );
-            })}
-          </div>
-          {allGroups.length > DISPLAY_LIMIT && (
-            <div className="flex justify-center mt-6">
-              <Button
-                variant="outline"
-                onClick={() => setShowAll(!showAll)}
-              >
-                {showAll ? `Show Less` : `Show More (${allGroups.length - DISPLAY_LIMIT} more)`}
-              </Button>
-            </div>
-          )}
+          <LazyList
+            items={allGroups}
+            pageSize={GROUPS_PAGE_SIZE}
+            className="grid grid-cols-1 md:grid-cols-2 gap-4"
+            sentinelClassName="col-span-full"
+            render={(visibleGroups) => (
+              <>
+                {visibleGroups.map((group) => (
+                  <GroupCard
+                    key={group.id}
+                    group={group}
+                    taskCount={group.taskCount || 0}
+                    habitCount={group.habitCount || 0}
+                    avgProgress={group.progress || 0}
+                    onClick={() => router.push(`/groups/${group.id}`)}
+                    onEdit={() => setEditingGroup(group)}
+                    onDelete={() => setDeletingGroup(group)}
+                  />
+                ))}
+              </>
+            )}
+          />
         </>
       )}
 

@@ -120,6 +120,9 @@ model Task {
 
   @@index([startDate])
   @@index([deadline])
+  @@index([userId, startDate])
+  @@index([userId, deadline])
+  @@index([userId, updatedAt])
   @@index([groupId])
   @@index([parentId])
   @@index([userId])
@@ -159,6 +162,10 @@ model Habit {
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([startDate])
+  @@index([endDate])
+  @@index([userId, startDate])
+  @@index([userId, endDate])
+  @@index([userId, updatedAt])
   @@index([groupId])
   @@index([parentTaskId])
   @@index([userId])

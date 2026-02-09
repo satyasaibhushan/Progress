@@ -9,6 +9,9 @@ export interface Label {
   userId?: string;
   createdAt?: string;
   updatedAt?: string;
+  incompleteTaskCount?: number;
+  incompleteHabitCount?: number;
+  incompleteCount?: number;
 }
 
 export interface Group {
@@ -19,6 +22,12 @@ export interface Group {
   userId?: string;
   createdAt?: string;
   updatedAt?: string;
+  progress?: number;
+  taskCount?: number;
+  habitCount?: number;
+  incompleteTaskCount?: number;
+  incompleteHabitCount?: number;
+  incompleteCount?: number;
 }
 
 export interface Task {

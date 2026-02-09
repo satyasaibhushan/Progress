@@ -17,6 +17,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { TasksHabitsTree } from "@/components/shared/tasks-habits-tree";
 import { LabelStats } from "@/components/analytics/label-stats";
 import { cn } from "@/lib/utils";
+import { LazyList } from "@/components/shared/lazy-list";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -70,6 +71,9 @@ function LabelsPageContent() {
   const [creatingLabel, setCreatingLabel] = useState(false);
   const [saving, setSaving] = useState(false);
   const processedHighlightRef = useRef<string | null>(null);
+  const highlightedLabelId = searchParams.get("highlight");
+  const forceShowAll = !!highlightedLabelId;
+  const LABELS_PAGE_SIZE = 12;
 
   const formSchema = z.object({
     name: z.string().min(1, "Name is required").max(100, "Name too long"),
@@ -111,8 +115,6 @@ function LabelsPageContent() {
       reset();
     }
   }, [editingLabel, setValue, reset]);
-
-  const highlightedLabelId = searchParams.get("highlight");
 
   useEffect(() => {
     async function loadData() {
@@ -322,60 +324,70 @@ function LabelsPageContent() {
           {/* Labels List - Left Column */}
           <div className="lg:col-span-1 flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto pr-2 space-y-3">
-              {labels.map((label) => {
-                const isSelected = selectedLabel?.id === label.id;
-                const isHighlighted = highlightedLabelId === label.id;
-                
-                return (
-                  <Card
-                    key={label.id}
-                    className={cn(
-                      "p-4 cursor-pointer transition-all group",
-                      isSelected || isHighlighted
-                        ? "border-indigo-600 bg-indigo-50"
-                        : "hover:border-slate-300"
-                    )}
-                    onClick={() => handleLabelClick(label)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 flex-1">
-                        <Tag
-                          className="w-4 h-4"
-                          style={{ color: label.color }}
-                        />
-                        <span className="text-sm font-medium">{label.name}</span>
-                      </div>
-                      <div className={cn(
-                        "flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity",
-                        (isSelected || isHighlighted) && "opacity-100"
-                      )}>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditingLabel(label);
-                          }}
+              <LazyList
+                items={labels}
+                pageSize={LABELS_PAGE_SIZE}
+                forceShowAll={forceShowAll}
+                className="space-y-3"
+                render={(visibleLabels) => (
+                  <>
+                    {visibleLabels.map((label) => {
+                      const isSelected = selectedLabel?.id === label.id;
+                      const isHighlighted = highlightedLabelId === label.id;
+                      
+                      return (
+                        <Card
+                          key={label.id}
+                          className={cn(
+                            "p-4 cursor-pointer transition-all group",
+                            isSelected || isHighlighted
+                              ? "border-indigo-600 bg-indigo-50"
+                              : "hover:border-slate-300"
+                          )}
+                          onClick={() => handleLabelClick(label)}
                         >
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-red-600 hover:text-red-700"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteLabelId(label.id);
-                          }}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                );
-              })}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 flex-1">
+                              <Tag
+                                className="w-4 h-4"
+                                style={{ color: label.color }}
+                              />
+                              <span className="text-sm font-medium">{label.name}</span>
+                            </div>
+                            <div className={cn(
+                              "flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity",
+                              (isSelected || isHighlighted) && "opacity-100"
+                            )}>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingLabel(label);
+                                }}
+                              >
+                                <Edit className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-red-600 hover:text-red-700"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteLabelId(label.id);
+                                }}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        </Card>
+                      );
+                    })}
+                  </>
+                )}
+              />
             </div>
           </div>
 

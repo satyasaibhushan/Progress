@@ -22,6 +22,7 @@ import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
+import { LazyList } from "@/components/shared/lazy-list";
 import { Calendar as CalendarIcon, ListTodo } from "lucide-react";
 import { isSameDay, parseISO } from "date-fns";
 import {
@@ -111,6 +112,9 @@ function HabitsPageContent() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const habitRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const processedHighlightRef = useRef<string | null>(null);
+  const highlightHabitId = searchParams.get("highlight");
+  const forceShowAll = !!highlightHabitId;
+  const HABITS_PAGE_SIZE = 10;
 
   // Set header action and subtitle on mount and when habits change
   useEffect(() => {
@@ -414,41 +418,81 @@ function HabitsPageContent() {
     }
   };
 
-  // Separate pending, active and completed habits - Must be before any returns to follow Rules of Hooks
-  const pendingHabits = useMemo(() => {
-    return habits.filter(habit => {
-      const habitLogs = habit.habitLogs && habit.habitLogs.length > 0
-        ? habit.habitLogs
-        : logs.filter(log => log.habitId === habit.id);
-      const habitProgress = calculateHabitProgress(habit, habitLogs);
-      return isPending(habit.startDate) && habitProgress < 100;
-    });
-  }, [habits, logs]);
+  // Separate and sort pending, active and completed habits - Must be before any returns to follow Rules of Hooks
+  const { pendingHabits, activeHabits, completedHabits } = useMemo(() => {
+    const getHabitLogs = (habit: Habit) => {
+      if (habit.habitLogs && habit.habitLogs.length > 0) return habit.habitLogs;
+      return logs.filter((log) => log.habitId === habit.id);
+    };
 
-  const activeHabits = useMemo(() => {
-    return habits.filter(habit => {
-      const habitLogs = habit.habitLogs && habit.habitLogs.length > 0
-        ? habit.habitLogs
-        : logs.filter(log => log.habitId === habit.id);
-      const habitProgress = calculateHabitProgress(habit, habitLogs);
-      return !isPending(habit.startDate) && habitProgress < 100;
-    });
-  }, [habits, logs]);
+    const getProgress = (habit: Habit) => calculateHabitProgress(habit, getHabitLogs(habit));
 
-  const completedHabits = useMemo(() => {
-    return habits.filter(habit => {
-      const habitLogs = habit.habitLogs && habit.habitLogs.length > 0
-        ? habit.habitLogs
-        : logs.filter(log => log.habitId === habit.id);
-      const habitProgress = calculateHabitProgress(habit, habitLogs);
-      return habitProgress >= 100;
-    });
+    const pending = habits
+      .filter((habit) => isPending(habit.startDate) && getProgress(habit) < 100);
+
+    const active = habits
+      .filter((habit) => !isPending(habit.startDate) && getProgress(habit) < 100);
+
+    const completed = habits
+      .filter((habit) => getProgress(habit) >= 100);
+
+    return { pendingHabits: pending, activeHabits: active, completedHabits: completed };
   }, [habits, logs]);
 
   // Calculate progress and streak for selected habit using only its logs
   const selectedHabitLogs = selectedHabit ? logs.filter(log => log.habitId === selectedHabit.id) : [];
   const selectedHabitProgress = selectedHabit ? calculateHabitProgress(selectedHabit, selectedHabitLogs) : 0;
   const selectedHabitStreak = selectedHabit ? calculateStreak(selectedHabitLogs) : 0;
+  const findTaskRecursive = (taskList: Task[], targetId: string): Task | undefined => {
+    for (const task of taskList) {
+      if (task.id === targetId) return task;
+      if (task.children) {
+        const found = findTaskRecursive(task.children, targetId);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+
+  const renderHabitItem = (habit: Habit) => {
+    const habitLogs = habit.habitLogs && habit.habitLogs.length > 0
+      ? habit.habitLogs.map(log => ({ ...log, habitId: habit.id }))
+      : logs.filter(log => log.habitId === habit.id);
+    const habitProgress = calculateHabitProgress(habit, habitLogs);
+    const currentCount = habitLogs.reduce((sum, log) => sum + log.count, 0);
+    const streak = calculateStreak(habitLogs);
+    const group = groups.find((g) => g.id === habit.groupId);
+    const linkedTask = habit.parentTaskId ? findTaskRecursive(tasks, habit.parentTaskId) : undefined;
+
+    return (
+      <div
+        key={habit.id}
+        ref={(el) => {
+          if (el) {
+            habitRefs.current[habit.id] = el;
+          }
+        }}
+      >
+        <HabitCard
+          habit={habit}
+          group={group}
+          streak={streak}
+          linkedTaskTitle={linkedTask?.title}
+          isSelected={selectedHabit?.id === habit.id}
+          onClick={() => setSelectedHabit(habit)}
+          onTaskClick={() => {
+            if (linkedTask) {
+              router.push(`/tasks?highlight=${linkedTask.id}`);
+            }
+          }}
+          onEdit={() => setEditingHabit(habit)}
+          onDelete={() => setDeletingHabit(habit)}
+          progress={habitProgress}
+          currentCount={currentCount}
+        />
+      </div>
+    );
+  };
 
   if (loading) {
     return (
@@ -499,166 +543,52 @@ function HabitsPageContent() {
               </TabsList>
 
               <TabsContent value="active" className="flex-1 overflow-y-auto pr-2 space-y-3 mt-4">
-                {activeHabits.length > 0 ? activeHabits.map((habit) => {
-                  const habitLogs = habit.habitLogs && habit.habitLogs.length > 0
-                    ? habit.habitLogs.map(log => ({ ...log, habitId: habit.id }))
-                    : logs.filter(log => log.habitId === habit.id);
-                  const habitProgress = calculateHabitProgress(habit, habitLogs);
-                  const currentCount = habitLogs.reduce((sum, log) => sum + log.count, 0);
-                  const streak = calculateStreak(habitLogs);
-                  const group = groups.find((g) => g.id === habit.groupId);
-
-                  const findTaskRecursive = (taskList: Task[], targetId: string): Task | undefined => {
-                    for (const task of taskList) {
-                      if (task.id === targetId) return task;
-                      if (task.children) {
-                        const found = findTaskRecursive(task.children, targetId);
-                        if (found) return found;
-                      }
-                    }
-                    return undefined;
-                  };
-                  const linkedTask = habit.parentTaskId ? findTaskRecursive(tasks, habit.parentTaskId) : undefined;
-
-                  return (
-                    <div
-                      key={habit.id}
-                      ref={(el) => {
-                        if (el) {
-                          habitRefs.current[habit.id] = el;
-                        }
-                      }}
-                    >
-                      <HabitCard
-                        habit={habit}
-                        group={group}
-                        streak={streak}
-                        linkedTaskTitle={linkedTask?.title}
-                        isSelected={selectedHabit?.id === habit.id}
-                        onClick={() => setSelectedHabit(habit)}
-                        onTaskClick={() => {
-                          if (linkedTask) {
-                            router.push(`/tasks?highlight=${linkedTask.id}`);
-                          }
-                        }}
-                        onEdit={() => setEditingHabit(habit)}
-                        onDelete={() => setDeletingHabit(habit)}
-                        progress={habitProgress}
-                        currentCount={currentCount}
-                      />
-                    </div>
-                  );
-                }) : (
+                {activeHabits.length > 0 ? (
+                  <LazyList
+                    items={activeHabits}
+                    pageSize={HABITS_PAGE_SIZE}
+                    forceShowAll={forceShowAll}
+                    resetKey={activeTab}
+                    className="space-y-3"
+                    render={(visibleHabits) => (
+                      <>{visibleHabits.map(renderHabitItem)}</>
+                    )}
+                  />
+                ) : (
                   <p className="text-center text-muted-foreground py-8">No active habits</p>
                 )}
               </TabsContent>
 
               <TabsContent value="future" className="flex-1 overflow-y-auto pr-2 space-y-3 mt-4">
-                {pendingHabits.length > 0 ? pendingHabits.map((habit) => {
-                  const habitLogs = habit.habitLogs && habit.habitLogs.length > 0
-                    ? habit.habitLogs.map(log => ({ ...log, habitId: habit.id }))
-                    : logs.filter(log => log.habitId === habit.id);
-                  const habitProgress = calculateHabitProgress(habit, habitLogs);
-                  const currentCount = habitLogs.reduce((sum, log) => sum + log.count, 0);
-                  const streak = calculateStreak(habitLogs);
-                  const group = groups.find((g) => g.id === habit.groupId);
-
-                  const findTaskRecursive = (taskList: Task[], targetId: string): Task | undefined => {
-                    for (const task of taskList) {
-                      if (task.id === targetId) return task;
-                      if (task.children) {
-                        const found = findTaskRecursive(task.children, targetId);
-                        if (found) return found;
-                      }
-                    }
-                    return undefined;
-                  };
-                  const linkedTask = habit.parentTaskId ? findTaskRecursive(tasks, habit.parentTaskId) : undefined;
-
-                  return (
-                    <div
-                      key={habit.id}
-                      ref={(el) => {
-                        if (el) {
-                          habitRefs.current[habit.id] = el;
-                        }
-                      }}
-                    >
-                      <HabitCard
-                        habit={habit}
-                        group={group}
-                        streak={streak}
-                        linkedTaskTitle={linkedTask?.title}
-                        isSelected={selectedHabit?.id === habit.id}
-                        onClick={() => setSelectedHabit(habit)}
-                        onTaskClick={() => {
-                          if (linkedTask) {
-                            router.push(`/tasks?highlight=${linkedTask.id}`);
-                          }
-                        }}
-                        onEdit={() => setEditingHabit(habit)}
-                        onDelete={() => setDeletingHabit(habit)}
-                        progress={habitProgress}
-                        currentCount={currentCount}
-                      />
-                    </div>
-                  );
-                }) : (
+                {pendingHabits.length > 0 ? (
+                  <LazyList
+                    items={pendingHabits}
+                    pageSize={HABITS_PAGE_SIZE}
+                    forceShowAll={forceShowAll}
+                    resetKey={activeTab}
+                    className="space-y-3"
+                    render={(visibleHabits) => (
+                      <>{visibleHabits.map(renderHabitItem)}</>
+                    )}
+                  />
+                ) : (
                   <p className="text-center text-muted-foreground py-8">No future habits</p>
                 )}
               </TabsContent>
 
               <TabsContent value="completed" className="flex-1 overflow-y-auto pr-2 space-y-3 mt-4">
-                {completedHabits.length > 0 ? completedHabits.map((habit) => {
-                  const habitLogs = habit.habitLogs && habit.habitLogs.length > 0
-                    ? habit.habitLogs.map(log => ({ ...log, habitId: habit.id }))
-                    : logs.filter(log => log.habitId === habit.id);
-                  const habitProgress = calculateHabitProgress(habit, habitLogs);
-                  const currentCount = habitLogs.reduce((sum, log) => sum + log.count, 0);
-                  const streak = calculateStreak(habitLogs);
-                  const group = groups.find((g) => g.id === habit.groupId);
-
-                  const findTaskRecursive = (taskList: Task[], targetId: string): Task | undefined => {
-                    for (const task of taskList) {
-                      if (task.id === targetId) return task;
-                      if (task.children) {
-                        const found = findTaskRecursive(task.children, targetId);
-                        if (found) return found;
-                      }
-                    }
-                    return undefined;
-                  };
-                  const linkedTask = habit.parentTaskId ? findTaskRecursive(tasks, habit.parentTaskId) : undefined;
-
-                  return (
-                    <div
-                      key={habit.id}
-                      ref={(el) => {
-                        if (el) {
-                          habitRefs.current[habit.id] = el;
-                        }
-                      }}
-                    >
-                      <HabitCard
-                        habit={habit}
-                        group={group}
-                        streak={streak}
-                        linkedTaskTitle={linkedTask?.title}
-                        isSelected={selectedHabit?.id === habit.id}
-                        onClick={() => setSelectedHabit(habit)}
-                        onTaskClick={() => {
-                          if (linkedTask) {
-                            router.push(`/tasks?highlight=${linkedTask.id}`);
-                          }
-                        }}
-                        onEdit={() => setEditingHabit(habit)}
-                        onDelete={() => setDeletingHabit(habit)}
-                        progress={habitProgress}
-                        currentCount={currentCount}
-                      />
-                    </div>
-                  );
-                }) : (
+                {completedHabits.length > 0 ? (
+                  <LazyList
+                    items={completedHabits}
+                    pageSize={HABITS_PAGE_SIZE}
+                    forceShowAll={forceShowAll}
+                    resetKey={activeTab}
+                    className="space-y-3"
+                    render={(visibleHabits) => (
+                      <>{visibleHabits.map(renderHabitItem)}</>
+                    )}
+                  />
+                ) : (
                   <p className="text-center text-muted-foreground py-8">No completed habits</p>
                 )}
               </TabsContent>

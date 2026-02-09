@@ -79,6 +79,15 @@ export function TaskCard({
   // For parent tasks, we don't mark as completed based on calculated progress alone
   // Parent tasks are only completed when ALL their leaf children are 100%
   const isCompleted = isLeaf && displayProgress >= 100;
+  const isOverdue = (() => {
+    if (!task.deadline) return false;
+    if (displayProgress >= 100) return false;
+    const deadline = new Date(task.deadline);
+    deadline.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return deadline < today;
+  })();
 
   const handleProgressChange = useCallback(async (newProgress: number) => {
     setProgressValue(newProgress);
@@ -227,6 +236,12 @@ export function TaskCard({
               <Badge variant="outline" className="text-xs flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-200">
                 <Clock className="w-3 h-3" />
                 Pending
+              </Badge>
+            )}
+            {isOverdue && (
+              <Badge variant="outline" className="text-xs flex items-center gap-1 bg-red-50 text-red-700 border-red-200">
+                <Clock className="w-3 h-3" />
+                Overdue
               </Badge>
             )}
           </div>

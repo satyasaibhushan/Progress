@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback, useMemo, Suspense } from "rea
 import { useRouter, useSearchParams } from "next/navigation";
 import { useHeaderAction } from "../layout";
 import { Plus } from "lucide-react";
-import { getTasks, getTask, updateTask, deleteTask, createTask, CreateTaskInput } from "@/lib/api/tasks";
+import { getTasks, updateTask, deleteTask, createTask, CreateTaskInput } from "@/lib/api/tasks";
 import { createHabit } from "@/lib/api/habits";
 import type { CreateHabitInput } from "@/lib/api/habits";
 import { isPending } from "@/lib/date-helpers";
@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { CheckSquare } from "lucide-react";
+import { LazyList } from "@/components/shared/lazy-list";
 import {
   Dialog,
   DialogContent,
@@ -83,6 +84,9 @@ function TasksPageContent() {
   const [activeTab, setActiveTab] = useState<"active" | "future" | "completed">("active");
   const taskRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const processedHighlightRef = useRef<string | null>(null);
+  const highlightTaskId = searchParams.get("highlight");
+  const forceShowAll = !!highlightTaskId;
+  const TASKS_PAGE_SIZE = 8;
 
   const hasLoadedRef = useRef(false);
   const isHighlightingRef = useRef(false);
@@ -457,7 +461,7 @@ function TasksPageContent() {
     }
   };
 
-  // Separate pending, active and completed tasks
+  // Separate pending, active and completed tasks (ordering comes from API)
   const pendingTasks = useMemo(() => {
     return tasks.filter((task) => !isTaskCompleted(task) && isPending(task.startDate));
   }, [tasks]);
@@ -544,21 +548,29 @@ function TasksPageContent() {
 
           <TabsContent value="active" className="space-y-4 mt-6">
             {activeTasks.length > 0 ? (
-              <TaskTree
-                tasks={activeTasks}
-                groups={groups}
-                habits={habits}
-                expandedTasks={expandedTasks}
-                onToggleExpand={handleToggleExpand}
-                onEdit={(task) => setEditingTask(task)}
-                onDelete={(task) => setDeletingTask(task)}
-                onProgressUpdate={handleProgressUpdate}
-                taskRefs={taskRefs.current}
-                onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
-                onAddTask={(task) => setCreatingTaskWithParent(task)}
-                onAddHabit={(task) => setCreatingHabitWithParent(task)}
-                highlightedHabitId={searchParams.get("highlightHabit")}
-                isTaskCompleted={isTaskCompleted}
+              <LazyList
+                items={activeTasks}
+                pageSize={TASKS_PAGE_SIZE}
+                forceShowAll={forceShowAll}
+                resetKey={activeTab}
+                render={(visibleTasks) => (
+                  <TaskTree
+                    tasks={visibleTasks}
+                    groups={groups}
+                    habits={habits}
+                    expandedTasks={expandedTasks}
+                    onToggleExpand={handleToggleExpand}
+                    onEdit={(task) => setEditingTask(task)}
+                    onDelete={(task) => setDeletingTask(task)}
+                    onProgressUpdate={handleProgressUpdate}
+                    taskRefs={taskRefs.current}
+                    onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+                    onAddTask={(task) => setCreatingTaskWithParent(task)}
+                    onAddHabit={(task) => setCreatingHabitWithParent(task)}
+                    highlightedHabitId={searchParams.get("highlightHabit")}
+                    isTaskCompleted={isTaskCompleted}
+                  />
+                )}
               />
             ) : (
               <p className="text-center text-muted-foreground py-8">No active tasks</p>
@@ -567,21 +579,29 @@ function TasksPageContent() {
 
           <TabsContent value="future" className="space-y-4 mt-6">
             {pendingTasks.length > 0 ? (
-              <TaskTree
-                tasks={pendingTasks}
-                groups={groups}
-                habits={habits}
-                expandedTasks={expandedTasks}
-                onToggleExpand={handleToggleExpand}
-                onEdit={(task) => setEditingTask(task)}
-                onDelete={(task) => setDeletingTask(task)}
-                onProgressUpdate={handleProgressUpdate}
-                taskRefs={taskRefs.current}
-                onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
-                onAddTask={(task) => setCreatingTaskWithParent(task)}
-                onAddHabit={(task) => setCreatingHabitWithParent(task)}
-                highlightedHabitId={searchParams.get("highlightHabit")}
-                isTaskCompleted={isTaskCompleted}
+              <LazyList
+                items={pendingTasks}
+                pageSize={TASKS_PAGE_SIZE}
+                forceShowAll={forceShowAll}
+                resetKey={activeTab}
+                render={(visibleTasks) => (
+                  <TaskTree
+                    tasks={visibleTasks}
+                    groups={groups}
+                    habits={habits}
+                    expandedTasks={expandedTasks}
+                    onToggleExpand={handleToggleExpand}
+                    onEdit={(task) => setEditingTask(task)}
+                    onDelete={(task) => setDeletingTask(task)}
+                    onProgressUpdate={handleProgressUpdate}
+                    taskRefs={taskRefs.current}
+                    onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+                    onAddTask={(task) => setCreatingTaskWithParent(task)}
+                    onAddHabit={(task) => setCreatingHabitWithParent(task)}
+                    highlightedHabitId={searchParams.get("highlightHabit")}
+                    isTaskCompleted={isTaskCompleted}
+                  />
+                )}
               />
             ) : (
               <p className="text-center text-muted-foreground py-8">No future tasks</p>
@@ -590,21 +610,29 @@ function TasksPageContent() {
 
           <TabsContent value="completed" className="space-y-4 mt-6">
             {completedTasks.length > 0 ? (
-              <TaskTree
-                tasks={completedTasks}
-                groups={groups}
-                habits={habits}
-                expandedTasks={expandedTasks}
-                onToggleExpand={handleToggleExpand}
-                onEdit={(task) => setEditingTask(task)}
-                onDelete={(task) => setDeletingTask(task)}
-                onProgressUpdate={handleProgressUpdate}
-                taskRefs={taskRefs.current}
-                onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
-                onAddTask={(task) => setCreatingTaskWithParent(task)}
-                onAddHabit={(task) => setCreatingHabitWithParent(task)}
-                highlightedHabitId={searchParams.get("highlightHabit")}
-                isTaskCompleted={isTaskCompleted}
+              <LazyList
+                items={completedTasks}
+                pageSize={TASKS_PAGE_SIZE}
+                forceShowAll={forceShowAll}
+                resetKey={activeTab}
+                render={(visibleTasks) => (
+                  <TaskTree
+                    tasks={visibleTasks}
+                    groups={groups}
+                    habits={habits}
+                    expandedTasks={expandedTasks}
+                    onToggleExpand={handleToggleExpand}
+                    onEdit={(task) => setEditingTask(task)}
+                    onDelete={(task) => setDeletingTask(task)}
+                    onProgressUpdate={handleProgressUpdate}
+                    taskRefs={taskRefs.current}
+                    onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
+                    onAddTask={(task) => setCreatingTaskWithParent(task)}
+                    onAddHabit={(task) => setCreatingHabitWithParent(task)}
+                    highlightedHabitId={searchParams.get("highlightHabit")}
+                    isTaskCompleted={isTaskCompleted}
+                  />
+                )}
               />
             ) : (
               <p className="text-center text-muted-foreground py-8">No completed tasks</p>

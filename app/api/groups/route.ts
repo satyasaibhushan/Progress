@@ -138,6 +138,14 @@ export async function GET(request: Request) {
           new Map([...habitsInGroup, ...linkedHabits].map((h) => [h.id, h])).values()
         )
 
+        const getHabitProgress = (habit: { habitLogs?: { count: number }[]; targetCount: number }) => {
+          const habitLogs = habit.habitLogs || []
+          const totalCount = habitLogs.reduce((sum, log) => sum + log.count, 0)
+          return habit.targetCount > 0
+            ? Math.min(100, Math.round((totalCount / habit.targetCount) * 100))
+            : 0
+        }
+
         // Get root tasks and habits (only top-level, not linked to tasks)
         const rootTasks = tasksInGroup.filter((t) => !t.parentId)
         // Get task IDs to exclude linked habits (habits linked to tasks are already counted in task's weighted_progress)
@@ -170,11 +178,7 @@ export async function GET(request: Request) {
         }
 
         for (const habit of rootHabits) {
-          const habitLogs = habit.habitLogs || []
-          const totalCount = habitLogs.reduce((sum, log) => sum + log.count, 0)
-          const habitProgress = habit.targetCount > 0
-            ? Math.min(100, Math.round((totalCount / habit.targetCount) * 100))
-            : 0
+          const habitProgress = getHabitProgress(habit)
           totalWeight += habit.importance
           weightedProgress += habitProgress * habit.importance
         }
@@ -206,17 +210,36 @@ export async function GET(request: Request) {
         }
 
         const allLeafTasks = getAllLeafTasks(tasksInGroup)
+        const incompleteTaskCount = allLeafTasks.filter((task) => {
+          const progress = Math.min(100, Math.max(0, task.progress || 0))
+          return progress < 100
+        }).length
+        const incompleteHabitCount = allHabitsInGroup.filter((habit) => getHabitProgress(habit) < 100).length
+        const incompleteCount = incompleteTaskCount + incompleteHabitCount
 
         return {
           ...group,
           progress: Math.min(100, Math.max(0, progress)),
           taskCount: allLeafTasks.length,
           habitCount: allHabitsInGroup.length,
+          incompleteTaskCount,
+          incompleteHabitCount,
+          incompleteCount,
         }
       })
     )
 
-    return NextResponse.json({ data: groupsWithProgress })
+    const sortedGroups = [...groupsWithProgress].sort((a, b) => {
+      const aCount = (a as any).incompleteCount || 0
+      const bCount = (b as any).incompleteCount || 0
+      if (aCount !== bCount) return bCount - aCount
+      const aProgress = typeof a.progress === "number" ? a.progress : 0
+      const bProgress = typeof b.progress === "number" ? b.progress : 0
+      if (aProgress !== bProgress) return bProgress - aProgress
+      return a.name.localeCompare(b.name)
+    })
+
+    return NextResponse.json({ data: sortedGroups })
   } catch (error) {
     return handleApiError(error)
   }

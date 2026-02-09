@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, Flame, TrendingUp } from "lucide-react";
 import { getTasks } from "@/lib/api/tasks";
 import { getHabits } from "@/lib/api/habits";
 import { getGroups } from "@/lib/api/groups";
@@ -14,11 +13,13 @@ import { GroupBreakdown } from "@/components/analytics/group-breakdown";
 import { LabelStats } from "@/components/analytics/label-stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
-import { subDays, subMonths, subQuarters, subYears, format } from "date-fns";
+import { LazyList } from "@/components/shared/lazy-list";
+import { ScrollHint } from "@/components/shared/scroll-hint";
+import { subDays, subMonths, subQuarters, subYears } from "date-fns";
 import { useHeaderAction } from "./layout";
+import { isPending } from "@/lib/date-helpers";
 
 type TimePeriod = "week" | "month" | "quarter" | "year";
 
@@ -38,6 +39,19 @@ function getAllLeafTasks(tasks: Task[]): Task[] {
   return leafTasks;
 }
 
+function clampProgress(value: number | null | undefined): number {
+  if (typeof value !== "number" || Number.isNaN(value)) return 0;
+  return Math.min(100, Math.max(0, value));
+}
+
+function getHabitProgress(habit: Habit): number {
+  const totalCount = habit.habitLogs && habit.habitLogs.length > 0
+    ? habit.habitLogs.reduce((sum, log) => sum + log.count, 0)
+    : habit.currentCount || 0;
+  if (!habit.targetCount) return 0;
+  return clampProgress(Math.round((totalCount / habit.targetCount) * 100));
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const { setHeaderRightAction } = useHeaderAction();
@@ -48,6 +62,7 @@ export default function DashboardPage() {
   const [labels, setLabels] = useState<Label[]>([]);
   const [selectedLabel, setSelectedLabel] = useState<Label | null>(null);
   const [loading, setLoading] = useState(true);
+  const DASHBOARD_HABITS_PAGE_SIZE = 6;
 
   // Set time period selector in header
   useEffect(() => {
@@ -83,9 +98,6 @@ export default function DashboardPage() {
         setHabits(habitsData);
         setGroups(groupsData);
         setLabels(labelsData);
-        if (labelsData.length > 0) {
-          setSelectedLabel(labelsData[0]);
-        }
       } catch (error) {
         console.error("Error loading dashboard data:", error);
       } finally {
@@ -188,6 +200,12 @@ export default function DashboardPage() {
 
   const trendData = generateTrendData();
 
+  useEffect(() => {
+    if (!selectedLabel && labels.length > 0) {
+      setSelectedLabel(labels[0]);
+    }
+  }, [selectedLabel, labels]);
+
   // Group progress
   const groupProgress = useMemo(() => {
     return groups.map((group) => {
@@ -199,11 +217,20 @@ export default function DashboardPage() {
         : 0;
       return {
         group,
-        avgProgress: avg,
-        taskCount: groupTasks.length,
+        avgProgress: typeof group.progress === "number" ? group.progress : avg,
+        taskCount: group.taskCount ?? groupTasks.length,
       };
     });
   }, [groups, allLeafTasks]);
+
+  const activeHabitsOverview = useMemo(() => {
+    return habits
+      .map((habit) => ({
+        habit,
+        progress: getHabitProgress(habit),
+      }))
+      .filter(({ habit, progress }) => !isPending(habit.startDate) && progress < 100);
+  }, [habits]);
 
   // Label statistics
   const labelStats = useMemo(() => {
@@ -307,10 +334,10 @@ export default function DashboardPage() {
 
       {/* Two Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <GroupBreakdown groups={groupProgress} limit={5} showViewMore={true} />
+        <GroupBreakdown groups={groupProgress} limit={5} />
         {selectedLabel && (
           <LabelStats
-            labels={labels}
+            labels={sortedLabels}
             selectedLabel={selectedLabel}
             onLabelChange={setSelectedLabel}
             stats={labelStats}
@@ -323,59 +350,60 @@ export default function DashboardPage() {
         <CardHeader>
           <CardTitle>Active Habits Overview</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {habits.slice(0, 3).map((habit) => {
-              const progress = habit.currentCount && habit.targetCount
-                ? Math.round((habit.currentCount / habit.targetCount) * 100)
-                : 0;
-              const group = groups.find((g) => g.id === habit.groupId);
+        <CardContent className="pt-6">
+          <ScrollHint
+            className="max-h-[360px] pr-2"
+            wrapperClassName="relative"
+            watch={activeHabitsOverview.length}
+          >
+            <LazyList
+              items={activeHabitsOverview}
+              pageSize={DASHBOARD_HABITS_PAGE_SIZE}
+              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+              sentinelClassName="col-span-full"
+              render={(visibleHabits) => (
+                <>
+                  {visibleHabits.map(({ habit, progress }) => {
+                    const group = groups.find((g) => g.id === habit.groupId);
 
-              return (
-                <button
-                  key={habit.id}
-                  onClick={() => router.push(`/habits?highlight=${habit.id}`)}
-                  className="text-left p-4 border rounded-lg hover:border-indigo-300 hover:shadow-sm transition-all"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex-1">
-                      <h4 className="text-sm font-medium mb-1">{habit.title}</h4>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-                        <span className="px-2 py-0.5 bg-muted rounded">{habit.type}</span>
-                        {group && <span>{group.name}</span>}
-                      </div>
-                    </div>
-                    <span className="text-sm text-muted-foreground">{progress}%</span>
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-1.5 mb-2">
-                    <div
-                      className="bg-green-600 rounded-full h-1.5 transition-all"
-                      style={{ width: `${Math.min(progress, 100)}%` }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>
-                      {habit.currentCount || 0} / {habit.targetCount}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <ImportanceIndicator importance={habit.importance} size="sm" />
-                      <span>{habit.importance}</span>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-          {habits.length > 3 && (
-            <div className="mt-4 text-center">
-              <Button
-                variant="outline"
-                onClick={() => router.push("/habits")}
-              >
-                View More ({habits.length - 3} more)
-              </Button>
-            </div>
-          )}
+                    return (
+                      <button
+                        key={habit.id}
+                        onClick={() => router.push(`/habits?highlight=${habit.id}`)}
+                        className="text-left p-4 border rounded-lg hover:border-indigo-300 hover:shadow-sm transition-all"
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex-1">
+                            <h4 className="text-sm font-medium mb-1">{habit.title}</h4>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                              <span className="px-2 py-0.5 bg-muted rounded">{habit.type}</span>
+                              {group && <span>{group.name}</span>}
+                            </div>
+                          </div>
+                          <span className="text-sm text-muted-foreground">{progress}%</span>
+                        </div>
+                        <div className="w-full bg-muted rounded-full h-1.5 mb-2">
+                          <div
+                            className="bg-green-600 rounded-full h-1.5 transition-all"
+                            style={{ width: `${Math.min(progress, 100)}%` }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>
+                            {habit.currentCount || 0} / {habit.targetCount}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <ImportanceIndicator importance={habit.importance} size="sm" />
+                            <span>{habit.importance}</span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </>
+              )}
+            />
+          </ScrollHint>
         </CardContent>
       </Card>
     </div>

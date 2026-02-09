@@ -47,3 +47,5 @@ backups/
 nginx/ssl/
 *.sql
 *.sql.gz
+!prisma/migrations/**/migration.sql
+
