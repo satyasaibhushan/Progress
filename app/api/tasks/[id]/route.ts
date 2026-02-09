@@ -318,7 +318,10 @@ export async function PUT(
     }
 
     // Check if group can be changed (not inherited from parent)
-    if (validatedData.groupId !== undefined) {
+    // Only check when group is actually changed (not just included in payload).
+    const groupChanged = validatedData.groupId !== undefined &&
+      validatedData.groupId !== existingTask.groupId
+    if (groupChanged && !parentChanged) {
       const canChange = await canChangeTaskGroup(id, userId)
       if (!canChange) {
         const inheritedGroup = await getInheritedGroupFromTask(id, userId)
@@ -455,13 +458,20 @@ export async function PUT(
       
       // Get inherited labels that cannot be removed
       const inheritedLabels = await getInheritedLabelsFromTask(id, userId)
+
+      // Treat inherited labels as always selected. Some clients may omit them from payload.
+      const effectiveLabelIds = [...new Set([...labelIds, ...inheritedLabels])]
+      const labelsChanged =
+        effectiveLabelIds.length !== currentLabelIds.length ||
+        effectiveLabelIds.some((lid) => !currentLabelIds.includes(lid))
+      if (labelsChanged) {
       
       // Labels to add (in labelIds but not in current)
-      const labelsToAdd = labelIds.filter((lid) => !currentLabelIds.includes(lid))
+      const labelsToAdd = effectiveLabelIds.filter((lid) => !currentLabelIds.includes(lid))
       
       // Labels to remove (in current but not in labelIds, and not inherited)
       const labelsToRemove = currentLabelIds.filter(
-        (lid) => !labelIds.includes(lid) && !inheritedLabels.includes(lid)
+        (lid) => !effectiveLabelIds.includes(lid) && !inheritedLabels.includes(lid)
       )
       
       // Add new labels
@@ -499,6 +509,7 @@ export async function PUT(
       // Propagate newly added labels to children
       if (labelsToAdd.length > 0) {
         await propagateLabelsToChildren(id, labelsToAdd, userId)
+      }
       }
     }
 

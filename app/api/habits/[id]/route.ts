@@ -314,13 +314,20 @@ export async function PUT(
       
       // Get inherited labels that cannot be removed
       const inheritedLabels = await getInheritedLabelsFromHabit(id, userId)
+
+      // Treat inherited labels as always selected. Some clients may omit them from payload.
+      const effectiveLabelIds = [...new Set([...labelIds, ...inheritedLabels])]
+      const labelsChanged =
+        effectiveLabelIds.length !== currentLabelIds.length ||
+        effectiveLabelIds.some((lid) => !currentLabelIds.includes(lid))
+      if (labelsChanged) {
       
       // Labels to add (in labelIds but not in current)
-      const labelsToAdd = labelIds.filter((lid) => !currentLabelIds.includes(lid))
+      const labelsToAdd = effectiveLabelIds.filter((lid) => !currentLabelIds.includes(lid))
       
       // Labels to remove (in current but not in labelIds, and not inherited)
       const labelsToRemove = currentLabelIds.filter(
-        (lid) => !labelIds.includes(lid) && !inheritedLabels.includes(lid)
+        (lid) => !effectiveLabelIds.includes(lid) && !inheritedLabels.includes(lid)
       )
       
       // Add new labels
@@ -353,6 +360,7 @@ export async function PUT(
         }).catch(() => {
           // Ignore if doesn't exist
         })
+      }
       }
     }
 

@@ -80,6 +80,10 @@ function TasksPageContent() {
   const [creatingTask, setCreatingTask] = useState(false);
   const [creatingTaskWithParent, setCreatingTaskWithParent] = useState<Task | null>(null);
   const [creatingHabitWithParent, setCreatingHabitWithParent] = useState<Task | null>(null);
+  const [progressOverwriteWarning, setProgressOverwriteWarning] = useState<{
+    parentTask: Task;
+    childType: "task" | "habit";
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<"active" | "future" | "completed">("active");
   const taskRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
@@ -247,6 +251,29 @@ function TasksPageContent() {
       newExpanded.add(taskId);
     }
     setExpandedTasks(newExpanded);
+  };
+
+  const hasManualProgressToOverwrite = (task: Task) => {
+    const childCount = task.children?.length || 0;
+    const habitCount = task.habits?.length || 0;
+    const progress = task.progress || 0;
+    return childCount === 0 && habitCount === 0 && progress > 0;
+  };
+
+  const openChildCreateDialog = (task: Task, childType: "task" | "habit") => {
+    if (childType === "task") {
+      setCreatingTaskWithParent(task);
+      return;
+    }
+    setCreatingHabitWithParent(task);
+  };
+
+  const handleAddChild = (task: Task, childType: "task" | "habit") => {
+    if (hasManualProgressToOverwrite(task)) {
+      setProgressOverwriteWarning({ parentTask: task, childType });
+      return;
+    }
+    openChildCreateDialog(task, childType);
   };
 
   const handleCreate = async (data: { title: string; importance: number; description?: string; progress?: number; startDate?: string | null; deadline?: string | null; groupId?: string | null; parentId?: string | null; labelIds?: string[] }) => {
@@ -565,8 +592,8 @@ function TasksPageContent() {
                     onProgressUpdate={handleProgressUpdate}
                     taskRefs={taskRefs.current}
                     onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
-                    onAddTask={(task) => setCreatingTaskWithParent(task)}
-                    onAddHabit={(task) => setCreatingHabitWithParent(task)}
+                    onAddTask={(task) => handleAddChild(task, "task")}
+                    onAddHabit={(task) => handleAddChild(task, "habit")}
                     highlightedHabitId={searchParams.get("highlightHabit")}
                     isTaskCompleted={isTaskCompleted}
                   />
@@ -596,8 +623,8 @@ function TasksPageContent() {
                     onProgressUpdate={handleProgressUpdate}
                     taskRefs={taskRefs.current}
                     onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
-                    onAddTask={(task) => setCreatingTaskWithParent(task)}
-                    onAddHabit={(task) => setCreatingHabitWithParent(task)}
+                    onAddTask={(task) => handleAddChild(task, "task")}
+                    onAddHabit={(task) => handleAddChild(task, "habit")}
                     highlightedHabitId={searchParams.get("highlightHabit")}
                     isTaskCompleted={isTaskCompleted}
                   />
@@ -627,8 +654,8 @@ function TasksPageContent() {
                     onProgressUpdate={handleProgressUpdate}
                     taskRefs={taskRefs.current}
                     onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
-                    onAddTask={(task) => setCreatingTaskWithParent(task)}
-                    onAddHabit={(task) => setCreatingHabitWithParent(task)}
+                    onAddTask={(task) => handleAddChild(task, "task")}
+                    onAddHabit={(task) => handleAddChild(task, "habit")}
                     highlightedHabitId={searchParams.get("highlightHabit")}
                     isTaskCompleted={isTaskCompleted}
                   />
@@ -726,6 +753,42 @@ function TasksPageContent() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700">
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!progressOverwriteWarning}
+        onOpenChange={(open) => !open && setProgressOverwriteWarning(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Manual progress will be overwritten</AlertDialogTitle>
+            <AlertDialogDescription>
+              {progressOverwriteWarning ? (
+                <>
+                  This task currently has manual progress at{" "}
+                  <strong>{Math.round(progressOverwriteWarning.parentTask.progress || 0)}%</strong>.
+                  Adding a sub-{progressOverwriteWarning.childType} will replace manual progress with
+                  aggregated progress from child items. Continue?
+                </>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!progressOverwriteWarning) return;
+                openChildCreateDialog(
+                  progressOverwriteWarning.parentTask,
+                  progressOverwriteWarning.childType
+                );
+                setProgressOverwriteWarning(null);
+              }}
+            >
+              Continue
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
