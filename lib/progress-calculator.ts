@@ -10,7 +10,6 @@
  */
 
 import { prisma } from './prisma';
-import { HabitType } from '@prisma/client';
 
 /**
  * Round a number to 2 decimal places
@@ -403,6 +402,39 @@ export async function updateHabitProgress(
   const weightedProgressDelta = BigInt(Math.round((newProgress - oldProgress) * habit.importance));
 
   await propagateAggregates(habit.parentTaskId, BigInt(0), weightedProgressDelta);
+}
+
+/**
+ * Update habit's contribution to parent task when progress and/or importance changes.
+ *
+ * @param habitId - The habit ID
+ * @param oldProgress - Previous completion percentage
+ * @param newProgress - New completion percentage
+ * @param oldImportance - Previous importance
+ * @param newImportance - New importance
+ */
+export async function updateHabitContribution(
+  habitId: string,
+  oldProgress: number,
+  newProgress: number,
+  oldImportance: number,
+  newImportance: number
+): Promise<void> {
+  const habit = await prisma.habit.findUnique({
+    where: { id: habitId },
+    select: {
+      parentTaskId: true,
+    },
+  });
+
+  if (!habit || !habit.parentTaskId) return;
+
+  const weightDelta = BigInt(newImportance - oldImportance);
+  const oldWeighted = Math.round(oldProgress * oldImportance);
+  const newWeighted = Math.round(newProgress * newImportance);
+  const weightedProgressDelta = BigInt(newWeighted - oldWeighted);
+
+  await propagateAggregates(habit.parentTaskId, weightDelta, weightedProgressDelta);
 }
 
 /**

@@ -155,6 +155,107 @@ export async function GET(request: Request) {
         ],
       })
 
+      const childrenByParentId = new Map<string, typeof allTasks>()
+      for (const task of allTasks) {
+        if (!task.parentId) continue
+        const siblings = childrenByParentId.get(task.parentId) || []
+        siblings.push(task)
+        childrenByParentId.set(task.parentId, siblings)
+      }
+
+      const allHabits = allTasks.flatMap((task) => task.habits || [])
+      const uniqueHabitIds = [...new Set(allHabits.map((habit) => habit.id))]
+      const habitLogSums = uniqueHabitIds.length > 0
+        ? await prisma.habitLog.groupBy({
+            by: ["habitId"],
+            where: {
+              habitId: {
+                in: uniqueHabitIds,
+              },
+            },
+            _sum: {
+              count: true,
+            },
+          })
+        : []
+      const habitLogCountByHabitId = new Map<string, number>(
+        habitLogSums.map((entry) => [entry.habitId, entry._sum.count || 0])
+      )
+      const habitProgressByHabitId = new Map<string, number>()
+      for (const habit of allHabits) {
+        if (habitProgressByHabitId.has(habit.id)) continue
+        const totalCount = habitLogCountByHabitId.get(habit.id) || 0
+        const targetCount = habit.targetCount || 0
+        const progress = targetCount > 0 ? (totalCount / targetCount) * 100 : 0
+        habitProgressByHabitId.set(habit.id, clampProgress(progress))
+      }
+
+      type TaskContribution = {
+        totalWeight: number
+        weightedProgress: number
+        progress: number
+      }
+
+      const contributionMemo = new Map<string, TaskContribution>()
+      const computeTaskContribution = (task: any): TaskContribution => {
+        const cached = contributionMemo.get(task.id)
+        if (cached) return cached
+
+        const directChildren = childrenByParentId.get(task.id) || []
+        const linkedHabits = task.habits || []
+
+        if (directChildren.length === 0 && linkedHabits.length === 0) {
+          const leafProgress = clampProgress(task.progress || 0)
+          const leafWeight = Number(task.importance || 0)
+          const leafWeightedProgress = Math.round(leafProgress * leafWeight)
+          const leafContribution: TaskContribution = {
+            totalWeight: leafWeight,
+            weightedProgress: leafWeightedProgress,
+            progress: leafProgress,
+          }
+          contributionMemo.set(task.id, leafContribution)
+          return leafContribution
+        }
+
+        let totalWeight = 0
+        let weightedProgress = 0
+
+        for (const child of directChildren) {
+          const childContribution = computeTaskContribution(child)
+          totalWeight += childContribution.totalWeight
+          weightedProgress += childContribution.weightedProgress
+        }
+
+        for (const habit of linkedHabits) {
+          const habitWeight = Number(habit.importance || 0)
+          const habitProgress = habitProgressByHabitId.get(habit.id) || 0
+          totalWeight += habitWeight
+          weightedProgress += Math.round(habitProgress * habitWeight)
+        }
+
+        const progress = totalWeight > 0
+          ? clampProgress(Math.round((weightedProgress / totalWeight) * 100) / 100)
+          : 0
+        const contribution: TaskContribution = {
+          totalWeight,
+          weightedProgress,
+          progress,
+        }
+        contributionMemo.set(task.id, contribution)
+        return contribution
+      }
+
+      for (const task of allTasks) {
+        const directChildren = childrenByParentId.get(task.id) || []
+        const linkedHabits = task.habits || []
+        if (directChildren.length === 0 && linkedHabits.length === 0) continue
+
+        const contribution = computeTaskContribution(task)
+        task.total_weight = BigInt(contribution.totalWeight)
+        task.weighted_progress = BigInt(contribution.weightedProgress)
+        task.progress = contribution.progress
+      }
+
       const taskMeta = new Map<string, {
         rank: number
         progress: number

@@ -3,7 +3,12 @@ import { prisma } from "@/lib/prisma"
 import { updateHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
-import { addHabitToTask, removeHabitFromTask, calculateHabitCompletion } from "@/lib/progress-calculator"
+import {
+  addHabitToTask,
+  removeHabitFromTask,
+  calculateHabitCompletion,
+  updateHabitContribution,
+} from "@/lib/progress-calculator"
 import { calculateTargetCount } from "@/lib/habit-helpers"
 import {
   getInheritedLabelsFromHabit,
@@ -97,6 +102,10 @@ export async function PUT(
     if (!existingHabit) {
       return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
+
+    const oldHabitProgress = existingHabit.parentTaskId
+      ? await calculateHabitCompletion(id)
+      : null
 
     const body = await request.json()
     const validatedData = updateHabitSchema.parse(body)
@@ -405,6 +414,22 @@ export async function PUT(
       // Add to new parent task (if exists)
       if (habit.parentTaskId) {
         await addHabitToTask(habit.id)
+      }
+    } else if (habit.parentTaskId && oldHabitProgress !== null) {
+      // Same parent: contribution can still change when progress basis or importance changes.
+      const newHabitProgress = await calculateHabitCompletion(habit.id)
+      const contributionChanged =
+        newHabitProgress !== oldHabitProgress ||
+        habit.importance !== existingHabit.importance
+
+      if (contributionChanged) {
+        await updateHabitContribution(
+          habit.id,
+          oldHabitProgress,
+          newHabitProgress,
+          existingHabit.importance,
+          habit.importance
+        )
       }
     }
 
