@@ -17,6 +17,7 @@ interface LabelSelectorProps {
   selectedLabelIds: string[];
   onSelectionChange: (labelIds: string[]) => void;
   availableLabels: Label[];
+  disabledLabelIds?: string[];
   onCreateNew?: () => void;
   className?: string;
 }
@@ -26,10 +27,14 @@ export function LabelSelector({
   selectedLabelIds,
   onSelectionChange,
   availableLabels,
+  disabledLabelIds = [],
   onCreateNew,
   className
 }: LabelSelectorProps) {
   const handleToggle = (labelId: string) => {
+    if (disabledLabelIds.includes(labelId)) {
+      return;
+    }
     if (selectedLabelIds.includes(labelId)) {
       onSelectionChange(selectedLabelIds.filter(id => id !== labelId));
     } else {
@@ -44,7 +49,10 @@ export function LabelSelector({
           <Badge
             key={label.id}
             variant="secondary"
-            className="cursor-pointer"
+            className={cn(
+              "cursor-pointer",
+              disabledLabelIds.includes(label.id) && "cursor-not-allowed opacity-70"
+            )}
             style={{
               backgroundColor: `${label.color}20`,
               color: label.color,
@@ -77,10 +85,14 @@ export function LabelSelector({
                   id={label.id}
                   checked={selectedLabelIds.includes(label.id)}
                   onCheckedChange={() => handleToggle(label.id)}
+                  disabled={disabledLabelIds.includes(label.id)}
                 />
                 <label
                   htmlFor={label.id}
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex-1"
+                  className={cn(
+                    "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex-1",
+                    disabledLabelIds.includes(label.id) && "cursor-not-allowed opacity-70"
+                  )}
                 >
                   <Badge
                     variant="secondary"

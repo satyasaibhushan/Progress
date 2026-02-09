@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label as FormLabel } from "@/components/ui/label";
-import { createHabitSchema, habitFormSchema } from "@/lib/validations/habit";
+import { habitFormSchema } from "@/lib/validations/habit";
 import {
   Select,
   SelectContent,
@@ -24,9 +24,7 @@ import { DatePicker } from "@/components/shared/date-picker";
 import { LabelSelector } from "@/components/shared/label-selector";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 
-const formSchema = habitFormSchema;
-
-type HabitFormData = z.infer<typeof formSchema>;
+type HabitFormData = z.infer<typeof habitFormSchema>;
 
 interface HabitFormProps {
   habit?: Habit;
@@ -101,10 +99,73 @@ export function HabitForm({
   }, [initialParentTaskId, habit, setValue]);
 
   const type = watch("type");
+  const selectedParentTaskId = watch("parentTaskId");
+  const selectedGroupId = watch("groupId") || undefined;
   const importance = watch("importance") ?? 50;
-  const selectedLabelIds = watch("labelIds") || [];
+  const watchedLabelIds = watch("labelIds");
+  const selectedLabelIds = React.useMemo(() => watchedLabelIds ?? [], [watchedLabelIds]);
   const activeDays = watch("activeDays") || [];
   const [apiError, setApiError] = useState<string | null>(null);
+
+  // Flatten all tasks (including nested children) for parent selection
+  const flattenTasks = (taskList: Task[]): Task[] => {
+    const flattened: Task[] = [];
+    const traverse = (tasks: Task[]) => {
+      tasks.forEach((t) => {
+        flattened.push(t);
+        if (t.children && t.children.length > 0) {
+          traverse(t.children);
+        }
+      });
+    };
+    traverse(taskList);
+    return flattened;
+  };
+
+  const parentOptions = React.useMemo(() => flattenTasks(availableTasks), [availableTasks]);
+
+  const selectedParentTask = React.useMemo(
+    () => parentOptions.find((t) => t.id === selectedParentTaskId),
+    [parentOptions, selectedParentTaskId]
+  );
+
+  const inheritedParentLabelIds = React.useMemo(
+    () => selectedParentTask?.labels?.map((l) => l.id) || [],
+    [selectedParentTask]
+  );
+
+  const inheritedParentLabelIdsKey = React.useMemo(
+    () => [...inheritedParentLabelIds].sort().join(","),
+    [inheritedParentLabelIds]
+  );
+
+  const originalParentTaskId = habit?.parentTaskId || initialParentTaskId || undefined;
+  const parentSelectionChanged = selectedParentTaskId !== originalParentTaskId;
+  const shouldLockInheritedFields = !!selectedParentTask && !parentSelectionChanged;
+
+  React.useEffect(() => {
+    if (!selectedParentTask || !shouldLockInheritedFields) return;
+
+    const inheritedGroupId = selectedParentTask.groupId || undefined;
+    if (selectedGroupId !== inheritedGroupId) {
+      setValue("groupId", inheritedGroupId);
+    }
+
+    if (inheritedParentLabelIds.length > 0) {
+      const mergedLabelIds = Array.from(new Set([...selectedLabelIds, ...inheritedParentLabelIds]));
+      if (mergedLabelIds.length !== selectedLabelIds.length) {
+        setValue("labelIds", mergedLabelIds);
+      }
+    }
+  }, [
+    selectedParentTask,
+    shouldLockInheritedFields,
+    selectedGroupId,
+    inheritedParentLabelIds,
+    inheritedParentLabelIdsKey,
+    selectedLabelIds,
+    setValue,
+  ]);
 
   const handleFormSubmit = async (data: HabitFormData) => {
     try {
@@ -188,6 +249,7 @@ export function HabitForm({
             onValueChange={(value) =>
               setValue("groupId", value === "__none__" ? undefined : value)
             }
+            disabled={shouldLockInheritedFields}
           >
             <SelectTrigger>
               <SelectValue placeholder="Select group..." />
@@ -201,6 +263,11 @@ export function HabitForm({
               ))}
             </SelectContent>
           </Select>
+          {shouldLockInheritedFields && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Group is inherited from the selected parent task.
+            </p>
+          )}
         </div>
       </div>
 
@@ -321,9 +388,9 @@ export function HabitForm({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__none__">None</SelectItem>
-            {availableTasks.map((task) => (
-              <SelectItem key={task.id} value={task.id}>
-                {task.title}
+            {parentOptions.map((parentTask) => (
+              <SelectItem key={parentTask.id} value={parentTask.id}>
+                {parentTask.title}
               </SelectItem>
             ))}
           </SelectContent>
@@ -354,7 +421,13 @@ export function HabitForm({
           selectedLabelIds={selectedLabelIds}
           onSelectionChange={(ids) => setValue("labelIds", ids)}
           availableLabels={labels}
+          disabledLabelIds={shouldLockInheritedFields ? inheritedParentLabelIds : []}
         />
+        {shouldLockInheritedFields && inheritedParentLabelIds.length > 0 && (
+          <p className="text-xs text-muted-foreground mt-1">
+            Labels inherited from parent are locked.
+          </p>
+        )}
       </div>
 
       {/* Actions */}

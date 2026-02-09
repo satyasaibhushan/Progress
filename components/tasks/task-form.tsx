@@ -69,7 +69,7 @@ export function TaskForm({
     setValue,
     watch,
   } = useForm<TaskFormData>({
-    resolver: zodResolver(formSchema) as any,
+    resolver: zodResolver(formSchema),
     defaultValues: task
       ? {
           title: task.title,
@@ -98,7 +98,10 @@ export function TaskForm({
   }, [initialParentId, task, setValue]);
 
   const importance = watch("importance");
-  const selectedLabelIds = watch("labelIds") || [];
+  const selectedParentId = watch("parentId");
+  const selectedGroupId = watch("groupId") || undefined;
+  const watchedLabelIds = watch("labelIds");
+  const selectedLabelIds = React.useMemo(() => watchedLabelIds ?? [], [watchedLabelIds]);
   const [showGroupWarning, setShowGroupWarning] = useState(false);
   const [pendingSubmitData, setPendingSubmitData] = useState<TaskFormData | null>(null);
   const [conflictInfo, setConflictInfo] = useState<{
@@ -217,21 +220,69 @@ export function TaskForm({
     return flattened;
   };
 
-  const allTasks = flattenTasks(availableTasks);
+  const allTasks = React.useMemo(() => flattenTasks(availableTasks), [availableTasks]);
+
+  const selectedParentTask = React.useMemo(
+    () => allTasks.find((t) => t.id === selectedParentId),
+    [allTasks, selectedParentId]
+  );
+
+  const inheritedParentLabelIds = React.useMemo(
+    () => selectedParentTask?.labels?.map((l) => l.id) || [],
+    [selectedParentTask]
+  );
+
+  const inheritedParentLabelIdsKey = React.useMemo(
+    () => [...inheritedParentLabelIds].sort().join(","),
+    [inheritedParentLabelIds]
+  );
+
+  const originalParentId = task?.parentId || initialParentId || undefined;
+  const parentSelectionChanged = selectedParentId !== originalParentId;
+  const shouldLockInheritedFields = !!selectedParentTask && !parentSelectionChanged;
+
+  React.useEffect(() => {
+    if (!selectedParentTask || !shouldLockInheritedFields) return;
+
+    const inheritedGroupId = selectedParentTask.groupId || undefined;
+    if (selectedGroupId !== inheritedGroupId) {
+      setValue("groupId", inheritedGroupId);
+    }
+
+    if (inheritedParentLabelIds.length > 0) {
+      const mergedLabelIds = Array.from(new Set([...selectedLabelIds, ...inheritedParentLabelIds]));
+      if (mergedLabelIds.length !== selectedLabelIds.length) {
+        setValue("labelIds", mergedLabelIds);
+      }
+    }
+  }, [
+    selectedParentTask,
+    shouldLockInheritedFields,
+    selectedGroupId,
+    inheritedParentLabelIds,
+    inheritedParentLabelIdsKey,
+    selectedLabelIds,
+    setValue,
+  ]);
+
+  const isDescendant = (ancestor: Task, candidateId: string): boolean => {
+    if (ancestor.id === candidateId) return true;
+    if (!ancestor.children || ancestor.children.length === 0) return false;
+    return ancestor.children.some((child) => isDescendant(child, candidateId));
+  };
+
+  const currentTaskNode = React.useMemo(
+    () => (task ? allTasks.find((t) => t.id === task.id) : undefined),
+    [allTasks, task]
+  );
 
   // Filter out current task and its descendants from parent options
   const parentOptions = allTasks.filter((t) => {
     if (!task) return true; // When creating, all tasks are available
     if (t.id === task.id) return false;
-    // Check if task is a descendant of t
-    const isDescendant = (parent: Task, childId: string): boolean => {
-      if (parent.id === childId) return true;
-      if (parent.children) {
-        return parent.children.some((c) => isDescendant(c, childId));
-      }
-      return false;
-    };
-    return !isDescendant(t, task.id);
+    if (!currentTaskNode) return true;
+    // Exclude descendants of current task to avoid circular references.
+    return !isDescendant(currentTaskNode, t.id);
   });
 
   const handleFormSubmit = async (data: TaskFormData) => {
@@ -262,8 +313,9 @@ export function TaskForm({
       setApiError(null);
       // Remove progress from data if it's a non-leaf task (progress is auto-calculated)
       if (isNonLeafTask && 'progress' in data) {
-        const { progress, ...dataWithoutProgress } = data;
-        await onSubmit(dataWithoutProgress as TaskFormData);
+        const dataWithoutProgress = { ...data };
+        delete dataWithoutProgress.progress;
+        await onSubmit(dataWithoutProgress);
       } else {
         await onSubmit(data);
       }
@@ -292,7 +344,7 @@ export function TaskForm({
   };
 
   return (
-    <form onSubmit={handleSubmit(handleFormSubmit as any)} className="space-y-6">
+    <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-6">
       {/* API Error Display */}
       {apiError && (
         <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-md">
@@ -334,6 +386,7 @@ export function TaskForm({
             onValueChange={(value) =>
               setValue("groupId", value === "__none__" ? undefined : value)
             }
+            disabled={shouldLockInheritedFields}
           >
             <SelectTrigger>
               <SelectValue placeholder="Select group..." />
@@ -347,6 +400,11 @@ export function TaskForm({
               ))}
             </SelectContent>
           </Select>
+          {shouldLockInheritedFields && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Group is inherited from the selected parent task.
+            </p>
+          )}
         </div>
 
         <div>
@@ -461,7 +519,13 @@ export function TaskForm({
           selectedLabelIds={selectedLabelIds}
           onSelectionChange={(ids) => setValue("labelIds", ids)}
           availableLabels={labels}
+          disabledLabelIds={shouldLockInheritedFields ? inheritedParentLabelIds : []}
         />
+        {shouldLockInheritedFields && inheritedParentLabelIds.length > 0 && (
+          <p className="text-xs text-muted-foreground mt-1">
+            Labels inherited from parent are locked.
+          </p>
+        )}
       </div>
 
       {/* Actions */}
