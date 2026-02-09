@@ -26,6 +26,21 @@ export interface HabitFilters {
   includeLogs?: boolean;
 }
 
+export type HabitStatus = "active" | "future" | "completed";
+
+export interface HabitPageFilters extends HabitFilters {
+  status: HabitStatus;
+  limit?: number;
+  cursor?: string | null;
+}
+
+export interface HabitPageResult {
+  items: Habit[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  statusCounts: Record<HabitStatus, number>;
+}
+
 export interface LogHabitInput {
   date?: string;
   count?: number;
@@ -57,6 +72,43 @@ export async function getHabits(filters?: HabitFilters): Promise<Habit[]> {
 
   const response = await fetch(`/api/habits?${params.toString()}`);
   return handleResponse<Habit[]>(response);
+}
+
+export async function getHabitPage(filters: HabitPageFilters): Promise<HabitPageResult> {
+  const params = new URLSearchParams();
+  params.append("paginate", "true");
+  params.append("status", filters.status);
+  params.append("limit", String(filters.limit ?? 10));
+  if (filters.cursor) {
+    params.append("cursor", filters.cursor);
+  }
+  if (filters.type) {
+    params.append("type", filters.type);
+  }
+  if (filters.groupId) {
+    params.append("groupId", filters.groupId);
+  }
+  if (filters.parentTaskId) {
+    params.append("parentTaskId", filters.parentTaskId);
+  }
+  if (filters.includeLogs) {
+    params.append("includeLogs", "true");
+  }
+
+  const response = await fetch(`/api/habits?${params.toString()}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(error.error || `HTTP error! status: ${response.status}`);
+  }
+  const payload = await response.json();
+  const pageInfo = payload.pageInfo || {};
+  const statusCounts = payload.statusCounts || { active: 0, future: 0, completed: 0 };
+  return {
+    items: payload.data || [],
+    nextCursor: pageInfo.nextCursor ?? null,
+    hasMore: Boolean(pageInfo.hasMore),
+    statusCounts,
+  };
 }
 
 export async function getHabit(id: string): Promise<Habit> {

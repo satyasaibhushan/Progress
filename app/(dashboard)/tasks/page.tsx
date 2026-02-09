@@ -3,24 +3,29 @@
 import { useEffect, useState, useRef, useCallback, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useHeaderAction } from "../layout";
-import { Plus } from "lucide-react";
-import { getTasks, updateTask, deleteTask, createTask, CreateTaskInput } from "@/lib/api/tasks";
+import { Plus, CheckSquare } from "lucide-react";
+import {
+  getTasks,
+  getTaskPage,
+  updateTask,
+  deleteTask,
+  createTask,
+  CreateTaskInput,
+  TaskStatus,
+} from "@/lib/api/tasks";
 import { createHabit } from "@/lib/api/habits";
 import type { CreateHabitInput } from "@/lib/api/habits";
-import { isPending } from "@/lib/date-helpers";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getGroups } from "@/lib/api/groups";
-import { getHabits } from "@/lib/api/habits";
 import { getLabels } from "@/lib/api/labels";
-import { Task, Group, Habit, Label } from "@/types";
+import { Task, Group, Label } from "@/types";
 import { TaskTree } from "@/components/tasks/task-tree";
 import { TaskForm } from "@/components/tasks/task-form";
 import { HabitForm } from "@/components/habits/habit-form";
 import { Button } from "@/components/ui/button";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
-import { CheckSquare } from "lucide-react";
-import { LazyList } from "@/components/shared/lazy-list";
+import { ServerLazyList } from "@/components/shared/server-lazy-list";
 import {
   Dialog,
   DialogContent,
@@ -53,11 +58,8 @@ function getAllLeafTasks(tasks: Task[]): Task[] {
   return leafTasks;
 }
 
-
-// Check if a task is completed (all leaf tasks are 100%)
 function isTaskCompleted(task: Task): boolean {
   const leafTasks = getAllLeafTasks([task]);
-  // A task is completed only if it has leaf tasks and ALL of them are 100%
   if (leafTasks.length === 0) return false;
   return leafTasks.every((t) => {
     const taskProgress = t.progress || 0;
@@ -65,15 +67,53 @@ function isTaskCompleted(task: Task): boolean {
   });
 }
 
+interface TaskPageState {
+  items: Task[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  initialized: boolean;
+  loadingMore: boolean;
+}
+
+function createEmptyTaskPageState(): TaskPageState {
+  return {
+    items: [],
+    nextCursor: null,
+    hasMore: true,
+    initialized: false,
+    loadingMore: false,
+  };
+}
+
+const TASKS_PAGE_SIZE = 8;
+const TASK_STATUSES: TaskStatus[] = ["active", "future", "completed"];
+
 function TasksPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { setHeaderRightAction, setHeaderSubtitle } = useHeaderAction();
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const { setHeaderRightAction } = useHeaderAction();
+
+  const highlightTaskId = searchParams.get("highlight");
+  const highlightedHabitId = searchParams.get("highlightHabit");
+
+  const [taskPages, setTaskPages] = useState<Record<TaskStatus, TaskPageState>>({
+    active: createEmptyTaskPageState(),
+    future: createEmptyTaskPageState(),
+    completed: createEmptyTaskPageState(),
+  });
+  const taskPagesRef = useRef(taskPages);
+  const [statusCounts, setStatusCounts] = useState<Record<TaskStatus, number>>({
+    active: 0,
+    future: 0,
+    completed: 0,
+  });
+
   const [groups, setGroups] = useState<Group[]>([]);
-  const [habits, setHabits] = useState<Habit[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
+  const [taskOptions, setTaskOptions] = useState<Task[]>([]);
+  const [loadingTaskOptions, setLoadingTaskOptions] = useState(false);
   const [loading, setLoading] = useState(true);
+
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [deletingTask, setDeletingTask] = useState<Task | null>(null);
@@ -85,45 +125,145 @@ function TasksPageContent() {
     childType: "task" | "habit";
   } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"active" | "future" | "completed">("active");
+  const [activeTab, setActiveTab] = useState<TaskStatus>("active");
+
   const taskRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const processedHighlightRef = useRef<string | null>(null);
-  const highlightTaskId = searchParams.get("highlight");
-  const forceShowAll = !!highlightTaskId;
-  const TASKS_PAGE_SIZE = 8;
-
-  const hasLoadedRef = useRef(false);
   const isHighlightingRef = useRef(false);
-  
+
   useEffect(() => {
-    // Only load data once on mount, not when URL params change
-    // Also skip if we're in the middle of highlighting (to prevent API calls when param is removed)
-    if (hasLoadedRef.current) return;
-    
-    async function loadData() {
+    taskPagesRef.current = taskPages;
+  }, [taskPages]);
+
+  const loadTaskPage = useCallback(
+    async (status: TaskStatus, options?: { reset?: boolean }): Promise<Task[] | null> => {
+      const reset = options?.reset ?? false;
+      const currentPage = taskPagesRef.current[status];
+      if (currentPage.loadingMore) return null;
+      if (!reset && !currentPage.hasMore) return null;
+
+      setTaskPages((prev) => {
+        const next = {
+          ...prev,
+          [status]: {
+            ...prev[status],
+            loadingMore: true,
+          },
+        };
+        taskPagesRef.current = next;
+        return next;
+      });
+
       try {
-        hasLoadedRef.current = true;
-        const [tasksData, groupsData, habitsData, labelsData] = await Promise.all([
-          getTasks({ includeChildren: true, parentId: null }),
-          getGroups(),
-          getHabits({ includeLogs: true }),
-          getLabels(),
-        ]);
-        setTasks(tasksData);
-        setGroups(groupsData);
-        setHabits(habitsData);
-        setLabels(labelsData);
+        const result = await getTaskPage({
+          status,
+          includeChildren: true,
+          parentId: null,
+          limit: TASKS_PAGE_SIZE,
+          cursor: reset ? null : currentPage.nextCursor,
+        });
+
+        setTaskPages((prev) => {
+          const next = {
+            ...prev,
+            [status]: {
+              items: reset ? result.items : [...prev[status].items, ...result.items],
+              nextCursor: result.nextCursor,
+              hasMore: result.hasMore,
+              initialized: true,
+              loadingMore: false,
+            },
+          };
+          taskPagesRef.current = next;
+          return next;
+        });
+        setStatusCounts(result.statusCounts);
+        return result.items;
       } catch (error) {
-        console.error("Error loading tasks:", error);
-        hasLoadedRef.current = false; // Reset on error so we can retry
+        console.error(`Error loading ${status} tasks:`, error);
+        setTaskPages((prev) => {
+          const next = {
+            ...prev,
+            [status]: {
+              ...prev[status],
+              loadingMore: false,
+            },
+          };
+          taskPagesRef.current = next;
+          return next;
+        });
+        return null;
+      }
+    },
+    []
+  );
+
+  const refreshInitializedTaskPages = useCallback(async () => {
+    const initializedStatuses = TASK_STATUSES.filter((status) => taskPagesRef.current[status].initialized);
+    if (initializedStatuses.length === 0) {
+      await loadTaskPage(activeTab, { reset: true });
+      return;
+    }
+
+    for (const status of initializedStatuses) {
+      await loadTaskPage(status, { reset: true });
+    }
+  }, [activeTab, loadTaskPage]);
+
+  const ensureTaskOptionsLoaded = useCallback(async () => {
+    if (taskOptions.length > 0 || loadingTaskOptions) return;
+    setLoadingTaskOptions(true);
+    try {
+      const tasksData = await getTasks({ includeChildren: true, parentId: null, includeHabits: false });
+      setTaskOptions(tasksData);
+    } catch (error) {
+      console.error("Error loading tasks for forms:", error);
+    } finally {
+      setLoadingTaskOptions(false);
+    }
+  }, [taskOptions.length, loadingTaskOptions]);
+
+  useEffect(() => {
+    async function loadInitialData() {
+      try {
+        const [groupsData, labelsData] = await Promise.all([getGroups(), getLabels()]);
+        setGroups(groupsData);
+        setLabels(labelsData);
+        await loadTaskPage("active", { reset: true });
+      } catch (error) {
+        console.error("Error loading tasks page data:", error);
       } finally {
         setLoading(false);
       }
     }
-    loadData();
-  }, []);
 
-  // Helper functions (memoized to avoid recreating on each render)
+    loadInitialData();
+  }, [loadTaskPage]);
+
+  useEffect(() => {
+    const page = taskPages[activeTab];
+    if (!page.initialized && !page.loadingMore) {
+      loadTaskPage(activeTab, { reset: true });
+    }
+  }, [activeTab, taskPages, loadTaskPage]);
+
+  useEffect(() => {
+    const shouldLoadTaskOptions = creatingTask || !!creatingTaskWithParent || !!creatingHabitWithParent || !!editingTask;
+    if (shouldLoadTaskOptions) {
+      ensureTaskOptionsLoaded();
+    }
+  }, [creatingTask, creatingTaskWithParent, creatingHabitWithParent, editingTask, ensureTaskOptionsLoaded]);
+
+  const allLoadedTasks = useMemo(() => {
+    const map = new Map<string, Task>();
+    for (const status of TASK_STATUSES) {
+      for (const task of taskPages[status].items) {
+        map.set(task.id, task);
+      }
+    }
+    return Array.from(map.values());
+  }, [taskPages]);
+
   const findTaskById = useCallback((taskList: Task[], targetId: string): Task | null => {
     for (const t of taskList) {
       if (t.id === targetId) return t;
@@ -146,102 +286,138 @@ function TasksPageContent() {
     return [];
   }, []);
 
-  // Handle highlighting from URL params
   useEffect(() => {
-    const highlightId = searchParams.get("highlight");
-    if (highlightId && tasks.length > 0 && processedHighlightRef.current !== highlightId) {
-      const task = findTaskById(tasks, highlightId);
-      if (task) {
-        processedHighlightRef.current = highlightId;
-        isHighlightingRef.current = true;
-        
-        const treeParentIds = getAllParentIds(tasks, highlightId);
-        
-        // Follow parentId chain to get all ancestors
+    if (!highlightTaskId || processedHighlightRef.current === highlightTaskId) {
+      if (!highlightTaskId) {
+        processedHighlightRef.current = null;
+        isHighlightingRef.current = false;
+      }
+      return;
+    }
+
+    let cancelled = false;
+
+    const ensureHighlightedTaskLoaded = async () => {
+      isHighlightingRef.current = true;
+
+      for (const status of TASK_STATUSES) {
+        if (cancelled) return;
+
+        if (!taskPagesRef.current[status].initialized) {
+          await loadTaskPage(status, { reset: true });
+          if (cancelled) return;
+        }
+
+        let tree = taskPagesRef.current[status].items;
+        let task = findTaskById(tree, highlightTaskId);
+
+        while (!task && taskPagesRef.current[status].hasMore) {
+          await loadTaskPage(status);
+          if (cancelled) return;
+          tree = taskPagesRef.current[status].items;
+          task = findTaskById(tree, highlightTaskId);
+        }
+
+        if (!task) {
+          continue;
+        }
+
+        processedHighlightRef.current = highlightTaskId;
+        if (activeTab !== status) {
+          setActiveTab(status);
+        }
+
+        const treeParentIds = getAllParentIds(tree, highlightTaskId);
         const ancestorIds: string[] = [];
         let currentTaskId: string | null = task.parentId ?? null;
         while (currentTaskId) {
           ancestorIds.push(currentTaskId);
-          const currentTask = findTaskById(tasks, currentTaskId);
+          const currentTask = findTaskById(tree, currentTaskId);
           currentTaskId = currentTask?.parentId ?? null;
         }
-        
-        // Combine and deduplicate
+
         const allParentIds = Array.from(new Set([...treeParentIds, ...ancestorIds].filter(Boolean)));
-        
-        // Include task itself if it has children
         const taskHasChildren = (task.children && task.children.length > 0) || (task.habits && task.habits.length > 0);
-        const tasksToExpand = taskHasChildren ? [...allParentIds, highlightId] : allParentIds;
-        
-        // Expand all required tasks
-        setExpandedTasks(prev => {
-          const newExpanded = new Set(prev);
-          tasksToExpand.forEach(id => newExpanded.add(id));
-          return newExpanded;
+        const tasksToExpand = taskHasChildren ? [...allParentIds, highlightTaskId] : allParentIds;
+
+        setExpandedTasks((prev) => {
+          const next = new Set(prev);
+          tasksToExpand.forEach((id) => next.add(id));
+          return next;
         });
-      }
-    }
-  }, [searchParams, tasks, findTaskById, getAllParentIds]);
 
-  // Scroll to task after expansion completes
+        return;
+      }
+
+      isHighlightingRef.current = false;
+    };
+
+    ensureHighlightedTaskLoaded();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [highlightTaskId, activeTab, loadTaskPage, findTaskById, getAllParentIds]);
+
   useEffect(() => {
-    const highlightId = searchParams.get("highlight");
-    if (highlightId && processedHighlightRef.current === highlightId && expandedTasks.size > 0) {
-      const task = findTaskById(tasks, highlightId);
-      if (!task) return;
-      
-      const treeParentIds = getAllParentIds(tasks, highlightId);
-      const ancestorIds: string[] = [];
-      let currentTaskId: string | null = task.parentId ?? null;
-      while (currentTaskId) {
-        ancestorIds.push(currentTaskId);
-        const currentTask = findTaskById(tasks, currentTaskId);
-        currentTaskId = currentTask?.parentId ?? null;
-      }
-      
-      const allParentIds = Array.from(new Set([...treeParentIds, ...ancestorIds].filter(Boolean)));
-      const taskHasChildren = (task.children && task.children.length > 0) || (task.habits && task.habits.length > 0);
-      const allTasksToExpand = taskHasChildren ? [...allParentIds, highlightId] : allParentIds;
-      
-      // Check if all required tasks are expanded
-      const allExpanded = allTasksToExpand.length === 0 || allTasksToExpand.every(id => expandedTasks.has(id));
-      
-      if (allExpanded) {
-        const scrollDelay = allTasksToExpand.length > 0 ? 300 : 200;
-        const scrollToElement = () => {
-          const element = taskRefs.current[highlightId];
-          if (element && element.offsetParent !== null) {
-            element.scrollIntoView({ behavior: "smooth", block: "center" });
-            element.classList.add("bg-indigo-50");
-            
-            setTimeout(() => {
-              if (element) {
-                element.classList.remove("bg-indigo-50");
-              }
-              if (searchParams.get("highlight") === highlightId) {
-                const params = new URLSearchParams(searchParams.toString());
-                params.delete("highlight");
-                const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
-                window.history.replaceState({}, '', newUrl);
-              }
-              processedHighlightRef.current = null;
-              isHighlightingRef.current = false;
-            }, 2000);
-            return true;
-          }
-          return false;
-        };
-        
-        setTimeout(() => {
-          if (!scrollToElement()) {
-            // Retry once if element not visible
-            setTimeout(scrollToElement, 500);
-          }
-        }, scrollDelay);
-      }
+    if (!highlightTaskId || processedHighlightRef.current !== highlightTaskId || expandedTasks.size === 0) {
+      return;
     }
-  }, [expandedTasks, searchParams, tasks, findTaskById, getAllParentIds]);
 
+    const tree = taskPages[activeTab].items;
+    const task = findTaskById(tree, highlightTaskId);
+    if (!task) return;
+
+    const treeParentIds = getAllParentIds(tree, highlightTaskId);
+    const ancestorIds: string[] = [];
+    let currentTaskId: string | null = task.parentId ?? null;
+    while (currentTaskId) {
+      ancestorIds.push(currentTaskId);
+      const currentTask = findTaskById(tree, currentTaskId);
+      currentTaskId = currentTask?.parentId ?? null;
+    }
+
+    const allParentIds = Array.from(new Set([...treeParentIds, ...ancestorIds].filter(Boolean)));
+    const taskHasChildren = (task.children && task.children.length > 0) || (task.habits && task.habits.length > 0);
+    const allTasksToExpand = taskHasChildren ? [...allParentIds, highlightTaskId] : allParentIds;
+    const allExpanded = allTasksToExpand.length === 0 || allTasksToExpand.every((id) => expandedTasks.has(id));
+
+    if (!allExpanded) return;
+
+    const scrollDelay = allTasksToExpand.length > 0 ? 300 : 200;
+
+    const scrollToElement = () => {
+      const element = taskRefs.current[highlightTaskId];
+      if (element && element.offsetParent !== null) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+        element.classList.add("bg-indigo-50");
+
+        setTimeout(() => {
+          if (element) {
+            element.classList.remove("bg-indigo-50");
+          }
+
+          const params = new URLSearchParams(window.location.search);
+          if (params.has("highlight")) {
+            params.delete("highlight");
+            const nextUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
+            window.history.replaceState({}, "", nextUrl);
+          }
+
+          processedHighlightRef.current = null;
+          isHighlightingRef.current = false;
+        }, 2000);
+        return true;
+      }
+      return false;
+    };
+
+    setTimeout(() => {
+      if (!scrollToElement()) {
+        setTimeout(scrollToElement, 500);
+      }
+    }, scrollDelay);
+  }, [highlightTaskId, expandedTasks, activeTab, taskPages, findTaskById, getAllParentIds]);
 
   const handleToggleExpand = (taskId: string) => {
     const newExpanded = new Set(expandedTasks);
@@ -276,7 +452,17 @@ function TasksPageContent() {
     openChildCreateDialog(task, childType);
   };
 
-  const handleCreate = async (data: { title: string; importance: number; description?: string; progress?: number; startDate?: string | null; deadline?: string | null; groupId?: string | null; parentId?: string | null; labelIds?: string[] }) => {
+  const handleCreate = async (data: {
+    title: string;
+    importance: number;
+    description?: string;
+    progress?: number;
+    startDate?: string | null;
+    deadline?: string | null;
+    groupId?: string | null;
+    parentId?: string | null;
+    labelIds?: string[];
+  }) => {
     const createData: CreateTaskInput = {
       title: data.title,
       importance: data.importance,
@@ -288,12 +474,12 @@ function TasksPageContent() {
       parentId: data.parentId || undefined,
       labelIds: data.labelIds,
     };
+
     setSaving(true);
     try {
       await createTask(createData);
-      // Reload tasks
-      const tasksData = await getTasks({ includeChildren: true, parentId: null });
-      setTasks(tasksData);
+      await refreshInitializedTaskPages();
+      setTaskOptions([]);
       setCreatingTask(false);
       setCreatingTaskWithParent(null);
     } catch (error) {
@@ -304,7 +490,24 @@ function TasksPageContent() {
     }
   };
 
-  const handleCreateHabit = async (data: any) => {
+  const handleCreateHabit = async (data: {
+    title: string;
+    description?: string;
+    type: "DAILY" | "WEEKLY" | "MONTHLY";
+    targetCount?: number | null;
+    countPerPeriod?: number;
+    importance?: number;
+    startDate?: string | null;
+    endDate?: string | null;
+    activeDays?: number[] | null;
+    groupId?: string | null;
+    parentTaskId?: string | null;
+    labelIds?: string[];
+  }) => {
+    if (data.targetCount == null || data.importance == null) {
+      throw new Error("Missing required habit fields");
+    }
+
     const createData: CreateHabitInput = {
       title: data.title,
       description: data.description,
@@ -314,17 +517,17 @@ function TasksPageContent() {
       importance: data.importance,
       startDate: data.startDate || undefined,
       endDate: data.endDate || undefined,
-      activeDays: data.activeDays,
+      activeDays: data.activeDays ?? undefined,
       groupId: data.groupId || undefined,
       parentTaskId: data.parentTaskId || undefined,
       labelIds: data.labelIds,
     };
+
     setSaving(true);
     try {
       await createHabit(createData);
-      // Reload tasks to show the new habit
-      const tasksData = await getTasks({ includeChildren: true, parentId: null });
-      setTasks(tasksData);
+      await refreshInitializedTaskPages();
+      setTaskOptions([]);
       setCreatingHabitWithParent(null);
     } catch (error) {
       console.error("Error creating habit:", error);
@@ -334,76 +537,22 @@ function TasksPageContent() {
     }
   };
 
-  // Helper function to update a task in the tree
-  const updateTaskInTree = useCallback((taskList: Task[], taskId: string, updatedTask: Task): Task[] => {
-    return taskList.map((task) => {
-      if (task.id === taskId) {
-        // Replace the task with all its data including habits and children
-        return updatedTask;
-      }
-      if (task.children && task.children.length > 0) {
-        // Recursively update children
-        return {
-          ...task,
-          children: updateTaskInTree(task.children, taskId, updatedTask),
-        };
-      }
-      return task;
-    });
-  }, []);
-
-  // Helper function to remove a task from the tree
-  const removeTaskFromTree = useCallback((taskList: Task[], taskId: string): Task[] => {
-    return taskList
-      .filter((task) => task.id !== taskId)
-      .map((task) => {
-        if (task.children && task.children.length > 0) {
-          return {
-            ...task,
-            children: removeTaskFromTree(task.children, taskId),
-          };
-        }
-        return task;
-      });
-  }, []);
-
-  // Helper function to add a task to the tree at the correct parent
-  const addTaskToTree = useCallback((taskList: Task[], task: Task): Task[] => {
-    if (!task.parentId) {
-      // Root task - add to root level
-      const existingIndex = taskList.findIndex((t) => t.id === task.id);
-      if (existingIndex >= 0) {
-        // Replace existing
-        const newList = [...taskList];
-        newList[existingIndex] = task;
-        return newList;
-      }
-      return [...taskList, task];
-    }
-    
-    // Find parent and add as child
-    return taskList.map((t) => {
-      if (t.id === task.parentId) {
-        return {
-          ...t,
-          children: t.children ? [...t.children, task] : [task],
-        };
-      }
-      if (t.children && t.children.length > 0) {
-        return {
-          ...t,
-          children: addTaskToTree(t.children, task),
-        };
-      }
-      return t;
-    });
-  }, []);
-
-  const handleEdit = async (data: { title: string; importance: number; description?: string; progress?: number; startDate?: string | null; deadline?: string | null; groupId?: string | null; parentId?: string | null; labelIds?: string[] }) => {
+  const handleEdit = async (data: {
+    title: string;
+    importance: number;
+    description?: string;
+    progress?: number;
+    startDate?: string | null;
+    deadline?: string | null;
+    groupId?: string | null;
+    parentId?: string | null;
+    labelIds?: string[];
+  }) => {
     if (!editingTask) return;
+
     setSaving(true);
     try {
-      const updateData = {
+      await updateTask({
         id: editingTask.id,
         title: data.title,
         importance: data.importance,
@@ -414,47 +563,9 @@ function TasksPageContent() {
         groupId: data.groupId || undefined,
         parentId: data.parentId || undefined,
         labelIds: data.labelIds,
-      };
-      // The PUT endpoint now returns the task with all children and habits recursively
-      const fullUpdatedTask: Task = await updateTask(updateData);
-      
-      // Extract all habits from the updated task tree to update the habits state
-      const extractHabitsFromTask = (task: Task): Habit[] => {
-        const habits: Habit[] = [...(task.habits || [])];
-        if (task.children) {
-          task.children.forEach((child) => {
-            habits.push(...extractHabitsFromTask(child));
-          });
-        }
-        return habits;
-      };
-      const updatedHabits = extractHabitsFromTask(fullUpdatedTask);
-      
-      // Update habits state with the updated habits from the task
-      setHabits((prevHabits) => {
-        const habitMap = new Map(prevHabits.map((h) => [h.id, h]));
-        // Update or add habits from the task
-        updatedHabits.forEach((habit) => {
-          habitMap.set(habit.id, habit);
-        });
-        return Array.from(habitMap.values());
       });
-      
-      // Check if parent changed
-      const parentChanged = data.parentId !== undefined && data.parentId !== editingTask.parentId;
-      
-      if (parentChanged) {
-        // Remove from old location and add to new location
-        setTasks((prevTasks) => {
-          let newTasks = removeTaskFromTree(prevTasks, editingTask.id);
-          newTasks = addTaskToTree(newTasks, fullUpdatedTask);
-          return newTasks;
-        });
-      } else {
-        // Just update in place
-        setTasks((prevTasks) => updateTaskInTree(prevTasks, editingTask.id, fullUpdatedTask));
-      }
-      
+      await refreshInitializedTaskPages();
+      setTaskOptions([]);
       setEditingTask(null);
     } catch (error) {
       console.error("Error updating task:", error);
@@ -466,11 +577,11 @@ function TasksPageContent() {
 
   const handleDelete = async () => {
     if (!deletingTask) return;
+
     try {
       await deleteTask(deletingTask.id);
-      // Reload tasks
-      const tasksData = await getTasks({ includeChildren: true, parentId: null });
-      setTasks(tasksData);
+      await refreshInitializedTaskPages();
+      setTaskOptions([]);
       setDeletingTask(null);
     } catch (error) {
       console.error("Error deleting task:", error);
@@ -480,44 +591,12 @@ function TasksPageContent() {
   const handleProgressUpdate = async (taskId: string, newProgress: number) => {
     try {
       await updateTask({ id: taskId, progress: newProgress });
-      // Reload tasks
-      const tasksData = await getTasks({ includeChildren: true, parentId: null });
-      setTasks(tasksData);
+      await refreshInitializedTaskPages();
     } catch (error) {
       console.error("Error updating task progress:", error);
     }
   };
 
-  // Separate pending, active and completed tasks (ordering comes from API)
-  const pendingTasks = useMemo(() => {
-    return tasks.filter((task) => !isTaskCompleted(task) && isPending(task.startDate));
-  }, [tasks]);
-
-  const activeTasks = useMemo(() => {
-    return tasks.filter((task) => !isTaskCompleted(task) && !isPending(task.startDate));
-  }, [tasks]);
-
-  const completedTasks = useMemo(() => {
-    return tasks.filter((task) => isTaskCompleted(task));
-  }, [tasks]);
-
-  const allLeafTasks = useMemo(() => getAllLeafTasks(tasks), [tasks]);
-  const totalTasks = allLeafTasks.length;
-
-  // Count pending, active and completed tasks (parent tasks only)
-  const pendingParentTasks = useMemo(() => {
-    return pendingTasks.length;
-  }, [pendingTasks]);
-
-  const activeParentTasks = useMemo(() => {
-    return activeTasks.length;
-  }, [activeTasks]);
-
-  const completedParentTasks = useMemo(() => {
-    return completedTasks.length;
-  }, [completedTasks]);
-
-  // Set header action and subtitle
   useEffect(() => {
     setHeaderRightAction(
       <Button onClick={() => setCreatingTask(true)}>
@@ -530,6 +609,13 @@ function TasksPageContent() {
     };
   }, [setHeaderRightAction]);
 
+  const activeTasks = taskPages.active.items;
+  const futureTasks = taskPages.future.items;
+  const completedTasks = taskPages.completed.items;
+  const totalTaskCount = statusCounts.active + statusCounts.future + statusCounts.completed;
+
+  const availableTasks = taskOptions.length > 0 ? taskOptions : allLoadedTasks;
+
   if (loading) {
     return (
       <div className="max-w-6xl mx-auto space-y-6">
@@ -540,7 +626,7 @@ function TasksPageContent() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      {tasks.length === 0 ? (
+      {totalTaskCount === 0 ? (
         <EmptyState
           icon={CheckSquare}
           title="No tasks found"
@@ -551,40 +637,36 @@ function TasksPageContent() {
           }}
         />
       ) : (
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="w-full">
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TaskStatus)} className="w-full">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="active">
               Active
-              <span className="ml-2 text-xs text-muted-foreground">
-                ({activeParentTasks})
-              </span>
+              <span className="ml-2 text-xs text-muted-foreground">({statusCounts.active})</span>
             </TabsTrigger>
             <TabsTrigger value="future">
               Future
-              <span className="ml-2 text-xs text-muted-foreground">
-                ({pendingParentTasks})
-              </span>
+              <span className="ml-2 text-xs text-muted-foreground">({statusCounts.future})</span>
             </TabsTrigger>
             <TabsTrigger value="completed">
               Completed
-              <span className="ml-2 text-xs text-muted-foreground">
-                ({completedParentTasks})
-              </span>
+              <span className="ml-2 text-xs text-muted-foreground">({statusCounts.completed})</span>
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="active" className="space-y-4 mt-6">
-            {activeTasks.length > 0 ? (
-              <LazyList
+            {!taskPages.active.initialized || (taskPages.active.loadingMore && activeTasks.length === 0) ? (
+              <LoadingSkeleton count={4} />
+            ) : activeTasks.length > 0 ? (
+              <ServerLazyList
                 items={activeTasks}
-                pageSize={TASKS_PAGE_SIZE}
-                forceShowAll={forceShowAll}
-                resetKey={activeTab}
-                render={(visibleTasks) => (
+                hasMore={taskPages.active.hasMore}
+                loadingMore={taskPages.active.loadingMore}
+                onLoadMore={() => loadTaskPage("active")}
+                className="space-y-4"
+                render={(pagedTasks) => (
                   <TaskTree
-                    tasks={visibleTasks}
+                    tasks={pagedTasks}
                     groups={groups}
-                    habits={habits}
                     expandedTasks={expandedTasks}
                     onToggleExpand={handleToggleExpand}
                     onEdit={(task) => setEditingTask(task)}
@@ -594,7 +676,7 @@ function TasksPageContent() {
                     onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
                     onAddTask={(task) => handleAddChild(task, "task")}
                     onAddHabit={(task) => handleAddChild(task, "habit")}
-                    highlightedHabitId={searchParams.get("highlightHabit")}
+                    highlightedHabitId={highlightedHabitId}
                     isTaskCompleted={isTaskCompleted}
                   />
                 )}
@@ -605,17 +687,19 @@ function TasksPageContent() {
           </TabsContent>
 
           <TabsContent value="future" className="space-y-4 mt-6">
-            {pendingTasks.length > 0 ? (
-              <LazyList
-                items={pendingTasks}
-                pageSize={TASKS_PAGE_SIZE}
-                forceShowAll={forceShowAll}
-                resetKey={activeTab}
-                render={(visibleTasks) => (
+            {!taskPages.future.initialized || (taskPages.future.loadingMore && futureTasks.length === 0) ? (
+              <LoadingSkeleton count={4} />
+            ) : futureTasks.length > 0 ? (
+              <ServerLazyList
+                items={futureTasks}
+                hasMore={taskPages.future.hasMore}
+                loadingMore={taskPages.future.loadingMore}
+                onLoadMore={() => loadTaskPage("future")}
+                className="space-y-4"
+                render={(pagedTasks) => (
                   <TaskTree
-                    tasks={visibleTasks}
+                    tasks={pagedTasks}
                     groups={groups}
-                    habits={habits}
                     expandedTasks={expandedTasks}
                     onToggleExpand={handleToggleExpand}
                     onEdit={(task) => setEditingTask(task)}
@@ -625,7 +709,7 @@ function TasksPageContent() {
                     onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
                     onAddTask={(task) => handleAddChild(task, "task")}
                     onAddHabit={(task) => handleAddChild(task, "habit")}
-                    highlightedHabitId={searchParams.get("highlightHabit")}
+                    highlightedHabitId={highlightedHabitId}
                     isTaskCompleted={isTaskCompleted}
                   />
                 )}
@@ -636,17 +720,19 @@ function TasksPageContent() {
           </TabsContent>
 
           <TabsContent value="completed" className="space-y-4 mt-6">
-            {completedTasks.length > 0 ? (
-              <LazyList
+            {!taskPages.completed.initialized || (taskPages.completed.loadingMore && completedTasks.length === 0) ? (
+              <LoadingSkeleton count={4} />
+            ) : completedTasks.length > 0 ? (
+              <ServerLazyList
                 items={completedTasks}
-                pageSize={TASKS_PAGE_SIZE}
-                forceShowAll={forceShowAll}
-                resetKey={activeTab}
-                render={(visibleTasks) => (
+                hasMore={taskPages.completed.hasMore}
+                loadingMore={taskPages.completed.loadingMore}
+                onLoadMore={() => loadTaskPage("completed")}
+                className="space-y-4"
+                render={(pagedTasks) => (
                   <TaskTree
-                    tasks={visibleTasks}
+                    tasks={pagedTasks}
                     groups={groups}
-                    habits={habits}
                     expandedTasks={expandedTasks}
                     onToggleExpand={handleToggleExpand}
                     onEdit={(task) => setEditingTask(task)}
@@ -656,7 +742,7 @@ function TasksPageContent() {
                     onHabitClick={(habitId) => router.push(`/habits?highlight=${habitId}`)}
                     onAddTask={(task) => handleAddChild(task, "task")}
                     onAddHabit={(task) => handleAddChild(task, "habit")}
-                    highlightedHabitId={searchParams.get("highlightHabit")}
+                    highlightedHabitId={highlightedHabitId}
                     isTaskCompleted={isTaskCompleted}
                   />
                 )}
@@ -668,13 +754,15 @@ function TasksPageContent() {
         </Tabs>
       )}
 
-      {/* Create Task Dialog */}
-      <Dialog open={creatingTask || !!creatingTaskWithParent} onOpenChange={(open) => {
-        if (!open) {
-          setCreatingTask(false);
-          setCreatingTaskWithParent(null);
-        }
-      }}>
+      <Dialog
+        open={creatingTask || !!creatingTaskWithParent}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreatingTask(false);
+            setCreatingTaskWithParent(null);
+          }
+        }}
+      >
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Task</DialogTitle>
@@ -682,7 +770,7 @@ function TasksPageContent() {
           <TaskForm
             groups={groups}
             labels={labels}
-            availableTasks={tasks}
+            availableTasks={availableTasks}
             initialParentId={creatingTaskWithParent?.id}
             onSubmit={handleCreate}
             onCancel={() => {
@@ -694,12 +782,14 @@ function TasksPageContent() {
         </DialogContent>
       </Dialog>
 
-      {/* Create Habit Dialog */}
-      <Dialog open={!!creatingHabitWithParent} onOpenChange={(open) => {
-        if (!open) {
-          setCreatingHabitWithParent(null);
-        }
-      }}>
+      <Dialog
+        open={!!creatingHabitWithParent}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreatingHabitWithParent(null);
+          }
+        }}
+      >
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Habit</DialogTitle>
@@ -707,7 +797,7 @@ function TasksPageContent() {
           <HabitForm
             groups={groups}
             labels={labels}
-            availableTasks={tasks}
+            availableTasks={availableTasks}
             initialParentTaskId={creatingHabitWithParent?.id}
             onSubmit={handleCreateHabit}
             onCancel={() => setCreatingHabitWithParent(null)}
@@ -716,7 +806,6 @@ function TasksPageContent() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Task Dialog */}
       <Dialog open={!!editingTask} onOpenChange={(open) => !open && setEditingTask(null)}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -727,7 +816,7 @@ function TasksPageContent() {
               task={editingTask}
               groups={groups}
               labels={labels}
-              availableTasks={tasks}
+              availableTasks={availableTasks}
               onSubmit={handleEdit}
               onCancel={() => setEditingTask(null)}
               loading={saving}
@@ -736,7 +825,6 @@ function TasksPageContent() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deletingTask} onOpenChange={(open) => !open && setDeletingTask(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -744,7 +832,7 @@ function TasksPageContent() {
             <AlertDialogDescription>
               This action cannot be undone. This will permanently delete the task
               {deletingTask?.children && deletingTask.children.length > 0 && (
-                <> and all {deletingTask.children.length} child task{deletingTask.children.length > 1 ? 's' : ''}</>
+                <> and all {deletingTask.children.length} child task{deletingTask.children.length > 1 ? "s" : ""}</>
               )}
               .
             </AlertDialogDescription>
@@ -781,10 +869,7 @@ function TasksPageContent() {
             <AlertDialogAction
               onClick={() => {
                 if (!progressOverwriteWarning) return;
-                openChildCreateDialog(
-                  progressOverwriteWarning.parentTask,
-                  progressOverwriteWarning.childType
-                );
+                openChildCreateDialog(progressOverwriteWarning.parentTask, progressOverwriteWarning.childType);
                 setProgressOverwriteWarning(null);
               }}
             >

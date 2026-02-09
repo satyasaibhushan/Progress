@@ -2,7 +2,7 @@
 
 import { Task, Group, Habit, HabitLog } from "@/types";
 import { TaskCard } from "./task-card";
-import { ChevronRight, ChevronDown, Flame, Calendar, Folder } from "lucide-react";
+import { ChevronRight, ChevronDown, Flame, Folder } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +16,7 @@ import { useState } from "react";
 interface TaskTreeProps {
   tasks: Task[];
   groups: Group[];
-  habits: Habit[];
+  habits?: Habit[];
   level?: number;
   onEdit?: (task: Task) => void;
   onDelete?: (task: Task) => void;
@@ -29,7 +29,6 @@ interface TaskTreeProps {
   onAddTask?: (parentTask: Task) => void;
   onAddHabit?: (parentTask: Task) => void;
   highlightedHabitId?: string | null;
-  highlightedTaskId?: string | null;
   isTaskCompleted?: (task: Task) => boolean;
 }
 
@@ -53,7 +52,7 @@ function calculateStreak(logs: HabitLog[]): number {
   });
 
   let streak = 0;
-  let currentDate = new Date();
+  const currentDate = new Date();
   currentDate.setHours(0, 0, 0, 0);
 
   // Check if today is logged
@@ -117,7 +116,7 @@ function calculateTaskProgress(task: Task & { total_weight?: string; weighted_pr
 export function TaskTree({
   tasks,
   groups,
-  habits,
+  habits = [],
   level = 0,
   onEdit,
   onDelete,
@@ -130,7 +129,6 @@ export function TaskTree({
   onAddTask,
   onAddHabit,
   highlightedHabitId,
-  highlightedTaskId,
   isTaskCompleted,
 }: TaskTreeProps) {
   const router = useRouter();
@@ -235,6 +233,11 @@ export function TaskTree({
               } else if (fullHabit.currentCount !== undefined && fullHabit.targetCount) {
                 currentCount = fullHabit.currentCount;
                 habitProgress = Math.min(100, Math.round((currentCount / fullHabit.targetCount) * 100));
+              } else if (typeof fullHabit.progress === "number") {
+                habitProgress = Math.min(100, Math.max(0, Math.round(fullHabit.progress)));
+                if (fullHabit.targetCount > 0) {
+                  currentCount = fullHabit.currentCount ?? Math.round((habitProgress / 100) * fullHabit.targetCount);
+                }
               }
               
               // Calculate streak from logs
@@ -253,7 +256,6 @@ export function TaskTree({
                   currentLevel={currentLevel}
                   isHighlighted={isHabitHighlighted}
                   onHabitClick={() => onHabitClick?.(habit.id)}
-                  onGroupClick={(groupId) => router.push(`/groups/${groupId}`)}
                 />
               );
             })}
@@ -274,7 +276,6 @@ export function TaskTree({
     currentLevel,
     isHighlighted,
     onHabitClick,
-    onGroupClick,
   }: {
     habit: Habit;
     fullHabit: Habit;
@@ -285,7 +286,6 @@ export function TaskTree({
     currentLevel: number;
     isHighlighted: boolean;
     onHabitClick: () => void;
-    onGroupClick: (groupId: string) => void;
   }) {
     const [isHovered, setIsHovered] = useState(false);
                 

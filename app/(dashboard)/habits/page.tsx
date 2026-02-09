@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo, Suspense } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
 import { useHeaderAction } from "../layout";
-import { isPending } from "@/lib/date-helpers";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getHabits } from "@/lib/api/habits";
-import { getHabitLogs, logHabit, deleteHabitLog, updateHabitLogCount } from "@/lib/api/habits";
+import { getHabit, getHabitLogs, logHabit, deleteHabitLog, updateHabitLogCount, getHabitPage, HabitStatus } from "@/lib/api/habits";
 import { getGroups } from "@/lib/api/groups";
 import { getTasks } from "@/lib/api/tasks";
 import { getLabels } from "@/lib/api/labels";
@@ -22,7 +20,7 @@ import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
-import { LazyList } from "@/components/shared/lazy-list";
+import { ServerLazyList } from "@/components/shared/server-lazy-list";
 import { Calendar as CalendarIcon, ListTodo } from "lucide-react";
 import { isSameDay, parseISO } from "date-fns";
 import {
@@ -86,37 +84,92 @@ function calculateStreak(logs: HabitLog[]): number {
   return streak;
 }
 
-// Calculate habit progress
-function calculateHabitProgress(habit: Habit, logs: HabitLog[]): number {
-  const totalCount = logs.reduce((sum, log) => sum + log.count, 0);
-  if (habit.targetCount === 0) return 0;
-  return Math.min(100, Math.round((totalCount / habit.targetCount) * 100));
+function getHabitProgressValue(habit: Habit): number {
+  const progress = typeof habit.progress === "number" ? habit.progress : 0;
+  return Math.min(100, Math.max(0, Math.round(progress)));
+}
+
+interface HabitPageState {
+  items: Habit[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  initialized: boolean;
+  loadingMore: boolean;
+}
+
+function createEmptyHabitPageState(): HabitPageState {
+  return {
+    items: [],
+    nextCursor: null,
+    hasMore: true,
+    initialized: false,
+    loadingMore: false,
+  };
+}
+
+const HABITS_PAGE_SIZE = 10;
+const HABIT_STATUSES: HabitStatus[] = ["active", "future", "completed"];
+
+interface HabitFormPayload {
+  title: string;
+  type: "DAILY" | "WEEKLY" | "MONTHLY";
+  targetCount?: number | null;
+  countPerPeriod?: number;
+  importance?: number;
+  description?: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  activeDays?: number[] | null;
+  groupId?: string | null;
+  parentTaskId?: string | null;
+  labelIds?: string[];
 }
 
 function HabitsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setHeaderRightAction, setHeaderSubtitle } = useHeaderAction();
-  const [habits, setHabits] = useState<Habit[]>([]);
+  const [habitPages, setHabitPages] = useState<Record<HabitStatus, HabitPageState>>({
+    active: createEmptyHabitPageState(),
+    future: createEmptyHabitPageState(),
+    completed: createEmptyHabitPageState(),
+  });
+  const [statusCounts, setStatusCounts] = useState<Record<HabitStatus, number>>({
+    active: 0,
+    future: 0,
+    completed: 0,
+  });
   const [selectedHabit, setSelectedHabit] = useState<Habit | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
-  const [logs, setLogs] = useState<HabitLog[]>([]);
+  const [selectedHabitLogs, setSelectedHabitLogs] = useState<HabitLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
   const [deletingHabit, setDeletingHabit] = useState<Habit | null>(null);
   const [creatingHabit, setCreatingHabit] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"active" | "future" | "completed">("active");
+  const [activeTab, setActiveTab] = useState<HabitStatus>("active");
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const selectedHabitId = selectedHabit?.id;
   const habitRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
-  const processedHighlightRef = useRef<string | null>(null);
+  const habitPagesRef = useRef(habitPages);
   const highlightHabitId = searchParams.get("highlight");
-  const forceShowAll = !!highlightHabitId;
-  const HABITS_PAGE_SIZE = 10;
+  const initialHighlightIdRef = useRef(highlightHabitId);
+  const processedHighlightRef = useRef<string | null>(null);
+  const habits = useMemo(() => {
+    return [
+      ...habitPages.active.items,
+      ...habitPages.future.items,
+      ...habitPages.completed.items,
+    ];
+  }, [habitPages]);
 
   // Set header action and subtitle on mount and when habits change
+  useEffect(() => {
+    habitPagesRef.current = habitPages;
+  }, [habitPages]);
+
   useEffect(() => {
     setHeaderRightAction(
       <Button onClick={() => setCreatingHabit(true)}>
@@ -131,34 +184,89 @@ function HabitsPageContent() {
     };
   }, [setHeaderRightAction, setHeaderSubtitle, habits.length]);
 
+  const loadHabitPage = useCallback(async (status: HabitStatus, options?: { reset?: boolean }): Promise<Habit[] | null> => {
+    const reset = options?.reset ?? false;
+    const page = habitPagesRef.current[status];
+    if (page.loadingMore) return null;
+    if (!reset && !page.hasMore) return null;
+
+    setHabitPages((prev) => {
+      const next = {
+        ...prev,
+        [status]: {
+          ...prev[status],
+          loadingMore: true,
+        },
+      };
+      habitPagesRef.current = next;
+      return next;
+    });
+
+    try {
+      const result = await getHabitPage({
+        status,
+        limit: HABITS_PAGE_SIZE,
+        cursor: reset ? null : page.nextCursor,
+      });
+      setHabitPages((prev) => {
+        const next = {
+          ...prev,
+          [status]: {
+            items: reset ? result.items : [...prev[status].items, ...result.items],
+            nextCursor: result.nextCursor,
+            hasMore: result.hasMore,
+            initialized: true,
+            loadingMore: false,
+          },
+        };
+        habitPagesRef.current = next;
+        return next;
+      });
+      setStatusCounts(result.statusCounts);
+      return result.items;
+    } catch (error) {
+      console.error(`Error loading ${status} habits:`, error);
+      setHabitPages((prev) => {
+        const next = {
+          ...prev,
+          [status]: {
+            ...prev[status],
+            loadingMore: false,
+          },
+        };
+        habitPagesRef.current = next;
+        return next;
+      });
+      return null;
+    }
+  }, []);
+
+  const refreshInitializedHabitPages = useCallback(async () => {
+    const initializedStatuses = HABIT_STATUSES.filter((status) => habitPagesRef.current[status].initialized);
+    if (initializedStatuses.length === 0) {
+      await loadHabitPage(activeTab, { reset: true });
+      return;
+    }
+
+    for (const status of initializedStatuses) {
+      await loadHabitPage(status, { reset: true });
+    }
+  }, [activeTab, loadHabitPage]);
+
   useEffect(() => {
     async function loadData() {
       try {
-        // Fetch habits with logs included in a single API call
-        const [habitsData, groupsData, tasksData, labelsData] = await Promise.all([
-          getHabits({ includeLogs: true }),
+        // Fetch static page metadata first. Habit list pages load per-tab.
+        const [groupsData, labelsData] = await Promise.all([
           getGroups(),
-          getTasks({ includeChildren: true, parentId: null }),
           getLabels(),
         ]);
-        setHabits(habitsData);
         setGroups(groupsData);
-        setTasks(tasksData);
         setLabels(labelsData);
-        
-        // Extract logs from habits and flatten into a single array
-        const allLogs = habitsData
-          .filter(habit => habit.habitLogs && habit.habitLogs.length > 0)
-          .flatMap(habit => habit.habitLogs!);
-        setLogs(allLogs);
-        
-        // Only set first habit as selected if there's no highlight param
-        if (habitsData.length > 0) {
-          const urlParams = new URLSearchParams(window.location.search);
-          const highlightId = urlParams.get("highlight");
-          if (!highlightId) {
-            setSelectedHabit(habitsData[0]);
-          }
+        const activePageItems = await loadHabitPage("active", { reset: true });
+        const highlightId = initialHighlightIdRef.current;
+        if (!highlightId && activePageItems && activePageItems.length > 0) {
+          setSelectedHabit(activePageItems[0]);
         }
       } catch (error) {
         console.error("Error loading habits:", error);
@@ -167,67 +275,127 @@ function HabitsPageContent() {
       }
     }
     loadData();
-  }, []);
+  }, [loadHabitPage]);
 
-  // Handle highlighting from URL params
   useEffect(() => {
-    const highlightId = searchParams.get("highlight");
-    if (highlightId && habits.length > 0 && processedHighlightRef.current !== highlightId) {
-      const habit = habits.find((h) => h.id === highlightId);
-      if (habit) {
-        // Mark as processed to prevent re-running
-        processedHighlightRef.current = highlightId;
-        
-        // Always select the habit first (this triggers a re-render)
+    const page = habitPages[activeTab];
+    if (!page.initialized && !page.loadingMore) {
+      loadHabitPage(activeTab, { reset: true });
+    }
+  }, [activeTab, habitPages, loadHabitPage]);
+
+  useEffect(() => {
+    async function loadTasksForForm() {
+      try {
+        const tasksData = await getTasks({ includeChildren: true, parentId: null, includeHabits: false });
+        setTasks(tasksData);
+      } catch (error) {
+        console.error("Error loading tasks for habit form:", error);
+      }
+    }
+
+    const shouldLoadTasks = (creatingHabit || !!editingHabit) && tasks.length === 0;
+    if (shouldLoadTasks) {
+      loadTasksForForm();
+    }
+  }, [creatingHabit, editingHabit, tasks.length]);
+
+  useEffect(() => {
+    if (!highlightHabitId || processedHighlightRef.current === highlightHabitId) {
+      if (!highlightHabitId) {
+        processedHighlightRef.current = null;
+      }
+      return;
+    }
+
+    let cancelled = false;
+
+    const ensureHighlightedHabitLoaded = async () => {
+      for (const status of HABIT_STATUSES) {
+        if (cancelled) return;
+
+        if (!habitPagesRef.current[status].initialized) {
+          await loadHabitPage(status, { reset: true });
+          if (cancelled) return;
+        }
+
+        let habit = habitPagesRef.current[status].items.find((h) => h.id === highlightHabitId);
+        while (!habit && habitPagesRef.current[status].hasMore) {
+          await loadHabitPage(status);
+          if (cancelled) return;
+          habit = habitPagesRef.current[status].items.find((h) => h.id === highlightHabitId);
+        }
+
+        if (!habit) continue;
+
+        processedHighlightRef.current = highlightHabitId;
         setSelectedHabit(habit);
-        
-        // Wait for habit to be selected and rendered, then scroll
+        if (activeTab !== status) {
+          setActiveTab(status);
+        }
+
         const scrollToHabit = () => {
-          const element = habitRefs.current[highlightId];
+          const element = habitRefs.current[highlightHabitId];
           if (element && element.offsetParent !== null) {
-            // Element is visible in DOM
             element.scrollIntoView({ behavior: "smooth", block: "center" });
-            // Add subtle highlighting
             element.classList.add("bg-indigo-50");
-            
-            // Wait for scroll animation to complete (smooth scroll takes ~500ms)
-            // Then remove highlight and URL param
+
             setTimeout(() => {
               element.classList.remove("bg-indigo-50");
-              // Remove highlight parameter from URL after scroll completes
-              // Use window.history.replaceState to avoid triggering re-renders
-              const params = new URLSearchParams(searchParams.toString());
-              params.delete("highlight");
-              const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
-              window.history.replaceState({}, '', newUrl);
-              // Clear processed ref after URL is cleaned
+              const params = new URLSearchParams(window.location.search);
+              if (params.has("highlight")) {
+                params.delete("highlight");
+                const nextUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
+                window.history.replaceState({}, "", nextUrl);
+              }
               processedHighlightRef.current = null;
-            }, 2000); // Longer highlight duration
+            }, 2000);
             return true;
           }
           return false;
         };
-        
-        // Wait longer for selection to render (React state update + re-render)
+
         setTimeout(() => {
           if (!scrollToHabit()) {
-            // Retry after a delay
             setTimeout(() => {
               if (!scrollToHabit()) {
-                // Final retry
                 setTimeout(() => {
                   scrollToHabit();
                 }, 500);
               }
             }, 500);
           }
-        }, 500); // Increased delay to ensure selection renders
+        }, 500);
+
+        return;
       }
-    } else if (!highlightId) {
-      // Clear processed ref when highlight param is removed
-      processedHighlightRef.current = null;
+    };
+
+    ensureHighlightedHabitLoaded();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [highlightHabitId, activeTab, loadHabitPage]);
+
+  useEffect(() => {
+    async function loadSelectedHabitLogs() {
+      if (!selectedHabitId) {
+        setSelectedHabitLogs([]);
+        return;
+      }
+
+      try {
+        const logsData = await getHabitLogs(selectedHabitId);
+        setSelectedHabitLogs(logsData);
+      } catch (error) {
+        console.error("Error loading selected habit logs:", error);
+        setSelectedHabitLogs([]);
+      }
     }
-  }, [searchParams, habits, selectedHabit?.id, router]);
+
+    loadSelectedHabitLogs();
+  }, [selectedHabitId]);
 
   const [loggingDate, setLoggingDate] = useState<string | null>(null);
 
@@ -247,9 +415,6 @@ function HabitsPageContent() {
     setLoggingDate(clickKey);
     
     try {
-      // Filter logs for the selected habit only
-      const selectedHabitLogs = logs.filter(log => log.habitId === selectedHabit.id);
-      
       // Find existing log for this date (compare dates properly)
       // Compare using formatted date strings to avoid timezone issues
       const existingLog = selectedHabitLogs.find(log => {
@@ -295,37 +460,21 @@ function HabitsPageContent() {
         }
       }
       
-      // Reload only the updated habit and its logs
-      const [habitsData, updatedLogs] = await Promise.all([
-        getHabits(),
-        getHabitLogs(selectedHabit.id)
+      // Refresh current tab list and selected habit details.
+      const [updatedLogs, updatedHabit] = await Promise.all([
+        getHabitLogs(selectedHabit.id),
+        getHabit(selectedHabit.id),
       ]);
-      
-      // Update habits state
-      setHabits(habitsData);
-      
-      // Update logs state: remove old logs for this habit and add new ones
-      setLogs(prevLogs => {
-        const otherHabitsLogs = prevLogs.filter(log => log.habitId !== selectedHabit.id);
-        return [...otherHabitsLogs, ...updatedLogs];
-      });
-      
-      const updated = habitsData.find((h) => h.id === selectedHabit.id);
-      if (updated) setSelectedHabit(updated);
+      setSelectedHabitLogs(updatedLogs);
+      setSelectedHabit(updatedHabit);
+      await refreshInitializedHabitPages();
     } catch (error: unknown) {
       console.error("Error toggling habit log:", error);
       // If log not found, it might have been deleted already - just reload data for this habit
       if (error instanceof Error && error.message.includes("Log not found") && selectedHabit) {
         // Reload logs for this habit only to sync state
-        const [habitsData, updatedLogs] = await Promise.all([
-          getHabits(),
-          getHabitLogs(selectedHabit.id)
-        ]);
-        setHabits(habitsData);
-        setLogs(prevLogs => {
-          const otherHabitsLogs = prevLogs.filter(log => log.habitId !== selectedHabit.id);
-          return [...otherHabitsLogs, ...updatedLogs];
-        });
+        const updatedLogs = await getHabitLogs(selectedHabit.id);
+        setSelectedHabitLogs(updatedLogs);
       }
     } finally {
       // Clear logging state after operation completes
@@ -336,9 +485,12 @@ function HabitsPageContent() {
     }
   };
 
-  const handleCreate = async (data: any) => {
+  const handleCreate = async (data: HabitFormPayload) => {
     setSaving(true);
     try {
+      if (data.targetCount == null || data.importance == null) {
+        throw new Error("Missing required habit fields");
+      }
       const createData: CreateHabitInput = {
         title: data.title,
         type: data.type,
@@ -348,17 +500,13 @@ function HabitsPageContent() {
         description: data.description,
         startDate: data.startDate || undefined,
         endDate: data.endDate || undefined,
-        activeDays: data.activeDays,
+        activeDays: data.activeDays ?? undefined,
         groupId: data.groupId || undefined,
         parentTaskId: data.parentTaskId || undefined,
         labelIds: data.labelIds,
       };
       await createHabit(createData);
-      const habitsData = await getHabits();
-      setHabits(habitsData);
-      if (habitsData.length > 0 && !selectedHabit) {
-        setSelectedHabit(habitsData[0]);
-      }
+      await refreshInitializedHabitPages();
       setCreatingHabit(false);
     } catch (error) {
       console.error("Error creating habit:", error);
@@ -368,10 +516,13 @@ function HabitsPageContent() {
     }
   };
 
-  const handleEdit = async (data: any) => {
+  const handleEdit = async (data: HabitFormPayload) => {
     if (!editingHabit) return;
     setSaving(true);
     try {
+      if (data.targetCount == null || data.importance == null) {
+        throw new Error("Missing required habit fields");
+      }
       const updateData: UpdateHabitInput = {
         id: editingHabit.id,
         title: data.title,
@@ -382,19 +533,16 @@ function HabitsPageContent() {
         description: data.description,
         startDate: data.startDate || undefined,
         endDate: data.endDate || undefined,
-        activeDays: data.activeDays,
+        activeDays: data.activeDays ?? undefined,
         groupId: data.groupId || undefined,
         parentTaskId: data.parentTaskId || undefined,
         labelIds: data.labelIds,
       };
       await updateHabit(updateData);
-      const habitsData = await getHabits();
-      setHabits(habitsData);
-      const updated = habitsData.find((h) => h.id === editingHabit.id);
-      if (updated) {
-        setSelectedHabit(updated);
-        setEditingHabit(null);
-      }
+      const updatedHabit = await getHabit(editingHabit.id);
+      setSelectedHabit(updatedHabit);
+      await refreshInitializedHabitPages();
+      setEditingHabit(null);
     } catch (error) {
       console.error("Error updating habit:", error);
       throw error;
@@ -407,62 +555,31 @@ function HabitsPageContent() {
     if (!deletingHabit) return;
     try {
       await deleteHabit(deletingHabit.id);
-      const habitsData = await getHabits();
-      setHabits(habitsData);
       if (deletingHabit.id === selectedHabit?.id) {
-        setSelectedHabit(habitsData.length > 0 ? habitsData[0] : null);
+        setSelectedHabit(null);
+        setSelectedHabitLogs([]);
       }
+      await refreshInitializedHabitPages();
       setDeletingHabit(null);
     } catch (error) {
       console.error("Error deleting habit:", error);
     }
   };
 
-  // Separate and sort pending, active and completed habits - Must be before any returns to follow Rules of Hooks
-  const { pendingHabits, activeHabits, completedHabits } = useMemo(() => {
-    const getHabitLogs = (habit: Habit) => {
-      if (habit.habitLogs && habit.habitLogs.length > 0) return habit.habitLogs;
-      return logs.filter((log) => log.habitId === habit.id);
-    };
+  const activeHabits = habitPages.active.items;
+  const futureHabits = habitPages.future.items;
+  const completedHabits = habitPages.completed.items;
 
-    const getProgress = (habit: Habit) => calculateHabitProgress(habit, getHabitLogs(habit));
-
-    const pending = habits
-      .filter((habit) => isPending(habit.startDate) && getProgress(habit) < 100);
-
-    const active = habits
-      .filter((habit) => !isPending(habit.startDate) && getProgress(habit) < 100);
-
-    const completed = habits
-      .filter((habit) => getProgress(habit) >= 100);
-
-    return { pendingHabits: pending, activeHabits: active, completedHabits: completed };
-  }, [habits, logs]);
-
-  // Calculate progress and streak for selected habit using only its logs
-  const selectedHabitLogs = selectedHabit ? logs.filter(log => log.habitId === selectedHabit.id) : [];
-  const selectedHabitProgress = selectedHabit ? calculateHabitProgress(selectedHabit, selectedHabitLogs) : 0;
+  // Calculate progress and streak for selected habit
+  const selectedHabitProgress = selectedHabit ? getHabitProgressValue(selectedHabit) : 0;
   const selectedHabitStreak = selectedHabit ? calculateStreak(selectedHabitLogs) : 0;
-  const findTaskRecursive = (taskList: Task[], targetId: string): Task | undefined => {
-    for (const task of taskList) {
-      if (task.id === targetId) return task;
-      if (task.children) {
-        const found = findTaskRecursive(task.children, targetId);
-        if (found) return found;
-      }
-    }
-    return undefined;
-  };
 
   const renderHabitItem = (habit: Habit) => {
-    const habitLogs = habit.habitLogs && habit.habitLogs.length > 0
-      ? habit.habitLogs.map(log => ({ ...log, habitId: habit.id }))
-      : logs.filter(log => log.habitId === habit.id);
-    const habitProgress = calculateHabitProgress(habit, habitLogs);
-    const currentCount = habitLogs.reduce((sum, log) => sum + log.count, 0);
-    const streak = calculateStreak(habitLogs);
+    const habitProgress = getHabitProgressValue(habit);
+    const currentCount = habit.currentCount || 0;
+    const streak = selectedHabit?.id === habit.id ? calculateStreak(selectedHabitLogs) : 0;
     const group = groups.find((g) => g.id === habit.groupId);
-    const linkedTask = habit.parentTaskId ? findTaskRecursive(tasks, habit.parentTaskId) : undefined;
+    const linkedTask = habit.parentTask;
 
     return (
       <div
@@ -481,8 +598,8 @@ function HabitsPageContent() {
           isSelected={selectedHabit?.id === habit.id}
           onClick={() => setSelectedHabit(habit)}
           onTaskClick={() => {
-            if (linkedTask) {
-              router.push(`/tasks?highlight=${linkedTask.id}`);
+            if (habit.parentTaskId) {
+              router.push(`/tasks?highlight=${habit.parentTaskId}`);
             }
           }}
           onEdit={() => setEditingHabit(habit)}
@@ -502,11 +619,13 @@ function HabitsPageContent() {
     );
   }
 
+  const totalHabitsCount = statusCounts.active + statusCounts.future + statusCounts.completed;
+
   return (
     <div className="max-w-6xl mx-auto flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
       {/* Create Habit button will be in header via layout */}
 
-      {habits.length === 0 ? (
+      {totalHabitsCount === 0 ? (
         <EmptyState
           icon={CalendarIcon}
           title="No habits yet"
@@ -520,38 +639,40 @@ function HabitsPageContent() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0 overflow-hidden">
           {/* Habits List - Left Column */}
           <div className="lg:col-span-1 flex flex-col overflow-hidden">
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="flex flex-col h-full">
+            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as HabitStatus)} className="flex flex-col h-full">
               <TabsList className="grid w-full grid-cols-3 flex-shrink-0">
                 <TabsTrigger value="active">
                   Active
                   <span className="ml-2 text-xs text-muted-foreground">
-                    ({activeHabits.length})
+                    ({statusCounts.active})
                   </span>
                 </TabsTrigger>
                 <TabsTrigger value="future">
                   Future
                   <span className="ml-2 text-xs text-muted-foreground">
-                    ({pendingHabits.length})
+                    ({statusCounts.future})
                   </span>
                 </TabsTrigger>
                 <TabsTrigger value="completed">
                   Completed
                   <span className="ml-2 text-xs text-muted-foreground">
-                    ({completedHabits.length})
+                    ({statusCounts.completed})
                   </span>
                 </TabsTrigger>
               </TabsList>
 
               <TabsContent value="active" className="flex-1 overflow-y-auto pr-2 space-y-3 mt-4">
-                {activeHabits.length > 0 ? (
-                  <LazyList
+                {!habitPages.active.initialized || (habitPages.active.loadingMore && activeHabits.length === 0) ? (
+                  <LoadingSkeleton count={4} />
+                ) : activeHabits.length > 0 ? (
+                  <ServerLazyList
                     items={activeHabits}
-                    pageSize={HABITS_PAGE_SIZE}
-                    forceShowAll={forceShowAll}
-                    resetKey={activeTab}
+                    hasMore={habitPages.active.hasMore}
+                    loadingMore={habitPages.active.loadingMore}
+                    onLoadMore={() => loadHabitPage("active")}
                     className="space-y-3"
-                    render={(visibleHabits) => (
-                      <>{visibleHabits.map(renderHabitItem)}</>
+                    render={(pagedHabits) => (
+                      <>{pagedHabits.map(renderHabitItem)}</>
                     )}
                   />
                 ) : (
@@ -560,15 +681,17 @@ function HabitsPageContent() {
               </TabsContent>
 
               <TabsContent value="future" className="flex-1 overflow-y-auto pr-2 space-y-3 mt-4">
-                {pendingHabits.length > 0 ? (
-                  <LazyList
-                    items={pendingHabits}
-                    pageSize={HABITS_PAGE_SIZE}
-                    forceShowAll={forceShowAll}
-                    resetKey={activeTab}
+                {!habitPages.future.initialized || (habitPages.future.loadingMore && futureHabits.length === 0) ? (
+                  <LoadingSkeleton count={4} />
+                ) : futureHabits.length > 0 ? (
+                  <ServerLazyList
+                    items={futureHabits}
+                    hasMore={habitPages.future.hasMore}
+                    loadingMore={habitPages.future.loadingMore}
+                    onLoadMore={() => loadHabitPage("future")}
                     className="space-y-3"
-                    render={(visibleHabits) => (
-                      <>{visibleHabits.map(renderHabitItem)}</>
+                    render={(pagedHabits) => (
+                      <>{pagedHabits.map(renderHabitItem)}</>
                     )}
                   />
                 ) : (
@@ -577,15 +700,17 @@ function HabitsPageContent() {
               </TabsContent>
 
               <TabsContent value="completed" className="flex-1 overflow-y-auto pr-2 space-y-3 mt-4">
-                {completedHabits.length > 0 ? (
-                  <LazyList
+                {!habitPages.completed.initialized || (habitPages.completed.loadingMore && completedHabits.length === 0) ? (
+                  <LoadingSkeleton count={4} />
+                ) : completedHabits.length > 0 ? (
+                  <ServerLazyList
                     items={completedHabits}
-                    pageSize={HABITS_PAGE_SIZE}
-                    forceShowAll={forceShowAll}
-                    resetKey={activeTab}
+                    hasMore={habitPages.completed.hasMore}
+                    loadingMore={habitPages.completed.loadingMore}
+                    onLoadMore={() => loadHabitPage("completed")}
                     className="space-y-3"
-                    render={(visibleHabits) => (
-                      <>{visibleHabits.map(renderHabitItem)}</>
+                    render={(pagedHabits) => (
+                      <>{pagedHabits.map(renderHabitItem)}</>
                     )}
                   />
                 ) : (
@@ -608,29 +733,15 @@ function HabitsPageContent() {
                           {selectedHabit.description}
                         </p>
                       )}
-                                {(() => {
-                                  // Find linked task recursively (including child tasks)
-                                  const findTaskRecursive = (taskList: Task[], targetId: string): Task | undefined => {
-                                    for (const task of taskList) {
-                                      if (task.id === targetId) return task;
-                                      if (task.children) {
-                                        const found = findTaskRecursive(task.children, targetId);
-                                        if (found) return found;
-                                      }
-                                    }
-                                    return undefined;
-                                  };
-                                  const linkedTask = selectedHabit.parentTaskId ? findTaskRecursive(tasks, selectedHabit.parentTaskId) : undefined;
-                                  return linkedTask ? (
-                                    <button
-                                      onClick={() => router.push(`/tasks?highlight=${linkedTask.id}`)}
-                                      className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-700 mt-0.5 transition-colors"
-                                    >
-                                      <ListTodo className="w-4 h-4" />
-                                      <span>{linkedTask.title}</span>
-                                    </button>
-                                  ) : null;
-                                })()}
+                                {selectedHabit.parentTaskId && selectedHabit.parentTask ? (
+                                  <button
+                                    onClick={() => router.push(`/tasks?highlight=${selectedHabit.parentTaskId}`)}
+                                    className="flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-700 mt-0.5 transition-colors"
+                                  >
+                                    <ListTodo className="w-4 h-4" />
+                                    <span>{selectedHabit.parentTask.title}</span>
+                                  </button>
+                                ) : null}
                     </div>
                     <div className="flex items-center gap-4 ml-4">
                       {selectedHabit.countPerPeriod && selectedHabit.countPerPeriod > 1 && (

@@ -3,15 +3,14 @@ import { prisma } from "@/lib/prisma"
 import { createHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
-import { addHabitToTask, calculateHabitCompletion } from "@/lib/progress-calculator"
+import { addHabitToTask } from "@/lib/progress-calculator"
 import { calculateTargetCount } from "@/lib/habit-helpers"
 import { HabitType } from "@prisma/client"
 import { calculateIdealProgress, isPending } from "@/lib/date-helpers"
 import {
   getInheritedLabelsFromHabit,
-  getInheritedGroupFromHabit,
 } from "@/lib/inheritance-helpers"
-import { serializeHabits, serializeHabit } from "@/lib/utils"
+import { serializeHabit } from "@/lib/utils"
 
 // GET /api/habits - Get all habits for the authenticated user with optional filters
 export async function GET(request: Request) {
@@ -31,13 +30,14 @@ export async function GET(request: Request) {
       return Number.isNaN(time) ? fallback : time
     }
 
-    const getHabitProgress = async (habit: any): Promise<number> => {
+    const getHabitProgress = (habit: any, currentCount: number): number => {
       if (includeLogs && Array.isArray(habit.habitLogs)) {
         const totalCount = habit.habitLogs.reduce((sum: number, log: any) => sum + (log.count || 0), 0)
         if (!habit.targetCount) return 0
         return clampProgress(Math.round((totalCount / habit.targetCount) * 100))
       }
-      return clampProgress(await calculateHabitCompletion(habit.id))
+      if (!habit.targetCount) return 0
+      return clampProgress(Math.round((currentCount / habit.targetCount) * 100))
     }
 
     const getHabitScore = (habit: any, progress: number): number => {
@@ -62,6 +62,15 @@ export async function GET(request: Request) {
     const parentTaskId = searchParams.get("parentTaskId")
     const type = searchParams.get("type")
     const includeLogs = searchParams.get("includeLogs") === "true" // Defaults to false if not specified
+    const status = searchParams.get("status")
+    const paginate = searchParams.get("paginate") === "true"
+    const limitParam = Number.parseInt(searchParams.get("limit") || "20", 10)
+    const cursorParam = Number.parseInt(searchParams.get("cursor") || "0", 10)
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 20
+    const cursor = Number.isFinite(cursorParam) ? Math.max(cursorParam, 0) : 0
+    const statusFilter = status === "active" || status === "future" || status === "completed"
+      ? status
+      : null
 
     // Build where clause
     const where: {
@@ -124,16 +133,36 @@ export async function GET(request: Request) {
       },
     })
 
-    // Calculate progress for each habit and serialize
-    const habitsWithProgress = await Promise.all(
-      habits.map(async (habit) => {
-        const progress = await getHabitProgress(habit)
-        return serializeHabit({
-          ...habit,
-          progress,
+    const habitIds = habits.map((habit) => habit.id)
+    const habitLogSums = habitIds.length > 0
+      ? await prisma.habitLog.groupBy({
+          by: ["habitId"],
+          where: {
+            habitId: {
+              in: habitIds,
+            },
+          },
+          _sum: {
+            count: true,
+          },
         })
-      })
+      : []
+    const habitLogCountByHabitId = new Map<string, number>(
+      habitLogSums.map((entry) => [entry.habitId, entry._sum.count || 0])
     )
+
+    // Calculate progress for each habit and serialize
+    const habitsWithProgress = habits.map((habit) => {
+      const currentCount = includeLogs && Array.isArray(habit.habitLogs)
+        ? habit.habitLogs.reduce((sum: number, log: any) => sum + (log.count || 0), 0)
+        : (habitLogCountByHabitId.get(habit.id) || 0)
+      const progress = getHabitProgress(habit, currentCount)
+      return serializeHabit({
+        ...habit,
+        progress,
+        currentCount,
+      })
+    })
 
     const habitMeta = new Map<string, {
       rank: number
@@ -195,6 +224,50 @@ export async function GET(request: Request) {
     }
 
     habitsWithProgress.sort(compareHabits)
+
+    if (paginate || statusFilter) {
+      const statusCounts = {
+        active: 0,
+        future: 0,
+        completed: 0,
+      }
+
+      for (const habit of habitsWithProgress) {
+        const rank = getMeta(habit).rank
+        if (rank === 0) statusCounts.active += 1
+        else if (rank === 1) statusCounts.future += 1
+        else statusCounts.completed += 1
+      }
+
+      const filteredHabits = statusFilter
+        ? habitsWithProgress.filter((habit) => {
+            const rank = getMeta(habit).rank
+            if (statusFilter === "active") return rank === 0
+            if (statusFilter === "future") return rank === 1
+            return rank === 2
+          })
+        : habitsWithProgress
+
+      if (paginate) {
+        const pagedHabits = filteredHabits.slice(cursor, cursor + limit)
+        const nextCursor = cursor + limit < filteredHabits.length
+          ? String(cursor + limit)
+          : null
+        return NextResponse.json({
+          data: pagedHabits,
+          pageInfo: {
+            nextCursor,
+            hasMore: nextCursor !== null,
+          },
+          statusCounts,
+        })
+      }
+
+      return NextResponse.json({
+        data: filteredHabits,
+        statusCounts,
+      })
+    }
 
     return NextResponse.json({ data: habitsWithProgress })
   } catch (error) {

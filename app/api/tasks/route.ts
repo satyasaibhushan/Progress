@@ -8,9 +8,6 @@ import { serializeTask, serializeTasks } from "@/lib/utils"
 import { calculateIdealProgress, isPending } from "@/lib/date-helpers"
 import {
   getInheritedLabelsFromTask,
-  getInheritedGroupFromTask,
-  propagateLabelsToChildren,
-  propagateGroupToChildren,
 } from "@/lib/inheritance-helpers"
 
 // GET /api/tasks - Get all tasks for the authenticated user with optional filters
@@ -75,6 +72,16 @@ export async function GET(request: Request) {
     const parentId = searchParams.get("parentId")
     const groupId = searchParams.get("groupId")
     const includeChildren = searchParams.get("include") === "children"
+    const includeHabits = searchParams.get("includeHabits") !== "false"
+    const status = searchParams.get("status")
+    const paginate = searchParams.get("paginate") === "true"
+    const limitParam = Number.parseInt(searchParams.get("limit") || "20", 10)
+    const cursorParam = Number.parseInt(searchParams.get("cursor") || "0", 10)
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 20
+    const cursor = Number.isFinite(cursorParam) ? Math.max(cursorParam, 0) : 0
+    const statusFilter = status === "active" || status === "future" || status === "completed"
+      ? status
+      : null
 
     // Build where clause
     const where: {
@@ -135,15 +142,19 @@ export async function GET(request: Request) {
               habits: true,
             },
           },
-          habits: {
-            include: {
-              habitLabels: {
-                include: {
-                  label: true,
+          ...(includeHabits
+            ? {
+                habits: {
+                  include: {
+                    habitLabels: {
+                      include: {
+                        label: true,
+                      },
+                    },
+                  },
                 },
-              },
-            },
-          },
+              }
+            : {}),
         },
         orderBy: [
           {
@@ -155,105 +166,111 @@ export async function GET(request: Request) {
         ],
       })
 
-      const childrenByParentId = new Map<string, typeof allTasks>()
-      for (const task of allTasks) {
-        if (!task.parentId) continue
-        const siblings = childrenByParentId.get(task.parentId) || []
-        siblings.push(task)
-        childrenByParentId.set(task.parentId, siblings)
-      }
+      if (includeHabits) {
+        const childrenByParentId = new Map<string, typeof allTasks>()
+        for (const task of allTasks) {
+          if (!task.parentId) continue
+          const siblings = childrenByParentId.get(task.parentId) || []
+          siblings.push(task)
+          childrenByParentId.set(task.parentId, siblings)
+        }
 
-      const allHabits = allTasks.flatMap((task) => task.habits || [])
-      const uniqueHabitIds = [...new Set(allHabits.map((habit) => habit.id))]
-      const habitLogSums = uniqueHabitIds.length > 0
-        ? await prisma.habitLog.groupBy({
-            by: ["habitId"],
-            where: {
-              habitId: {
-                in: uniqueHabitIds,
+        const allHabits = allTasks.flatMap((task) => task.habits || [])
+        const uniqueHabitIds = [...new Set(allHabits.map((habit) => habit.id))]
+        const habitLogSums = uniqueHabitIds.length > 0
+          ? await prisma.habitLog.groupBy({
+              by: ["habitId"],
+              where: {
+                habitId: {
+                  in: uniqueHabitIds,
+                },
               },
-            },
-            _sum: {
-              count: true,
-            },
-          })
-        : []
-      const habitLogCountByHabitId = new Map<string, number>(
-        habitLogSums.map((entry) => [entry.habitId, entry._sum.count || 0])
-      )
-      const habitProgressByHabitId = new Map<string, number>()
-      for (const habit of allHabits) {
-        if (habitProgressByHabitId.has(habit.id)) continue
-        const totalCount = habitLogCountByHabitId.get(habit.id) || 0
-        const targetCount = habit.targetCount || 0
-        const progress = targetCount > 0 ? (totalCount / targetCount) * 100 : 0
-        habitProgressByHabitId.set(habit.id, clampProgress(progress))
-      }
+              _sum: {
+                count: true,
+              },
+            })
+          : []
+        const habitLogCountByHabitId = new Map<string, number>(
+          habitLogSums.map((entry) => [entry.habitId, entry._sum.count || 0])
+        )
+        const habitProgressByHabitId = new Map<string, number>()
+        for (const habit of allHabits) {
+          if (habitProgressByHabitId.has(habit.id)) continue
+          const totalCount = habitLogCountByHabitId.get(habit.id) || 0
+          const targetCount = habit.targetCount || 0
+          const progress = targetCount > 0 ? (totalCount / targetCount) * 100 : 0
+          const clampedProgress = clampProgress(progress)
+          habitProgressByHabitId.set(habit.id, clampedProgress)
+          const habitWithDerivedData = habit as { currentCount?: number; progress?: number }
+          habitWithDerivedData.currentCount = totalCount
+          habitWithDerivedData.progress = clampedProgress
+        }
 
-      type TaskContribution = {
-        totalWeight: number
-        weightedProgress: number
-        progress: number
-      }
+        type TaskContribution = {
+          totalWeight: number
+          weightedProgress: number
+          progress: number
+        }
 
-      const contributionMemo = new Map<string, TaskContribution>()
-      const computeTaskContribution = (task: any): TaskContribution => {
-        const cached = contributionMemo.get(task.id)
-        if (cached) return cached
+        const contributionMemo = new Map<string, TaskContribution>()
+        const computeTaskContribution = (task: any): TaskContribution => {
+          const cached = contributionMemo.get(task.id)
+          if (cached) return cached
 
-        const directChildren = childrenByParentId.get(task.id) || []
-        const linkedHabits = task.habits || []
+          const directChildren = childrenByParentId.get(task.id) || []
+          const linkedHabits = task.habits || []
 
-        if (directChildren.length === 0 && linkedHabits.length === 0) {
-          const leafProgress = clampProgress(task.progress || 0)
-          const leafWeight = Number(task.importance || 0)
-          const leafWeightedProgress = Math.round(leafProgress * leafWeight)
-          const leafContribution: TaskContribution = {
-            totalWeight: leafWeight,
-            weightedProgress: leafWeightedProgress,
-            progress: leafProgress,
+          if (directChildren.length === 0 && linkedHabits.length === 0) {
+            const leafProgress = clampProgress(task.progress || 0)
+            const leafWeight = Number(task.importance || 0)
+            const leafWeightedProgress = Math.round(leafProgress * leafWeight)
+            const leafContribution: TaskContribution = {
+              totalWeight: leafWeight,
+              weightedProgress: leafWeightedProgress,
+              progress: leafProgress,
+            }
+            contributionMemo.set(task.id, leafContribution)
+            return leafContribution
           }
-          contributionMemo.set(task.id, leafContribution)
-          return leafContribution
+
+          let totalWeight = 0
+          let weightedProgress = 0
+
+          for (const child of directChildren) {
+            const childContribution = computeTaskContribution(child)
+            totalWeight += childContribution.totalWeight
+            weightedProgress += childContribution.weightedProgress
+          }
+
+          for (const habit of linkedHabits) {
+            const habitWeight = Number(habit.importance || 0)
+            const habitProgress = habitProgressByHabitId.get(habit.id) || 0
+            totalWeight += habitWeight
+            weightedProgress += Math.round(habitProgress * habitWeight)
+          }
+
+          const progress = totalWeight > 0
+            ? clampProgress(Math.round((weightedProgress / totalWeight) * 100) / 100)
+            : 0
+          const contribution: TaskContribution = {
+            totalWeight,
+            weightedProgress,
+            progress,
+          }
+          contributionMemo.set(task.id, contribution)
+          return contribution
         }
 
-        let totalWeight = 0
-        let weightedProgress = 0
+        for (const task of allTasks) {
+          const directChildren = childrenByParentId.get(task.id) || []
+          const linkedHabits = task.habits || []
+          if (directChildren.length === 0 && linkedHabits.length === 0) continue
 
-        for (const child of directChildren) {
-          const childContribution = computeTaskContribution(child)
-          totalWeight += childContribution.totalWeight
-          weightedProgress += childContribution.weightedProgress
+          const contribution = computeTaskContribution(task)
+          task.total_weight = BigInt(contribution.totalWeight)
+          task.weighted_progress = BigInt(contribution.weightedProgress)
+          task.progress = contribution.progress
         }
-
-        for (const habit of linkedHabits) {
-          const habitWeight = Number(habit.importance || 0)
-          const habitProgress = habitProgressByHabitId.get(habit.id) || 0
-          totalWeight += habitWeight
-          weightedProgress += Math.round(habitProgress * habitWeight)
-        }
-
-        const progress = totalWeight > 0
-          ? clampProgress(Math.round((weightedProgress / totalWeight) * 100) / 100)
-          : 0
-        const contribution: TaskContribution = {
-          totalWeight,
-          weightedProgress,
-          progress,
-        }
-        contributionMemo.set(task.id, contribution)
-        return contribution
-      }
-
-      for (const task of allTasks) {
-        const directChildren = childrenByParentId.get(task.id) || []
-        const linkedHabits = task.habits || []
-        if (directChildren.length === 0 && linkedHabits.length === 0) continue
-
-        const contribution = computeTaskContribution(task)
-        task.total_weight = BigInt(contribution.totalWeight)
-        task.weighted_progress = BigInt(contribution.weightedProgress)
-        task.progress = contribution.progress
       }
 
       const taskMeta = new Map<string, {
@@ -334,6 +351,51 @@ export async function GET(request: Request) {
         ? buildTaskTree(null)
         : buildTaskTree(parentId)
 
+      if (paginate || statusFilter) {
+        const statusCounts = {
+          active: 0,
+          future: 0,
+          completed: 0,
+        }
+
+        for (const rootTask of rootTasks) {
+          const rank = getMeta(rootTask).rank
+          if (rank === 0) statusCounts.active += 1
+          else if (rank === 1) statusCounts.future += 1
+          else statusCounts.completed += 1
+        }
+
+        const filteredRootTasks = statusFilter
+          ? rootTasks.filter((rootTask) => {
+              const rank = getMeta(rootTask).rank
+              if (statusFilter === "active") return rank === 0
+              if (statusFilter === "future") return rank === 1
+              return rank === 2
+            })
+          : rootTasks
+
+        if (paginate) {
+          const pagedRootTasks = filteredRootTasks.slice(cursor, cursor + limit)
+          const nextCursor = cursor + limit < filteredRootTasks.length
+            ? String(cursor + limit)
+            : null
+
+          return NextResponse.json({
+            data: serializeTasks(pagedRootTasks),
+            pageInfo: {
+              nextCursor,
+              hasMore: nextCursor !== null,
+            },
+            statusCounts,
+          })
+        }
+
+        return NextResponse.json({
+          data: serializeTasks(filteredRootTasks),
+          statusCounts,
+        })
+      }
+
       return NextResponse.json({ data: serializeTasks(rootTasks) })
     }
 
@@ -365,15 +427,19 @@ export async function GET(request: Request) {
             habits: true,
           },
         },
-        habits: {
-          include: {
-            habitLabels: {
-              include: {
-                label: true,
+        ...(includeHabits
+          ? {
+              habits: {
+                include: {
+                  habitLabels: {
+                    include: {
+                      label: true,
+                    },
+                  },
+                },
               },
-            },
-          },
-        },
+            }
+          : {}),
       },
       orderBy: [
         {
@@ -445,6 +511,50 @@ export async function GET(request: Request) {
     }
 
     tasks.sort(compareTasks)
+
+    if (paginate || statusFilter) {
+      const statusCounts = {
+        active: 0,
+        future: 0,
+        completed: 0,
+      }
+
+      for (const task of tasks) {
+        const rank = getMeta(task).rank
+        if (rank === 0) statusCounts.active += 1
+        else if (rank === 1) statusCounts.future += 1
+        else statusCounts.completed += 1
+      }
+
+      const filteredTasks = statusFilter
+        ? tasks.filter((task) => {
+            const rank = getMeta(task).rank
+            if (statusFilter === "active") return rank === 0
+            if (statusFilter === "future") return rank === 1
+            return rank === 2
+          })
+        : tasks
+
+      if (paginate) {
+        const pagedTasks = filteredTasks.slice(cursor, cursor + limit)
+        const nextCursor = cursor + limit < filteredTasks.length
+          ? String(cursor + limit)
+          : null
+        return NextResponse.json({
+          data: serializeTasks(pagedTasks),
+          pageInfo: {
+            nextCursor,
+            hasMore: nextCursor !== null,
+          },
+          statusCounts,
+        })
+      }
+
+      return NextResponse.json({
+        data: serializeTasks(filteredTasks),
+        statusCounts,
+      })
+    }
 
     return NextResponse.json({ data: serializeTasks(tasks) })
   } catch (error) {

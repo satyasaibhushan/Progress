@@ -59,11 +59,16 @@ export interface Habit {
   targetCount: number;
   countPerPeriod?: number; // How many times per period (defaults to 1)
   importance: number;
+  progress?: number;
   startDate?: string;
   endDate?: string;
   activeDays?: number[];
   groupId?: string;
   parentTaskId?: string;
+  parentTask?: {
+    id: string;
+    title: string;
+  };
   userId?: string;
   createdAt?: string;
   updatedAt?: string;
