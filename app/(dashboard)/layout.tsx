@@ -24,7 +24,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const handleNavigate = (type: "task" | "habit", id: string) => {
     if (type === "task") {
-      router.push(`/tasks/${id}`);
+      router.push(`/tasks?highlight=${id}`);
     } else {
       router.push(`/habits?highlight=${id}`);
     }
