@@ -305,7 +305,7 @@ export default function DashboardPage() {
       avgTaskProgress,
       avgHabitProgress,
     };
-  }, [selectedLabel, allLeafTasks, habits]);
+  }, [selectedLabel, allLeafTasks, habits, tasks]);
 
   if (loading) {
     return (
@@ -337,7 +337,7 @@ export default function DashboardPage() {
         <GroupBreakdown groups={groupProgress} limit={5} />
         {selectedLabel && (
           <LabelStats
-            labels={sortedLabels}
+            labels={labels}
             selectedLabel={selectedLabel}
             onLabelChange={setSelectedLabel}
             stats={labelStats}

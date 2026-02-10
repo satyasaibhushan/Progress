@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic"
+
 import { NextResponse } from "next/server"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { getSuggestion, getSuggestions } from "@/lib/suggestion-algorithm"

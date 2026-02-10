@@ -37,9 +37,8 @@ const formSchema = createTaskSchema.extend({
   labelIds: z.array(z.string()).optional(),
 });
 
-type TaskFormData = z.infer<typeof formSchema> & {
-  labelIds?: string[];
-};
+type TaskFormInput = z.input<typeof formSchema>;
+type TaskFormData = z.output<typeof formSchema>;
 
 interface TaskFormProps {
   task?: Task;
@@ -68,7 +67,7 @@ export function TaskForm({
     formState: { errors },
     setValue,
     watch,
-  } = useForm<TaskFormData>({
+  } = useForm<TaskFormInput, unknown, TaskFormData>({
     resolver: zodResolver(formSchema),
     defaultValues: task
       ? {
@@ -97,7 +96,7 @@ export function TaskForm({
     }
   }, [initialParentId, task, setValue]);
 
-  const importance = watch("importance");
+  const importance = watch("importance") ?? 50;
   const selectedParentId = watch("parentId");
   const selectedGroupId = watch("groupId") || undefined;
   const watchedLabelIds = watch("labelIds");

@@ -29,6 +29,7 @@ interface TaskTreeProps {
   onAddTask?: (parentTask: Task) => void;
   onAddHabit?: (parentTask: Task) => void;
   highlightedHabitId?: string | null;
+  highlightedTaskId?: string | null;
   isTaskCompleted?: (task: Task) => boolean;
 }
 
@@ -129,6 +130,7 @@ export function TaskTree({
   onAddTask,
   onAddHabit,
   highlightedHabitId,
+  highlightedTaskId,
   isTaskCompleted,
 }: TaskTreeProps) {
   const router = useRouter();
@@ -149,6 +151,7 @@ export function TaskTree({
     const linkedHabits = task.habits || [];
     const calculatedProgress = calculateTaskProgress(task as Task & { total_weight?: string; weighted_progress?: string });
     const isLeaf = !taskHasChildren && !taskHasHabits;
+    const isTaskHighlighted = highlightedTaskId === task.id;
     
     // Expand if task has habits and is expanded
     const showHabits = taskHasHabits && isExpanded;
@@ -175,7 +178,11 @@ export function TaskTree({
           )}
           {!taskHasChildren && !taskHasHabits && <div className="w-6" />}
           <div 
-            className={cn("flex-1", onTaskClick && "cursor-pointer")}
+            className={cn(
+              "flex-1 transition-colors rounded-md",
+              onTaskClick && "cursor-pointer",
+              isTaskHighlighted && "bg-indigo-50"
+            )}
             onClick={() => onTaskClick?.(task.id)}
             ref={taskRefs ? (el) => {
               if (typeof taskRefs[task.id] === 'function') {
