@@ -287,14 +287,14 @@ export async function PUT(
           ? (validatedData.deadline ? new Date(validatedData.deadline) : null)
           : existingTask.deadline
 
-        // If both task and parent have deadlines, child must be before parent
+        // If both task and parent have deadlines, child must not be after parent
         if (taskDeadline && parentToCheck.deadline) {
           const childDeadline = new Date(taskDeadline)
           const parentDeadline = new Date(parentToCheck.deadline)
 
-          if (childDeadline >= parentDeadline) {
+          if (childDeadline > parentDeadline) {
             return NextResponse.json(
-              { error: "Child task deadline must be before parent task deadline" },
+              { error: "Child task deadline must be on or before parent task deadline" },
               { status: 400 }
             )
           }

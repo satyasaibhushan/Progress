@@ -620,14 +620,14 @@ export async function POST(request: Request) {
         )
       }
 
-      // Validate: child deadline must be before parent deadline (if both have deadlines)
+      // Validate: child deadline must not be after parent deadline (if both have deadlines)
       if (validatedData.deadline && parentTask.deadline) {
         const childDeadline = new Date(validatedData.deadline)
         const parentDeadline = new Date(parentTask.deadline)
 
-        if (childDeadline >= parentDeadline) {
+        if (childDeadline > parentDeadline) {
           return NextResponse.json(
-            { error: "Child task deadline must be before parent task deadline" },
+            { error: "Child task deadline must be on or before parent task deadline" },
             { status: 400 }
           )
         }
