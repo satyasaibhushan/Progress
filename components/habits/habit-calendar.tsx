@@ -6,6 +6,7 @@ import { Habit, HabitLog } from "@/types";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useDayRollover } from "@/lib/use-day-rollover";
 
 interface HabitCalendarProps {
   habit: Habit;
@@ -23,6 +24,7 @@ export function HabitCalendar({
   onMonthChange,
 }: HabitCalendarProps) {
   const month = currentMonth;
+  const todayKey = useDayRollover();
   const countPerPeriod = habit.countPerPeriod || 1;
   
   useEffect(() => {
@@ -53,7 +55,7 @@ export function HabitCalendar({
     logCountsByDate.set(dateKey, (logCountsByDate.get(dateKey) || 0) + log.count);
   });
 
-  const today = format(new Date(), "yyyy-MM-dd");
+  const today = todayKey;
 
   const isActiveDay = (dayOfWeek: number) => {
     if (habit.type !== "WEEKLY") return true;

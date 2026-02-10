@@ -10,6 +10,7 @@ import { Calendar, Folder, MoreVertical, ListTodo, CheckCircle2, Circle, Clock, 
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { isPending } from "@/lib/date-helpers";
+import { useDayRollover } from "@/lib/use-day-rollover";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,9 +54,11 @@ export function TaskCard({
   crossOut = false,
 }: TaskCardProps) {
   const router = useRouter();
+  const todayKey = useDayRollover();
   
-  // Get group from task if not provided as prop
-  const displayGroup = group || (task as any).group;
+  // Get group from task payload if not provided as prop
+  const taskWithGroup = task as Task & { group?: Group };
+  const displayGroup = group || taskWithGroup.group;
   // Calculate display progress - cap at 100% and ensure it's valid
   let rawProgress = calculatedProgress !== undefined ? calculatedProgress : (task.progress || 0);
   
@@ -83,10 +86,10 @@ export function TaskCard({
     if (displayProgress >= 100) return false;
     const deadline = new Date(task.deadline);
     deadline.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = new Date(`${todayKey}T00:00:00`);
     return deadline < today;
   })();
+  const isScheduled = isPending(task.startDate);
 
   const handleProgressChange = useCallback(async (newProgress: number) => {
     setProgressValue(newProgress);
@@ -231,10 +234,10 @@ export function TaskCard({
                 <span>Due: {format(new Date(task.deadline), "MMM d, yyyy")}</span>
               </div>
             )}
-            {isPending(task.startDate) && (
+            {isScheduled && (
               <Badge variant="outline" className="text-xs flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-200">
                 <Clock className="w-3 h-3" />
-                Pending
+                Scheduled
               </Badge>
             )}
             {isOverdue && (

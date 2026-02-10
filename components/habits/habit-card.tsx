@@ -8,6 +8,7 @@ import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { Flame, Repeat, ArrowRight, ListTodo, MoreVertical, Folder, Clock, Calendar, Edit, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isPending } from "@/lib/date-helpers";
+import { useDayRollover } from "@/lib/use-day-rollover";
 import { format } from "date-fns";
 import {
   DropdownMenu,
@@ -45,6 +46,7 @@ export function HabitCard({
   currentCount: propCurrentCount,
 }: HabitCardProps) {
   const router = useRouter();
+  const todayKey = useDayRollover();
   
   // Use provided progress/count or calculate from habit
   const currentCount = propCurrentCount ?? habit.currentCount ?? 0;
@@ -60,13 +62,14 @@ export function HabitCard({
     if (clampedProgress >= 100) return false;
     const endDate = new Date(habit.endDate);
     endDate.setHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = new Date(`${todayKey}T00:00:00`);
     return endDate < today;
   })();
+  const isScheduled = isPending(habit.startDate);
   
-  // Get group from habit if not provided as prop
-  const displayGroup = group || (habit as any).group;
+  // Get group from habit payload if not provided as prop
+  const habitWithGroup = habit as Habit & { group?: Group };
+  const displayGroup = group || habitWithGroup.group;
 
   return (
     <Card
@@ -197,10 +200,10 @@ export function HabitCard({
                 <span>End: {format(new Date(habit.endDate), "MMM d, yyyy")}</span>
               </div>
             )}
-            {isPending(habit.startDate) && (
+            {isScheduled && (
               <Badge variant="outline" className="text-xs flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-200">
                 <Clock className="w-3 h-3" />
-                Pending
+                Scheduled
               </Badge>
             )}
             {isOverdue && (

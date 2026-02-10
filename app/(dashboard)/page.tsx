@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { getTasks } from "@/lib/api/tasks";
 import { getHabits } from "@/lib/api/habits";
@@ -20,6 +20,7 @@ import { ScrollHint } from "@/components/shared/scroll-hint";
 import { subDays, subMonths, subQuarters, subYears } from "date-fns";
 import { useHeaderAction } from "./layout";
 import { isPending } from "@/lib/date-helpers";
+import { useDayRollover } from "@/lib/use-day-rollover";
 
 type TimePeriod = "week" | "month" | "quarter" | "year";
 
@@ -63,6 +64,32 @@ export default function DashboardPage() {
   const [selectedLabel, setSelectedLabel] = useState<Label | null>(null);
   const [loading, setLoading] = useState(true);
   const DASHBOARD_HABITS_PAGE_SIZE = 6;
+  const dayKey = useDayRollover();
+  const previousDayKeyRef = useRef(dayKey);
+
+  const loadDashboardData = useCallback(async (showLoading: boolean) => {
+    if (showLoading) {
+      setLoading(true);
+    }
+    try {
+      const [tasksData, habitsData, groupsData, labelsData] = await Promise.all([
+        getTasks({ includeChildren: true }),
+        getHabits({ includeLogs: true }),
+        getGroups(),
+        getLabels(),
+      ]);
+      setTasks(tasksData);
+      setHabits(habitsData);
+      setGroups(groupsData);
+      setLabels(labelsData);
+    } catch (error) {
+      console.error("Error loading dashboard data:", error);
+    } finally {
+      if (showLoading) {
+        setLoading(false);
+      }
+    }
+  }, []);
 
   // Set time period selector in header
   useEffect(() => {
@@ -86,26 +113,14 @@ export default function DashboardPage() {
   }, [timePeriod, setHeaderRightAction]);
 
   useEffect(() => {
-    async function loadData() {
-      try {
-        const [tasksData, habitsData, groupsData, labelsData] = await Promise.all([
-          getTasks({ includeChildren: true }),
-          getHabits({ includeLogs: true }),
-          getGroups(),
-          getLabels(),
-        ]);
-        setTasks(tasksData);
-        setHabits(habitsData);
-        setGroups(groupsData);
-        setLabels(labelsData);
-      } catch (error) {
-        console.error("Error loading dashboard data:", error);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
+    void loadDashboardData(true);
+  }, [loadDashboardData]);
+
+  useEffect(() => {
+    if (previousDayKeyRef.current === dayKey) return;
+    previousDayKeyRef.current = dayKey;
+    void loadDashboardData(false);
+  }, [dayKey, loadDashboardData]);
 
   // Calculate date range
   const getDateRange = () => {

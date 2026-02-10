@@ -25,6 +25,7 @@ import { TaskForm } from "@/components/tasks/task-form";
 import { HabitForm } from "@/components/habits/habit-form";
 import { Button } from "@/components/ui/button";
 import { isPending } from "@/lib/date-helpers";
+import { useDayRollover } from "@/lib/use-day-rollover";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ServerLazyList } from "@/components/shared/server-lazy-list";
@@ -120,6 +121,8 @@ function TasksPageContent() {
   const highlightedHabitId = searchParams.get("highlightHabit");
   const initialHighlightTaskIdRef = useRef(highlightTaskId);
   const initialHighlightedHabitIdRef = useRef(highlightedHabitId);
+  const dayKey = useDayRollover();
+  const previousDayKeyRef = useRef(dayKey);
 
   const [taskPages, setTaskPages] = useState<Record<TaskStatus, TaskPageState>>({
     active: createEmptyTaskPageState(),
@@ -285,6 +288,13 @@ function TasksPageContent() {
 
     loadInitialData();
   }, [loadTaskPage]);
+
+  useEffect(() => {
+    if (previousDayKeyRef.current === dayKey) return;
+    previousDayKeyRef.current = dayKey;
+    if (loading) return;
+    void refreshInitializedTaskPages();
+  }, [dayKey, loading, refreshInitializedTaskPages]);
 
   useEffect(() => {
     const hasAnyInitializedPage = TASK_STATUSES.some((status) => taskPages[status].initialized);

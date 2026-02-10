@@ -23,6 +23,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ServerLazyList } from "@/components/shared/server-lazy-list";
 import { Calendar as CalendarIcon, ListTodo } from "lucide-react";
 import { parseISO } from "date-fns";
+import { useDayRollover } from "@/lib/use-day-rollover";
 import {
   Dialog,
   DialogContent,
@@ -164,6 +165,7 @@ function HabitsPageContent() {
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<HabitStatus>("active");
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const dayKey = useDayRollover();
   const selectedHabitId = selectedHabit?.id;
   const habitRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const habitPagesRef = useRef(habitPages);
@@ -172,6 +174,7 @@ function HabitsPageContent() {
   const initialHighlightIdRef = useRef(highlightHabitId);
   const processedHighlightRef = useRef<string | null>(null);
   const suppressAutoActiveTabRef = useRef(false);
+  const previousDayKeyRef = useRef(dayKey);
   const habits = useMemo(() => {
     return [
       ...habitPages.active.items,
@@ -338,6 +341,47 @@ function HabitsPageContent() {
     }
     loadData();
   }, [loadHabitPage]);
+
+  useEffect(() => {
+    if (previousDayKeyRef.current === dayKey) return;
+    previousDayKeyRef.current = dayKey;
+    if (loading) return;
+
+    void refreshInitializedHabitPages();
+
+    if (!selectedHabitId) return;
+    const currentHabitId = selectedHabitId;
+    const requestId = ++selectedHabitLogsRequestRef.current;
+    let cancelled = false;
+
+    void Promise.all([
+      getHabitLogs(currentHabitId),
+      getHabit(currentHabitId),
+    ])
+      .then(([logsData, refreshedHabit]) => {
+        if (cancelled || selectedHabitLogsRequestRef.current !== requestId) return;
+        setSelectedHabitLogs(logsData);
+        setSelectedHabit(refreshedHabit);
+        applyHabitPatchToLoadedPages(refreshedHabit.id, {
+          progress: refreshedHabit.progress,
+          currentCount: refreshedHabit.currentCount,
+          streak: refreshedHabit.streak,
+          streakPeriod: refreshedHabit.streakPeriod,
+          currentPeriodCount: refreshedHabit.currentPeriodCount,
+          currentPeriodTarget: refreshedHabit.currentPeriodTarget,
+          currentPeriodComplete: refreshedHabit.currentPeriodComplete,
+          weeklyDistinctDays: refreshedHabit.weeklyDistinctDays,
+        });
+      })
+      .catch((error) => {
+        if (cancelled || selectedHabitLogsRequestRef.current !== requestId) return;
+        console.error("Error refreshing habit data after day rollover:", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dayKey, loading, selectedHabitId, refreshInitializedHabitPages, applyHabitPatchToLoadedPages]);
 
   useEffect(() => {
     const page = habitPages[activeTab];
