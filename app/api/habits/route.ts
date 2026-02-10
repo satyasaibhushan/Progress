@@ -33,11 +33,6 @@ export async function GET(request: Request) {
     }
 
     const getHabitProgress = (habit: any, currentCount: number): number => {
-      if (includeLogs && Array.isArray(habit.habitLogs)) {
-        const totalCount = habit.habitLogs.reduce((sum: number, log: any) => sum + (log.count || 0), 0)
-        if (!habit.targetCount) return 0
-        return clampProgress(Math.round((totalCount / habit.targetCount) * 100))
-      }
       if (!habit.targetCount) return 0
       return clampProgress(Math.round((currentCount / habit.targetCount) * 100))
     }
@@ -66,6 +61,7 @@ export async function GET(request: Request) {
     const includeLogs = searchParams.get("includeLogs") === "true" // Defaults to false if not specified
     const status = searchParams.get("status")
     const paginate = searchParams.get("paginate") === "true"
+    const highlightId = searchParams.get("highlightId")
     const limitParam = Number.parseInt(searchParams.get("limit") || "20", 10)
     const cursorParam = Number.parseInt(searchParams.get("cursor") || "0", 10)
     const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 20
@@ -135,29 +131,11 @@ export async function GET(request: Request) {
       },
     })
 
-    const habitIds = habits.map((habit) => habit.id)
-    const habitLogSums = habitIds.length > 0
-      ? await prisma.habitLog.groupBy({
-          by: ["habitId"],
-          where: {
-            habitId: {
-              in: habitIds,
-            },
-          },
-          _sum: {
-            count: true,
-          },
-        })
-      : []
-    const habitLogCountByHabitId = new Map<string, number>(
-      habitLogSums.map((entry) => [entry.habitId, entry._sum.count || 0])
-    )
-
     // Calculate progress for each habit and serialize
     const habitsWithProgress = habits.map((habit) => {
       const currentCount = includeLogs && Array.isArray(habit.habitLogs)
         ? habit.habitLogs.reduce((sum: number, log: any) => sum + (log.count || 0), 0)
-        : (habitLogCountByHabitId.get(habit.id) || 0)
+        : (habit.currentCount || 0)
       const progress = getHabitProgress(habit, currentCount)
       return serializeHabit({
         ...habit,
@@ -251,9 +229,22 @@ export async function GET(request: Request) {
         : habitsWithProgress
 
       if (paginate) {
-        const pagedHabits = filteredHabits.slice(cursor, cursor + limit)
-        const nextCursor = cursor + limit < filteredHabits.length
-          ? String(cursor + limit)
+        let effectiveCursor = cursor
+        let sliceStart = effectiveCursor
+        let sliceEnd = effectiveCursor + limit
+        if (highlightId) {
+          const highlightedIndex = filteredHabits.findIndex((habit) => habit.id === highlightId)
+          if (highlightedIndex >= 0) {
+            effectiveCursor = Math.floor(highlightedIndex / limit) * limit
+            sliceStart = 0
+            sliceEnd = effectiveCursor + limit
+          }
+        }
+
+        const boundedSliceEnd = Math.min(sliceEnd, filteredHabits.length)
+        const pagedHabits = filteredHabits.slice(sliceStart, boundedSliceEnd)
+        const nextCursor = boundedSliceEnd < filteredHabits.length
+          ? String(boundedSliceEnd)
           : null
         return NextResponse.json({
           data: pagedHabits,

@@ -47,16 +47,12 @@ export async function GET() {
       where: { userId },
       select: {
         id: true,
+        currentCount: true,
         parentTaskId: true,
         targetCount: true,
         habitLabels: {
           select: {
             labelId: true,
-          },
-        },
-        habitLogs: {
-          select: {
-            count: true,
           },
         },
       },
@@ -113,7 +109,7 @@ export async function GET() {
     }
 
     for (const habit of habits) {
-      const totalCount = habit.habitLogs.reduce((sum, log) => sum + log.count, 0)
+      const totalCount = habit.currentCount || 0
       const progress = habit.targetCount > 0
         ? Math.min(100, Math.round((totalCount / habit.targetCount) * 100))
         : 0

@@ -70,6 +70,12 @@ export async function GET(request: Request) {
       return deadline < today
     }
 
+    const treeContainsTaskId = (task: any, targetId: string): boolean => {
+      if (task.id === targetId) return true
+      if (!Array.isArray(task.children) || task.children.length === 0) return false
+      return task.children.some((child: any) => treeContainsTaskId(child, targetId))
+    }
+
     // Optional filters
     const parentId = searchParams.get("parentId")
     const groupId = searchParams.get("groupId")
@@ -77,6 +83,7 @@ export async function GET(request: Request) {
     const includeHabits = searchParams.get("includeHabits") !== "false"
     const status = searchParams.get("status")
     const paginate = searchParams.get("paginate") === "true"
+    const highlightId = searchParams.get("highlightId")
     const limitParam = Number.parseInt(searchParams.get("limit") || "20", 10)
     const cursorParam = Number.parseInt(searchParams.get("cursor") || "0", 10)
     const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 20
@@ -178,27 +185,10 @@ export async function GET(request: Request) {
         }
 
         const allHabits = allTasks.flatMap((task) => task.habits || [])
-        const uniqueHabitIds = [...new Set(allHabits.map((habit) => habit.id))]
-        const habitLogSums = uniqueHabitIds.length > 0
-          ? await prisma.habitLog.groupBy({
-              by: ["habitId"],
-              where: {
-                habitId: {
-                  in: uniqueHabitIds,
-                },
-              },
-              _sum: {
-                count: true,
-              },
-            })
-          : []
-        const habitLogCountByHabitId = new Map<string, number>(
-          habitLogSums.map((entry) => [entry.habitId, entry._sum.count || 0])
-        )
         const habitProgressByHabitId = new Map<string, number>()
         for (const habit of allHabits) {
           if (habitProgressByHabitId.has(habit.id)) continue
-          const totalCount = habitLogCountByHabitId.get(habit.id) || 0
+          const totalCount = habit.currentCount || 0
           const targetCount = habit.targetCount || 0
           const progress = targetCount > 0 ? (totalCount / targetCount) * 100 : 0
           const clampedProgress = clampProgress(progress)
@@ -377,9 +367,24 @@ export async function GET(request: Request) {
           : rootTasks
 
         if (paginate) {
-          const pagedRootTasks = filteredRootTasks.slice(cursor, cursor + limit)
-          const nextCursor = cursor + limit < filteredRootTasks.length
-            ? String(cursor + limit)
+          let effectiveCursor = cursor
+          let sliceStart = effectiveCursor
+          let sliceEnd = effectiveCursor + limit
+          if (highlightId) {
+            const highlightedIndex = filteredRootTasks.findIndex((rootTask) =>
+              treeContainsTaskId(rootTask, highlightId)
+            )
+            if (highlightedIndex >= 0) {
+              effectiveCursor = Math.floor(highlightedIndex / limit) * limit
+              sliceStart = 0
+              sliceEnd = effectiveCursor + limit
+            }
+          }
+
+          const boundedSliceEnd = Math.min(sliceEnd, filteredRootTasks.length)
+          const pagedRootTasks = filteredRootTasks.slice(sliceStart, boundedSliceEnd)
+          const nextCursor = boundedSliceEnd < filteredRootTasks.length
+            ? String(boundedSliceEnd)
             : null
 
           return NextResponse.json({
@@ -538,9 +543,22 @@ export async function GET(request: Request) {
         : tasks
 
       if (paginate) {
-        const pagedTasks = filteredTasks.slice(cursor, cursor + limit)
-        const nextCursor = cursor + limit < filteredTasks.length
-          ? String(cursor + limit)
+        let effectiveCursor = cursor
+        let sliceStart = effectiveCursor
+        let sliceEnd = effectiveCursor + limit
+        if (highlightId) {
+          const highlightedIndex = filteredTasks.findIndex((task) => task.id === highlightId)
+          if (highlightedIndex >= 0) {
+            effectiveCursor = Math.floor(highlightedIndex / limit) * limit
+            sliceStart = 0
+            sliceEnd = effectiveCursor + limit
+          }
+        }
+
+        const boundedSliceEnd = Math.min(sliceEnd, filteredTasks.length)
+        const pagedTasks = filteredTasks.slice(sliceStart, boundedSliceEnd)
+        const nextCursor = boundedSliceEnd < filteredTasks.length
+          ? String(boundedSliceEnd)
           : null
         return NextResponse.json({
           data: serializeTasks(pagedTasks),

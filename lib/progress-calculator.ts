@@ -19,6 +19,17 @@ function roundToTwoDecimals(value: number): number {
 }
 
 /**
+ * Calculate habit progress percentage from current and target counts.
+ */
+export function calculateHabitProgressFromCount(currentCount: number, targetCount: number): number {
+  if (!targetCount || targetCount <= 0) {
+    return 0;
+  }
+  const progress = (currentCount / targetCount) * 100;
+  return roundToTwoDecimals(Math.min(100, Math.max(0, progress)));
+}
+
+/**
  * Calculate habit completion rate (cumulative progress)
  * Progress = (total count of all logs / targetCount) × 100
  *
@@ -31,6 +42,7 @@ export async function calculateHabitCompletion(habitId: string): Promise<number>
     select: {
       id: true,
       targetCount: true,
+      currentCount: true,
     },
   });
 
@@ -38,24 +50,7 @@ export async function calculateHabitCompletion(habitId: string): Promise<number>
     throw new Error(`Habit with ID ${habitId} not found`);
   }
 
-  // Get total count of all logs for this habit
-  const totalLogs = await prisma.habitLog.aggregate({
-    where: {
-      habitId: habitId,
-    },
-    _sum: {
-      count: true,
-    },
-  });
-
-  const totalCount = totalLogs._sum.count || 0;
-
-  if (habit.targetCount === 0) {
-    return 0;
-  }
-
-  const progress = (totalCount / habit.targetCount) * 100;
-  return roundToTwoDecimals(Math.min(100, Math.max(0, progress)));
+  return calculateHabitProgressFromCount(habit.currentCount || 0, habit.targetCount || 0);
 }
 
 /**
@@ -340,6 +335,8 @@ export async function calculateTaskAggregates(taskId: string): Promise<{
         select: {
           id: true,
           importance: true,
+          targetCount: true,
+          currentCount: true,
         },
       },
     },
@@ -369,7 +366,10 @@ export async function calculateTaskAggregates(taskId: string): Promise<{
 
   // Add contributions from linked habits
   for (const habit of task.habits) {
-    const habitProgress = await calculateHabitCompletion(habit.id);
+    const habitProgress = calculateHabitProgressFromCount(
+      habit.currentCount || 0,
+      habit.targetCount || 0
+    );
     totalWeight += BigInt(habit.importance);
     weightedProgress += BigInt(Math.round(habitProgress * habit.importance));
   }
@@ -399,9 +399,25 @@ export async function updateHabitProgress(
 
   if (!habit || !habit.parentTaskId) return;
 
-  const weightedProgressDelta = BigInt(Math.round((newProgress - oldProgress) * habit.importance));
+  await updateHabitProgressForParent(
+    habit.parentTaskId,
+    habit.importance,
+    oldProgress,
+    newProgress
+  );
+}
 
-  await propagateAggregates(habit.parentTaskId, BigInt(0), weightedProgressDelta);
+/**
+ * Update habit contribution directly when parent task and importance are known.
+ */
+export async function updateHabitProgressForParent(
+  parentTaskId: string,
+  importance: number,
+  oldProgress: number,
+  newProgress: number
+): Promise<void> {
+  const weightedProgressDelta = BigInt(Math.round((newProgress - oldProgress) * importance));
+  await propagateAggregates(parentTaskId, BigInt(0), weightedProgressDelta);
 }
 
 /**
@@ -517,6 +533,8 @@ export async function calculateLabelProgress(labelId: string): Promise<{
     select: {
       id: true,
       importance: true,
+      targetCount: true,
+      currentCount: true,
     },
   });
 
@@ -538,7 +556,10 @@ export async function calculateLabelProgress(labelId: string): Promise<{
 
   // Add habit contributions
   for (const habit of habitsWithLabel) {
-    const habitProgress = await calculateHabitCompletionToday(habit.id);
+    const habitProgress = calculateHabitProgressFromCount(
+      habit.currentCount || 0,
+      habit.targetCount || 0
+    );
     totalWeight += BigInt(habit.importance);
     weightedProgress += BigInt(Math.round(habitProgress * habit.importance));
   }
@@ -587,6 +608,8 @@ export async function calculateGroupProgress(groupId: string): Promise<{
     select: {
       id: true,
       importance: true,
+      targetCount: true,
+      currentCount: true,
     },
   });
 
@@ -608,7 +631,10 @@ export async function calculateGroupProgress(groupId: string): Promise<{
 
   // Add habit contributions
   for (const habit of habitsInGroup) {
-    const habitProgress = await calculateHabitCompletionToday(habit.id);
+    const habitProgress = calculateHabitProgressFromCount(
+      habit.currentCount || 0,
+      habit.targetCount || 0
+    );
     totalWeight += BigInt(habit.importance);
     weightedProgress += BigInt(Math.round(habitProgress * habit.importance));
   }

@@ -29,6 +29,7 @@ export interface TaskPageFilters extends TaskFilters {
   status: TaskStatus;
   limit?: number;
   cursor?: string | null;
+  highlightId?: string;
 }
 
 export interface TaskPageResult {
@@ -73,6 +74,9 @@ export async function getTaskPage(filters: TaskPageFilters): Promise<TaskPageRes
   params.append("limit", String(filters.limit ?? 8));
   if (filters.cursor) {
     params.append("cursor", filters.cursor);
+  }
+  if (filters.highlightId) {
+    params.append("highlightId", filters.highlightId);
   }
   if (filters.parentId !== undefined) {
     params.append("parentId", filters.parentId === null ? "null" : filters.parentId);

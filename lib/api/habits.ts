@@ -32,6 +32,7 @@ export interface HabitPageFilters extends HabitFilters {
   status: HabitStatus;
   limit?: number;
   cursor?: string | null;
+  highlightId?: string;
 }
 
 export interface HabitPageResult {
@@ -44,6 +45,7 @@ export interface HabitPageResult {
 export interface LogHabitInput {
   date?: string;
   count?: number;
+  timezoneOffsetMinutes?: number;
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
@@ -81,6 +83,9 @@ export async function getHabitPage(filters: HabitPageFilters): Promise<HabitPage
   params.append("limit", String(filters.limit ?? 10));
   if (filters.cursor) {
     params.append("cursor", filters.cursor);
+  }
+  if (filters.highlightId) {
+    params.append("highlightId", filters.highlightId);
   }
   if (filters.type) {
     params.append("type", filters.type);
@@ -146,10 +151,15 @@ export async function deleteHabit(id: string): Promise<void> {
 }
 
 export async function logHabit(habitId: string, input?: LogHabitInput): Promise<HabitLog> {
+  const payload: LogHabitInput = { ...(input || {}) };
+  if (payload.timezoneOffsetMinutes === undefined && typeof window !== "undefined") {
+    payload.timezoneOffsetMinutes = new Date().getTimezoneOffset();
+  }
+
   const response = await fetch(`/api/habits/${habitId}/log`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input || {}),
+    body: JSON.stringify(payload),
   });
   return handleResponse<HabitLog>(response);
 }

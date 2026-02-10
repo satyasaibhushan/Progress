@@ -120,6 +120,7 @@ model Task {
 
   @@index([startDate])
   @@index([deadline])
+  @@index([userId, createdAt])
   @@index([userId, startDate])
   @@index([userId, deadline])
   @@index([userId, updatedAt])
@@ -145,6 +146,7 @@ model Habit {
   description    String?
   type           HabitType    @default(DAILY)
   targetCount    Int
+  currentCount   Int          @default(0)
   countPerPeriod Int          @default(1)
   importance     Int          @default(50)
   startDate      DateTime?
@@ -163,6 +165,7 @@ model Habit {
 
   @@index([startDate])
   @@index([endDate])
+  @@index([userId, createdAt])
   @@index([userId, startDate])
   @@index([userId, endDate])
   @@index([userId, updatedAt])

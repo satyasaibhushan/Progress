@@ -13,7 +13,6 @@ interface HabitCalendarProps {
   onDateClick?: (date: Date, decrease?: boolean) => void;
   currentMonth?: Date;
   onMonthChange?: (month: Date) => void;
-  isLogging?: boolean;
 }
 
 export function HabitCalendar({
@@ -22,7 +21,6 @@ export function HabitCalendar({
   onDateClick,
   currentMonth = new Date(),
   onMonthChange,
-  isLogging = false,
 }: HabitCalendarProps) {
   const month = currentMonth;
   const countPerPeriod = habit.countPerPeriod || 1;
@@ -141,14 +139,17 @@ export function HabitCalendar({
           return (
             <button
               key={dayKey}
-              onClick={() => !isLogging && !isFuture && onDateClick?.(day, false)}
+              onClick={(event) => {
+                if (isFuture) return;
+                onDateClick?.(day, event.shiftKey);
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
-                if (!isLogging && !isFuture && countPerPeriod > 1 && isLogged) {
+                if (!isFuture && countPerPeriod > 1 && isLogged) {
                   onDateClick?.(day, true);
                 }
               }}
-              disabled={isLogging || isFuture}
+              disabled={isFuture}
               className={cn(
                 "rounded text-xs transition-all relative flex flex-col items-center justify-center w-full aspect-square p-0.5",
                 isToday && "border-2 border-indigo-600",
@@ -159,7 +160,6 @@ export function HabitCalendar({
                   : "bg-muted hover:bg-muted/80",
                 isOverboard && "bg-orange-100 border border-orange-300",
                 !isActive && habit.type === "WEEKLY" && "opacity-40",
-                isLogging && "opacity-50 cursor-wait",
                 isFuture && "opacity-30 cursor-not-allowed blur-[0.5px]"
               )}
             >

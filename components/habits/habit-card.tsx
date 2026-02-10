@@ -53,9 +53,11 @@ export function HabitCard({
       ? Math.round((habit.currentCount / habit.targetCount) * 100)
       : 0
   );
+  const clampedProgress = Math.min(100, Math.max(0, Math.round(progress)));
+  const isCompleted = clampedProgress >= 100;
   const isOverdue = (() => {
     if (!habit.endDate) return false;
-    if (progress >= 100) return false;
+    if (clampedProgress >= 100) return false;
     const endDate = new Date(habit.endDate);
     endDate.setHours(0, 0, 0, 0);
     const today = new Date();
@@ -71,6 +73,7 @@ export function HabitCard({
       className={cn(
         "p-4 hover:border-slate-300 transition-all group",
         isSelected && "border-indigo-600 bg-indigo-50",
+        isCompleted && "opacity-60",
         onClick && "cursor-pointer"
       )}
       onClick={onClick}
@@ -83,7 +86,12 @@ export function HabitCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between mb-2">
             <div className="flex-1">
-              <h4 className="text-sm font-medium mb-1">
+              <h4
+                className={cn(
+                  "text-sm font-medium mb-1",
+                  isCompleted && "line-through text-muted-foreground"
+                )}
+              >
                 {habit.title}
                 {streak > 0 && (
                   <span className="ml-2 flex items-center gap-1 text-orange-500 inline-flex">
@@ -230,7 +238,7 @@ export function HabitCard({
           <div className="flex items-center gap-3">
             <div className="flex-1">
               <UnifiedProgressBar
-                value={progress}
+                value={clampedProgress}
                 interactive={false}
                 showPercentageOnHover={true}
               />

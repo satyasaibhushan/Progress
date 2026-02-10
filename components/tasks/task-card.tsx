@@ -60,9 +60,8 @@ export function TaskCard({
   let rawProgress = calculatedProgress !== undefined ? calculatedProgress : (task.progress || 0);
   
   // Safety check: if progress seems way too high, it might be a calculation error
-  // Cap it at 100% and log a warning
+  // Cap it at 100%
   if (rawProgress > 100) {
-    console.warn(`Task ${task.id} has invalid progress: ${rawProgress}%, capping at 100%`);
     rawProgress = 100;
   }
   

@@ -134,6 +134,15 @@ export function TaskTree({
   isTaskCompleted,
 }: TaskTreeProps) {
   const router = useRouter();
+
+  const getUniqueTasksAtLevel = (taskList: Task[]): Task[] => {
+    const seen = new Set<string>();
+    return taskList.filter((task) => {
+      if (seen.has(task.id)) return false;
+      seen.add(task.id);
+      return true;
+    });
+  };
   
   const handleToggleExpand = (taskId: string) => {
     if (onToggleExpand) {
@@ -148,7 +157,9 @@ export function TaskTree({
     const group = groups.find((g) => g.id === task.groupId);
     // Get habits linked to this task
     // Prisma relation should already filter by parentTaskId, but we'll use all habits from the relation
-    const linkedHabits = task.habits || [];
+    const linkedHabits = Array.from(
+      new Map((task.habits || []).map((habit) => [habit.id, habit])).values()
+    );
     const calculatedProgress = calculateTaskProgress(task as Task & { total_weight?: string; weighted_progress?: string });
     const isLeaf = !taskHasChildren && !taskHasHabits;
     const isTaskHighlighted = highlightedTaskId === task.id;
@@ -214,7 +225,7 @@ export function TaskTree({
         {/* Children */}
         {taskHasChildren && isExpanded && task.children && (
           <div className="ml-6 space-y-2">
-            {task.children.map((child) => renderTask(child, currentLevel + 1))}
+            {getUniqueTasksAtLevel(task.children).map((child) => renderTask(child, currentLevel + 1))}
           </div>
         )}
 
@@ -295,16 +306,19 @@ export function TaskTree({
     onHabitClick: () => void;
   }) {
     const [isHovered, setIsHovered] = useState(false);
+    const isHabitCompleted = habitProgress >= 100;
                 
     return (
       <div className="flex items-center gap-2">
         <div className="w-6 flex-shrink-0" />
         <div className="flex-1">
           <Card
+            data-habit-card-id={habit.id}
             className={cn(
               "p-3 hover:border-slate-300 transition-all cursor-pointer",
               "bg-slate-50/50 border-slate-200",
-              isHighlighted && "border-indigo-400 bg-indigo-50/30"
+              isHighlighted && "border-indigo-400 bg-indigo-50/30",
+              isHabitCompleted && "opacity-60"
             )}
             style={{ marginLeft: `${(currentLevel + 1) * 24}px` }}
             onClick={onHabitClick}
@@ -317,7 +331,14 @@ export function TaskTree({
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1">
-                            <h4 className="text-sm font-medium text-slate-900">{habit.title}</h4>
+                            <h4
+                              className={cn(
+                                "text-sm font-medium text-slate-900",
+                                isHabitCompleted && "line-through text-muted-foreground"
+                              )}
+                            >
+                              {habit.title}
+                            </h4>
                             <Badge variant="outline" className="text-xs border-slate-300 text-slate-700 bg-slate-100">
                               Habit
                             </Badge>
@@ -411,7 +432,7 @@ export function TaskTree({
 
   return (
     <div className="space-y-2">
-      {tasks.map((task) => renderTask(task, level))}
+      {getUniqueTasksAtLevel(tasks).map((task) => renderTask(task, level))}
     </div>
   );
 }

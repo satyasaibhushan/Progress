@@ -1,13 +1,93 @@
 export const dynamic = "force-dynamic"
 
+import { Prisma } from "@prisma/client"
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { logHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
-import {
-  calculateHabitCompletion,
-  updateHabitProgress,
-} from "@/lib/progress-calculator"
+import { calculateHabitProgressFromCount } from "@/lib/progress-calculator"
+
+type HabitForLogMutation = {
+  id: string
+  targetCount: number
+  currentCount: number
+  parentTaskId: string | null
+  importance: number
+}
+
+function toDateKey(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+}
+
+function getDateKeyForTimezoneOffset(timezoneOffsetMinutes?: number): string {
+  const now = new Date()
+  if (typeof timezoneOffsetMinutes === "number" && Number.isFinite(timezoneOffsetMinutes)) {
+    const localNow = new Date(now.getTime() - timezoneOffsetMinutes * 60 * 1000)
+    return toDateKey(localNow.getUTCFullYear(), localNow.getUTCMonth() + 1, localNow.getUTCDate())
+  }
+  return toDateKey(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate())
+}
+
+function getUtcDateFromInput(dateInput?: string, timezoneOffsetMinutes?: number): Date {
+  if (!dateInput) {
+    const dateKey = getDateKeyForTimezoneOffset(timezoneOffsetMinutes)
+    const [year, month, day] = dateKey.split("-").map(Number)
+    return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
+  }
+
+  if (dateInput) {
+    const dateStr = dateInput.split("T")[0]
+    const [year, month, day] = dateStr.split("-").map(Number)
+    return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
+  }
+
+  const now = new Date()
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+}
+
+async function propagateTaskAggregatesTx(
+  tx: Prisma.TransactionClient,
+  taskId: string,
+  weightDelta: bigint,
+  weightedProgressDelta: bigint
+): Promise<void> {
+  if (weightDelta === BigInt(0) && weightedProgressDelta === BigInt(0)) {
+    return
+  }
+
+  const task = await tx.task.findUnique({
+    where: { id: taskId },
+    select: { parentId: true, total_weight: true, weighted_progress: true },
+  })
+
+  if (!task) return
+
+  await tx.task.update({
+    where: { id: taskId },
+    data: {
+      total_weight: (task.total_weight || BigInt(0)) + weightDelta,
+      weighted_progress: (task.weighted_progress || BigInt(0)) + weightedProgressDelta,
+    },
+  })
+
+  if (task.parentId) {
+    await propagateTaskAggregatesTx(tx, task.parentId, weightDelta, weightedProgressDelta)
+  }
+}
+
+async function applyHabitProgressDeltaToParentTx(
+  tx: Prisma.TransactionClient,
+  habit: HabitForLogMutation,
+  oldProgress: number,
+  newProgress: number
+): Promise<void> {
+  if (!habit.parentTaskId) return
+
+  const weightedProgressDelta = BigInt(Math.round((newProgress - oldProgress) * habit.importance))
+  if (weightedProgressDelta === BigInt(0)) return
+
+  await propagateTaskAggregatesTx(tx, habit.parentTaskId, BigInt(0), weightedProgressDelta)
+}
 
 // POST /api/habits/[id]/log - Log a habit completion
 export async function POST(
@@ -17,125 +97,99 @@ export async function POST(
   try {
     const { id } = await params
     const { userId } = await getAuthenticatedUser()
-
-    // Check if habit exists and belongs to user
-    const habit = await prisma.habit.findFirst({
-      where: {
-        id: id,
-        userId,
-      },
-    })
-
-    if (!habit) {
-      return NextResponse.json({ error: "Habit not found" }, { status: 404 })
-    }
-
     const body = await request.json()
     const validatedData = logHabitSchema.parse(body)
+    const incrementBy = validatedData.count || 1
+    const logDate = getUtcDateFromInput(validatedData.date, validatedData.timezoneOffsetMinutes)
+    const logDateKey = validatedData.date
+      ? validatedData.date.split("T")[0]
+      : toDateKey(logDate.getUTCFullYear(), logDate.getUTCMonth() + 1, logDate.getUTCDate())
+    const todayDateKey = getDateKeyForTimezoneOffset(validatedData.timezoneOffsetMinutes)
 
-    let logDate: Date
-    if (validatedData.date) {
-      // Parse the date string and create a date at midnight UTC
-      // This ensures consistent date comparison regardless of timezone
-      const dateStr = validatedData.date.split('T')[0] // Get YYYY-MM-DD part
-      const [year, month, day] = dateStr.split('-').map(Number)
-      // Create date at midnight UTC to avoid timezone shifts
-      // This ensures the date stored matches what the user selected
-      logDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
-    } else {
-      // Use today's date at midnight UTC
-      const now = new Date()
-      logDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
-    }
-
-    // Validate that the log date is not in the future
-    const now = new Date()
-    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
-    if (logDate > today) {
+    if (logDateKey > todayDateKey) {
       return NextResponse.json(
         { error: "Cannot log habit for future dates" },
         { status: 400 }
       )
     }
 
-    // Calculate old progress before logging
-    const oldProgress = await calculateHabitCompletion(id)
-
-    // For all habits, check if we should create or update existing log for the date
-    // Since date is stored as @db.Date, we can compare directly
-    // The unique constraint [habitId, date] ensures one log per day
-    // Use findFirst with the unique fields since Prisma generates the constraint name
-    const existingLog = await prisma.habitLog.findFirst({
-      where: {
-        habitId: id,
-        date: logDate,
-      },
-    })
-
-    if (existingLog) {
-      // Update existing log count (increment)
-      const updatedLog = await prisma.habitLog.update({
-        where: {
-          id: existingLog.id,
-        },
-        data: {
-          count: existingLog.count + (validatedData.count || 1),
+    const result = await prisma.$transaction(async (tx) => {
+      const habit = await tx.habit.findFirst({
+        where: { id, userId },
+        select: {
+          id: true,
+          targetCount: true,
+          currentCount: true,
+          parentTaskId: true,
+          importance: true,
         },
       })
 
-      // Update parent task aggregates if habit is linked to a task
-      if (habit.parentTaskId) {
-        const newProgress = await calculateHabitCompletion(id)
-        await updateHabitProgress(id, oldProgress, newProgress)
+      if (!habit) {
+        return { kind: "habit_not_found" as const }
       }
 
-      return NextResponse.json({ data: updatedLog })
-    }
+      const oldCurrentCount = habit.currentCount || 0
+      const oldProgress = calculateHabitProgressFromCount(oldCurrentCount, habit.targetCount || 0)
 
-    // Create new log
-    // Handle potential race condition with try-catch
-    let log
-    try {
-      log = await prisma.habitLog.create({
-        data: {
-          habitId: id,
-          date: logDate,
-          count: validatedData.count || 1,
-        },
-      })
-    } catch (error: any) {
-      // If unique constraint violation (race condition), fetch and update existing log
-      if (error?.code === 'P2002' || error?.message?.includes('Unique constraint')) {
-        const existingLog = await prisma.habitLog.findFirst({
-          where: {
+      const existingLog = await tx.habitLog.findUnique({
+        where: {
+          habitId_date: {
             habitId: id,
             date: logDate,
           },
-        })
-        if (existingLog) {
-          log = await prisma.habitLog.update({
-            where: {
-              id: existingLog.id,
-            },
-            data: {
-              count: existingLog.count + (validatedData.count || 1),
-            },
-          })
-        } else {
-          throw error
-        }
-      } else {
-        throw error
+        },
+      })
+
+      const updatedLog = await tx.habitLog.upsert({
+        where: {
+          habitId_date: {
+            habitId: id,
+            date: logDate,
+          },
+        },
+        update: {
+          count: { increment: incrementBy },
+        },
+        create: {
+          habitId: id,
+          date: logDate,
+          count: incrementBy,
+        },
+      })
+
+      const newCurrentCount = oldCurrentCount + incrementBy
+      await tx.habit.update({
+        where: { id },
+        data: { currentCount: newCurrentCount },
+      })
+
+      const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
+      await applyHabitProgressDeltaToParentTx(tx, habit, oldProgress, newProgress)
+
+      return {
+        kind: "ok" as const,
+        created: !existingLog,
+        log: updatedLog,
+        oldCurrentCount,
+        newCurrentCount,
+        oldProgress,
+        newProgress,
       }
+    })
+
+    if (result.kind === "habit_not_found") {
+      return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
 
-    // Update parent task aggregates if habit is linked to a task
-    if (habit.parentTaskId) {
-      const newProgress = await calculateHabitCompletion(id)
-      await updateHabitProgress(id, oldProgress, newProgress)
-    }
-
-    return NextResponse.json({ data: log }, { status: 201 })
+    return NextResponse.json(
+      {
+        data: result.log,
+        currentCount: result.newCurrentCount,
+        progress: result.newProgress,
+      },
+      { status: result.created ? 201 : 200 }
+    )
   } catch (error) {
     return handleApiError(error)
   }
@@ -151,19 +205,15 @@ export async function GET(
     const { userId } = await getAuthenticatedUser()
     const { searchParams } = new URL(request.url)
 
-    // Check if habit exists and belongs to user
     const habit = await prisma.habit.findFirst({
-      where: {
-        id: id,
-        userId,
-      },
+      where: { id, userId },
+      select: { id: true },
     })
 
     if (!habit) {
       return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
 
-    // Optional date range filters
     const startDate = searchParams.get("startDate")
     const endDate = searchParams.get("endDate")
 
@@ -173,9 +223,7 @@ export async function GET(
         gte?: Date
         lte?: Date
       }
-    } = {
-      habitId: id,
-    }
+    } = { habitId: id }
 
     if (startDate || endDate) {
       where.date = {}
@@ -193,9 +241,7 @@ export async function GET(
 
     const logs = await prisma.habitLog.findMany({
       where,
-      orderBy: {
-        date: "desc",
-      },
+      orderBy: { date: "desc" },
     })
 
     return NextResponse.json({ data: logs })
@@ -212,7 +258,6 @@ export async function DELETE(
   try {
     const { id } = await params
     const { userId } = await getAuthenticatedUser()
-
     const body = await request.json()
     const { logId } = body
 
@@ -223,46 +268,70 @@ export async function DELETE(
       )
     }
 
-    // Check if habit exists and belongs to user
-    const habit = await prisma.habit.findFirst({
-      where: {
-        id: id,
-        userId,
-      },
+    const result = await prisma.$transaction(async (tx) => {
+      const habit = await tx.habit.findFirst({
+        where: { id, userId },
+        select: {
+          id: true,
+          targetCount: true,
+          currentCount: true,
+          parentTaskId: true,
+          importance: true,
+        },
+      })
+
+      if (!habit) {
+        return { kind: "habit_not_found" as const }
+      }
+
+      const log = await tx.habitLog.findFirst({
+        where: { id: logId, habitId: id },
+      })
+
+      if (!log) {
+        return { kind: "log_not_found" as const }
+      }
+
+      const oldCurrentCount = habit.currentCount || 0
+      const oldProgress = calculateHabitProgressFromCount(oldCurrentCount, habit.targetCount || 0)
+      const newCurrentCount = Math.max(0, oldCurrentCount - log.count)
+
+      await tx.habitLog.delete({
+        where: { id: log.id },
+      })
+
+      if (newCurrentCount !== oldCurrentCount) {
+        await tx.habit.update({
+          where: { id },
+          data: { currentCount: newCurrentCount },
+        })
+      }
+
+      const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
+      await applyHabitProgressDeltaToParentTx(tx, habit, oldProgress, newProgress)
+
+      return {
+        kind: "ok" as const,
+        oldCurrentCount,
+        newCurrentCount,
+        oldProgress,
+        newProgress,
+      }
     })
 
-    if (!habit) {
+    if (result.kind === "habit_not_found") {
       return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
 
-    // Check if log exists and belongs to this habit
-    const log = await prisma.habitLog.findFirst({
-      where: {
-        id: logId,
-        habitId: id,
-      },
-    })
-
-    if (!log) {
+    if (result.kind === "log_not_found") {
       return NextResponse.json({ error: "Log not found" }, { status: 404 })
     }
 
-    // Calculate old progress before deleting log
-    const oldProgress = await calculateHabitCompletion(id)
-
-    await prisma.habitLog.delete({
-      where: {
-        id: logId,
-      },
+    return NextResponse.json({
+      message: "Log deleted successfully",
+      currentCount: result.newCurrentCount,
+      progress: result.newProgress,
     })
-
-    // Update parent task aggregates if habit is linked to a task
-    if (habit.parentTaskId) {
-      const newProgress = await calculateHabitCompletion(id)
-      await updateHabitProgress(id, oldProgress, newProgress)
-    }
-
-    return NextResponse.json({ message: "Log deleted successfully" })
   } catch (error) {
     return handleApiError(error)
   }
@@ -276,7 +345,6 @@ export async function PATCH(
   try {
     const { id } = await params
     const { userId } = await getAuthenticatedUser()
-
     const body = await request.json()
     const { logId, count } = body
 
@@ -287,59 +355,91 @@ export async function PATCH(
       )
     }
 
-    // Check if habit exists and belongs to user
-    const habit = await prisma.habit.findFirst({
-      where: {
-        id: id,
-        userId,
-      },
+    if (!Number.isFinite(count) || !Number.isInteger(count)) {
+      return NextResponse.json(
+        { error: "count must be an integer" },
+        { status: 400 }
+      )
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const habit = await tx.habit.findFirst({
+        where: { id, userId },
+        select: {
+          id: true,
+          targetCount: true,
+          currentCount: true,
+          parentTaskId: true,
+          importance: true,
+        },
+      })
+
+      if (!habit) {
+        return { kind: "habit_not_found" as const }
+      }
+
+      const existingLog = await tx.habitLog.findFirst({
+        where: { id: logId, habitId: id },
+      })
+
+      if (!existingLog) {
+        return { kind: "log_not_found" as const }
+      }
+
+      const oldCurrentCount = habit.currentCount || 0
+      const oldProgress = calculateHabitProgressFromCount(oldCurrentCount, habit.targetCount || 0)
+
+      let newCurrentCount = oldCurrentCount
+      let updatedLog = null
+
+      if (count <= 0) {
+        newCurrentCount = Math.max(0, oldCurrentCount - existingLog.count)
+        await tx.habitLog.delete({
+          where: { id: existingLog.id },
+        })
+      } else {
+        const deltaCount = count - existingLog.count
+        newCurrentCount = Math.max(0, oldCurrentCount + deltaCount)
+        updatedLog = await tx.habitLog.update({
+          where: { id: existingLog.id },
+          data: { count },
+        })
+      }
+
+      if (newCurrentCount !== oldCurrentCount) {
+        await tx.habit.update({
+          where: { id },
+          data: { currentCount: newCurrentCount },
+        })
+      }
+
+      const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
+      await applyHabitProgressDeltaToParentTx(tx, habit, oldProgress, newProgress)
+
+      return {
+        kind: "ok" as const,
+        updatedLog,
+        oldCurrentCount,
+        newCurrentCount,
+        oldProgress,
+        newProgress,
+      }
     })
 
-    if (!habit) {
+    if (result.kind === "habit_not_found") {
       return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
 
-    // Check if log exists and belongs to this habit
-    const existingLog = await prisma.habitLog.findFirst({
-      where: {
-        id: logId,
-        habitId: id,
-      },
-    })
-
-    if (!existingLog) {
+    if (result.kind === "log_not_found") {
       return NextResponse.json({ error: "Log not found" }, { status: 404 })
     }
 
-    // Calculate old progress before updating
-    const oldProgress = await calculateHabitCompletion(id)
-
-    // If count is 0 or less, delete the log
-    if (count <= 0) {
-      await prisma.habitLog.delete({
-        where: {
-          id: logId,
-        },
-      })
-    } else {
-      // Update the log count
-      await prisma.habitLog.update({
-        where: {
-          id: logId,
-        },
-        data: {
-          count: count,
-        },
-      })
-    }
-
-    // Update parent task aggregates if habit is linked to a task
-    if (habit.parentTaskId) {
-      const newProgress = await calculateHabitCompletion(id)
-      await updateHabitProgress(id, oldProgress, newProgress)
-    }
-
-    return NextResponse.json({ message: "Log updated successfully" })
+    return NextResponse.json({
+      message: "Log updated successfully",
+      data: result.updatedLog,
+      currentCount: result.newCurrentCount,
+      progress: result.newProgress,
+    })
   } catch (error) {
     return handleApiError(error)
   }

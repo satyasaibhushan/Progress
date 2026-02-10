@@ -29,207 +29,173 @@ export async function GET(request: Request) {
       },
     })
 
-    // Calculate progress for each group
-    const groupsWithProgress = await Promise.all(
-      groups.map(async (group) => {
-        // Get all tasks and habits for this group (including inherited)
-        const allTasks = await prisma.task.findMany({
-          where: { userId },
-          select: {
-            id: true,
-            title: true,
-            description: true,
-            progress: true,
-            importance: true,
-            groupId: true,
-            parentId: true,
-            total_weight: true,
-            weighted_progress: true,
-            group: {
-              select: {
-                id: true,
-                name: true,
-                color: true,
-              },
-            },
-            parent: {
-              select: {
-                id: true,
-                groupId: true,
-                parentId: true,
-              },
-            },
-            _count: {
-              select: {
-                children: true,
-                habits: true,
-              },
+    const [allTasks, allHabits] = await Promise.all([
+      prisma.task.findMany({
+        where: { userId },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          progress: true,
+          importance: true,
+          groupId: true,
+          parentId: true,
+          total_weight: true,
+          weighted_progress: true,
+          group: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
             },
           },
-        })
-
-        const allHabits = await prisma.habit.findMany({
-          where: { userId },
-          include: {
-            parentTask: {
-              select: {
-                id: true,
-                groupId: true,
-                parentId: true,
-                parent: {
-                  select: {
-                    id: true,
-                    groupId: true,
-                  },
+          parent: {
+            select: {
+              id: true,
+              groupId: true,
+              parentId: true,
+            },
+          },
+          _count: {
+            select: {
+              children: true,
+              habits: true,
+            },
+          },
+        },
+      }),
+      prisma.habit.findMany({
+        where: { userId },
+        include: {
+          parentTask: {
+            select: {
+              id: true,
+              groupId: true,
+              parentId: true,
+              parent: {
+                select: {
+                  id: true,
+                  groupId: true,
                 },
               },
             },
-            habitLogs: {
-              select: {
-                count: true,
-              },
-            },
           },
-        })
+        },
+      }),
+    ])
 
-        // Filter tasks in group (including inheritance)
-        const tasksInGroup = allTasks.filter((task) => {
-          if (task.groupId === group.id) return true
-          let currentTask = task
-          const visited = new Set<string>() // Prevent infinite loops
-          
-          while (currentTask.parentId && !visited.has(currentTask.id)) {
-            visited.add(currentTask.id)
-            const parentTask = allTasks.find((t) => t.id === currentTask.parentId)
-            if (!parentTask) break
-            if (parentTask.groupId === group.id) return true
-            currentTask = parentTask
-          }
-          return false
-        })
+    const taskById = new Map(allTasks.map((task) => [task.id, task]))
+    const getHabitProgress = (habit: { currentCount?: number | null; targetCount: number }) => {
+      const totalCount = habit.currentCount || 0
+      return habit.targetCount > 0
+        ? Math.min(100, Math.round((totalCount / habit.targetCount) * 100))
+        : 0
+    }
 
-        // Filter habits in group (including inheritance)
-        const habitsInGroup = allHabits.filter((habit) => {
-          if (habit.groupId === group.id) return true
-          if (habit.parentTask) {
-            let currentTask = habit.parentTask
-            const visited = new Set<string>() // Prevent infinite loops
-            while (currentTask && !visited.has(currentTask.id)) {
-              visited.add(currentTask.id)
-              if (currentTask.groupId === group.id) return true
-              if (!currentTask.parent) break
-              const parentTask = allTasks.find((t) => t.id === currentTask.parentId)
-              if (!parentTask) break
-              currentTask = parentTask as any
-            }
-          }
-          return false
-        })
-
-        // Also get habits that are linked to tasks in this group
-        const taskIdsInGroup = new Set(tasksInGroup.map((t) => t.id))
-        const linkedHabits = allHabits.filter((habit) => {
-          if (habit.parentTaskId && taskIdsInGroup.has(habit.parentTaskId)) {
-            return true
-          }
-          return false
-        })
-
-        // Combine and deduplicate habits (same logic as detail API)
-        const allHabitsInGroup = Array.from(
-          new Map([...habitsInGroup, ...linkedHabits].map((h) => [h.id, h])).values()
-        )
-
-        const getHabitProgress = (habit: { habitLogs?: { count: number }[]; targetCount: number }) => {
-          const habitLogs = habit.habitLogs || []
-          const totalCount = habitLogs.reduce((sum, log) => sum + log.count, 0)
-          return habit.targetCount > 0
-            ? Math.min(100, Math.round((totalCount / habit.targetCount) * 100))
-            : 0
+    const groupsWithProgress = groups.map((group) => {
+      const tasksInGroup = allTasks.filter((task) => {
+        if (task.groupId === group.id) return true
+        let currentTask = task
+        const visited = new Set<string>()
+        while (currentTask.parentId && !visited.has(currentTask.id)) {
+          visited.add(currentTask.id)
+          const parentTask = taskById.get(currentTask.parentId)
+          if (!parentTask) break
+          if (parentTask.groupId === group.id) return true
+          currentTask = parentTask
         }
-
-        // Get root tasks and habits (only top-level, not linked to tasks)
-        const rootTasks = tasksInGroup.filter((t) => !t.parentId)
-        // Get task IDs to exclude linked habits (habits linked to tasks are already counted in task's weighted_progress)
-        const rootHabits = allHabitsInGroup.filter((h) => {
-          // Only include habits that are not linked to any task in this group
-          return !h.parentTaskId || !taskIdsInGroup.has(h.parentTaskId)
-        })
-
-        // Calculate weighted progress
-        let totalWeight = 0
-        let weightedProgress = 0
-
-        for (const task of rootTasks) {
-          const isLeaf = task._count.children === 0 && task._count.habits === 0
-          if (isLeaf) {
-            const taskProgress = Math.min(100, Math.max(0, task.progress || 0))
-            totalWeight += task.importance
-            weightedProgress += taskProgress * task.importance
-          } else if (task.total_weight && task.weighted_progress) {
-            // weighted_progress is already the sum of (progress * importance) for all children
-            // total_weight is the sum of importance for all children
-            // So we can use them directly without recalculating
-            const taskWeight = Number(task.total_weight)
-            const taskWeightedProgress = Number(task.weighted_progress)
-            if (taskWeight > 0) {
-              totalWeight += taskWeight
-              weightedProgress += taskWeightedProgress
-            }
-          }
-        }
-
-        for (const habit of rootHabits) {
-          const habitProgress = getHabitProgress(habit)
-          totalWeight += habit.importance
-          weightedProgress += habitProgress * habit.importance
-        }
-
-        // Ensure progress is between 0-100
-        // weighted_progress is sum of (progress * importance) where progress is 0-100
-        // total_weight is sum of importance
-        // So weightedProgress / totalWeight gives us average progress (0-100)
-        const progress = totalWeight > 0 
-          ? Math.min(100, Math.max(0, Math.round(weightedProgress / totalWeight))) 
-          : 0
-
-        // Count leaf tasks - only count tasks that have no children IN THIS GROUP
-        // This matches the logic in the detail API where we build a tree from tasksInGroup
-        // A task is a leaf if it has no children that are also in this group
-        const getAllLeafTasks = (taskList: typeof tasksInGroup): typeof tasksInGroup => {
-          const leafTasks: typeof tasksInGroup = []
-          
-          // Check each task - it's a leaf if it has no children in this group
-          taskList.forEach((task) => {
-            // Check if this task has any children in the group
-            const hasChildrenInGroup = taskList.some((t) => t.parentId === task.id)
-            if (!hasChildrenInGroup) {
-              leafTasks.push(task)
-            }
-          })
-          
-          return leafTasks
-        }
-
-        const allLeafTasks = getAllLeafTasks(tasksInGroup)
-        const incompleteTaskCount = allLeafTasks.filter((task) => {
-          const progress = Math.min(100, Math.max(0, task.progress || 0))
-          return progress < 100
-        }).length
-        const incompleteHabitCount = allHabitsInGroup.filter((habit) => getHabitProgress(habit) < 100).length
-        const incompleteCount = incompleteTaskCount + incompleteHabitCount
-
-        return {
-          ...group,
-          progress: Math.min(100, Math.max(0, progress)),
-          taskCount: allLeafTasks.length,
-          habitCount: allHabitsInGroup.length,
-          incompleteTaskCount,
-          incompleteHabitCount,
-          incompleteCount,
-        }
+        return false
       })
-    )
+
+      const habitsInGroup = allHabits.filter((habit) => {
+        if (habit.groupId === group.id) return true
+        if (habit.parentTask) {
+          let currentTask = habit.parentTask as { id: string; groupId: string | null; parentId: string | null; parent: { id: string; groupId: string | null } | null }
+          const visited = new Set<string>()
+          while (currentTask && !visited.has(currentTask.id)) {
+            visited.add(currentTask.id)
+            if (currentTask.groupId === group.id) return true
+            if (!currentTask.parentId) break
+            const parentTask = taskById.get(currentTask.parentId)
+            if (!parentTask) break
+            currentTask = parentTask as typeof currentTask
+          }
+        }
+        return false
+      })
+
+      const taskIdsInGroup = new Set(tasksInGroup.map((task) => task.id))
+      const linkedHabits = allHabits.filter((habit) => {
+        if (habit.parentTaskId && taskIdsInGroup.has(habit.parentTaskId)) {
+          return true
+        }
+        return false
+      })
+
+      const allHabitsInGroup = Array.from(
+        new Map([...habitsInGroup, ...linkedHabits].map((habit) => [habit.id, habit])).values()
+      )
+
+      const rootTasks = tasksInGroup.filter((task) => !task.parentId)
+      const rootHabits = allHabitsInGroup.filter((habit) => {
+        return !habit.parentTaskId || !taskIdsInGroup.has(habit.parentTaskId)
+      })
+
+      let totalWeight = 0
+      let weightedProgress = 0
+
+      for (const task of rootTasks) {
+        const isLeaf = task._count.children === 0 && task._count.habits === 0
+        if (isLeaf) {
+          const taskProgress = Math.min(100, Math.max(0, task.progress || 0))
+          totalWeight += task.importance
+          weightedProgress += taskProgress * task.importance
+        } else if (task.total_weight && task.weighted_progress) {
+          const taskWeight = Number(task.total_weight)
+          const taskWeightedProgress = Number(task.weighted_progress)
+          if (taskWeight > 0) {
+            totalWeight += taskWeight
+            weightedProgress += taskWeightedProgress
+          }
+        }
+      }
+
+      for (const habit of rootHabits) {
+        const habitProgress = getHabitProgress(habit)
+        totalWeight += habit.importance
+        weightedProgress += habitProgress * habit.importance
+      }
+
+      const progress = totalWeight > 0
+        ? Math.min(100, Math.max(0, Math.round(weightedProgress / totalWeight)))
+        : 0
+
+      const allLeafTasks = tasksInGroup.filter((task) => {
+        const hasChildrenInGroup = tasksInGroup.some((other) => other.parentId === task.id)
+        return !hasChildrenInGroup
+      })
+
+      const incompleteTaskCount = allLeafTasks.filter((task) => {
+        const taskProgress = Math.min(100, Math.max(0, task.progress || 0))
+        return taskProgress < 100
+      }).length
+
+      const incompleteHabitCount = allHabitsInGroup.filter((habit) => {
+        return getHabitProgress(habit) < 100
+      }).length
+
+      const incompleteCount = incompleteTaskCount + incompleteHabitCount
+
+      return {
+        ...group,
+        progress: Math.min(100, Math.max(0, progress)),
+        taskCount: allLeafTasks.length,
+        habitCount: allHabitsInGroup.length,
+        incompleteTaskCount,
+        incompleteHabitCount,
+        incompleteCount,
+      }
+    })
 
     const sortedGroups = [...groupsWithProgress].sort((a, b) => {
       const aCount = (a as any).incompleteCount || 0

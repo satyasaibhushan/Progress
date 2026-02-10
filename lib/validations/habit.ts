@@ -104,4 +104,5 @@ export const habitFormSchema = z.object({
 export const logHabitSchema = z.object({
   date: z.string().datetime().optional(), // defaults to today if not provided
   count: z.number().int().positive().default(1), // number of times logged
+  timezoneOffsetMinutes: z.number().int().min(-840).max(840).optional(), // client timezone offset from UTC
 })

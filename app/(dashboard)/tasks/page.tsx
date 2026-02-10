@@ -1,19 +1,20 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback, useMemo, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useHeaderAction } from "../layout";
 import { Plus, CheckSquare } from "lucide-react";
 import {
   getTasks,
   getTaskPage,
+  getTask,
   updateTask,
   deleteTask,
   createTask,
   CreateTaskInput,
   TaskStatus,
 } from "@/lib/api/tasks";
-import { createHabit } from "@/lib/api/habits";
+import { createHabit, getHabit } from "@/lib/api/habits";
 import type { CreateHabitInput } from "@/lib/api/habits";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getGroups } from "@/lib/api/groups";
@@ -23,6 +24,7 @@ import { TaskTree } from "@/components/tasks/task-tree";
 import { TaskForm } from "@/components/tasks/task-form";
 import { HabitForm } from "@/components/habits/habit-form";
 import { Button } from "@/components/ui/button";
+import { isPending } from "@/lib/date-helpers";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ServerLazyList } from "@/components/shared/server-lazy-list";
@@ -88,13 +90,36 @@ function createEmptyTaskPageState(): TaskPageState {
 const TASKS_PAGE_SIZE = 8;
 const TASK_STATUSES: TaskStatus[] = ["active", "future", "completed"];
 
+function mergeUniqueTasksById(existing: Task[], incoming: Task[]): Task[] {
+  const merged: Task[] = [];
+  const seen = new Set<string>();
+
+  for (const task of [...existing, ...incoming]) {
+    if (seen.has(task.id)) continue;
+    seen.add(task.id);
+    merged.push(task);
+  }
+
+  return merged;
+}
+
+function getTaskStatus(task: Task): TaskStatus {
+  const progress = Math.min(100, Math.max(0, task.progress || 0));
+  if (progress >= 100) return "completed";
+  if (isPending(task.startDate)) return "future";
+  return "active";
+}
+
 function TasksPageContent() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const { setHeaderRightAction } = useHeaderAction();
 
   const highlightTaskId = searchParams.get("highlight");
   const highlightedHabitId = searchParams.get("highlightHabit");
+  const initialHighlightTaskIdRef = useRef(highlightTaskId);
+  const initialHighlightedHabitIdRef = useRef(highlightedHabitId);
 
   const [taskPages, setTaskPages] = useState<Record<TaskStatus, TaskPageState>>({
     active: createEmptyTaskPageState(),
@@ -129,14 +154,17 @@ function TasksPageContent() {
 
   const taskRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const processedHighlightRef = useRef<string | null>(null);
+  const processedHabitHighlightRef = useRef<string | null>(null);
   const isHighlightingRef = useRef(false);
+  const isHabitHighlightingRef = useRef(false);
+  const suppressAutoActiveTabRef = useRef(false);
 
   useEffect(() => {
     taskPagesRef.current = taskPages;
   }, [taskPages]);
 
   const loadTaskPage = useCallback(
-    async (status: TaskStatus, options?: { reset?: boolean }): Promise<Task[] | null> => {
+    async (status: TaskStatus, options?: { reset?: boolean; highlightId?: string }): Promise<Task[] | null> => {
       const reset = options?.reset ?? false;
       const currentPage = taskPagesRef.current[status];
       if (currentPage.loadingMore) return null;
@@ -161,13 +189,17 @@ function TasksPageContent() {
           parentId: null,
           limit: TASKS_PAGE_SIZE,
           cursor: reset ? null : currentPage.nextCursor,
+          highlightId: options?.highlightId,
         });
 
         setTaskPages((prev) => {
+          const mergedItems = reset
+            ? mergeUniqueTasksById([], result.items)
+            : mergeUniqueTasksById(prev[status].items, result.items);
           const next = {
             ...prev,
             [status]: {
-              items: reset ? result.items : [...prev[status].items, ...result.items],
+              items: mergedItems,
               nextCursor: result.nextCursor,
               hasMore: result.hasMore,
               initialized: true,
@@ -205,8 +237,17 @@ function TasksPageContent() {
       return;
     }
 
-    for (const status of initializedStatuses) {
-      await loadTaskPage(status, { reset: true });
+    const foreground = initializedStatuses.includes(activeTab)
+      ? activeTab
+      : initializedStatuses[0];
+
+    await loadTaskPage(foreground, { reset: true });
+
+    const backgroundStatuses = initializedStatuses.filter((status) => status !== foreground);
+    if (backgroundStatuses.length > 0) {
+      void Promise.all(
+        backgroundStatuses.map((status) => loadTaskPage(status, { reset: true }))
+      );
     }
   }, [activeTab, loadTaskPage]);
 
@@ -226,10 +267,15 @@ function TasksPageContent() {
   useEffect(() => {
     async function loadInitialData() {
       try {
+        if (!initialHighlightTaskIdRef.current && !initialHighlightedHabitIdRef.current) {
+          setActiveTab("active");
+        }
         const [groupsData, labelsData] = await Promise.all([getGroups(), getLabels()]);
         setGroups(groupsData);
         setLabels(labelsData);
-        await loadTaskPage("active", { reset: true });
+        if (!initialHighlightTaskIdRef.current && !initialHighlightedHabitIdRef.current) {
+          await loadTaskPage("active", { reset: true });
+        }
       } catch (error) {
         console.error("Error loading tasks page data:", error);
       } finally {
@@ -241,11 +287,16 @@ function TasksPageContent() {
   }, [loadTaskPage]);
 
   useEffect(() => {
+    const hasAnyInitializedPage = TASK_STATUSES.some((status) => taskPages[status].initialized);
+    if ((highlightTaskId || highlightedHabitId) && !hasAnyInitializedPage) {
+      return;
+    }
+
     const page = taskPages[activeTab];
     if (!page.initialized && !page.loadingMore) {
       loadTaskPage(activeTab, { reset: true });
     }
-  }, [activeTab, taskPages, loadTaskPage]);
+  }, [activeTab, taskPages, loadTaskPage, highlightTaskId, highlightedHabitId]);
 
   useEffect(() => {
     const shouldLoadTaskOptions = creatingTask || !!creatingTaskWithParent || !!creatingHabitWithParent || !!editingTask;
@@ -269,6 +320,19 @@ function TasksPageContent() {
       if (t.id === targetId) return t;
       if (t.children && t.children.length > 0) {
         const found = findTaskById(t.children, targetId);
+        if (found) return found;
+      }
+    }
+    return null;
+  }, []);
+
+  const findTaskByHabitId = useCallback((taskList: Task[], habitId: string): Task | null => {
+    for (const task of taskList) {
+      if (task.habits?.some((habit) => habit.id === habitId)) {
+        return task;
+      }
+      if (task.children && task.children.length > 0) {
+        const found = findTaskByHabitId(task.children, habitId);
         if (found) return found;
       }
     }
@@ -300,28 +364,18 @@ function TasksPageContent() {
     const ensureHighlightedTaskLoaded = async () => {
       isHighlightingRef.current = true;
 
-      for (const status of TASK_STATUSES) {
+      let statusesToTry: TaskStatus[] = TASK_STATUSES;
+      let resolvedTaskForFallback: Task | null = null;
+      try {
+        resolvedTaskForFallback = await getTask(highlightTaskId);
         if (cancelled) return;
+        const predictedStatus = getTaskStatus(resolvedTaskForFallback);
+        statusesToTry = [predictedStatus, ...TASK_STATUSES.filter((status) => status !== predictedStatus)];
+      } catch {
+        // Continue with default status order if direct lookup fails.
+      }
 
-        if (!taskPagesRef.current[status].initialized) {
-          await loadTaskPage(status, { reset: true });
-          if (cancelled) return;
-        }
-
-        let tree = taskPagesRef.current[status].items;
-        let task = findTaskById(tree, highlightTaskId);
-
-        while (!task && taskPagesRef.current[status].hasMore) {
-          await loadTaskPage(status);
-          if (cancelled) return;
-          tree = taskPagesRef.current[status].items;
-          task = findTaskById(tree, highlightTaskId);
-        }
-
-        if (!task) {
-          continue;
-        }
-
+      const focusHighlightedTask = (status: TaskStatus, tree: Task[], task: Task) => {
         processedHighlightRef.current = highlightTaskId;
         if (activeTab !== status) {
           setActiveTab(status);
@@ -345,8 +399,95 @@ function TasksPageContent() {
           tasksToExpand.forEach((id) => next.add(id));
           return next;
         });
+      };
 
+      for (const status of statusesToTry) {
+        if (cancelled) return;
+
+        if (!taskPagesRef.current[status].initialized) {
+          await loadTaskPage(status, { reset: true, highlightId: highlightTaskId });
+          if (cancelled) return;
+        }
+
+        let tree = taskPagesRef.current[status].items;
+        let task = findTaskById(tree, highlightTaskId);
+
+        const seenPaginationStates = new Set<string>();
+        let paginationAttempts = 0;
+        while (!task && taskPagesRef.current[status].hasMore) {
+          const before = taskPagesRef.current[status];
+          const pageStateKey = `${before.nextCursor ?? "null"}:${before.items.length}`;
+          if (seenPaginationStates.has(pageStateKey) || paginationAttempts >= 50) {
+            break;
+          }
+          seenPaginationStates.add(pageStateKey);
+          paginationAttempts += 1;
+
+          await loadTaskPage(status);
+          if (cancelled) return;
+          const after = taskPagesRef.current[status];
+          tree = after.items;
+          task = findTaskById(tree, highlightTaskId);
+
+          // Stop if pagination made no progress to avoid infinite loading loops.
+          if (!task && after.items.length === before.items.length && after.nextCursor === before.nextCursor) {
+            break;
+          }
+        }
+
+        if (!task) {
+          continue;
+        }
+
+        focusHighlightedTask(status, tree, task);
         return;
+      }
+
+      try {
+        const fallbackTask = resolvedTaskForFallback ?? await getTask(highlightTaskId);
+        if (cancelled) return;
+
+        const fallbackStatus = getTaskStatus(fallbackTask);
+        if (!taskPagesRef.current[fallbackStatus].initialized) {
+          await loadTaskPage(fallbackStatus, { reset: true, highlightId: highlightTaskId });
+          if (cancelled) return;
+        }
+
+        let tree = taskPagesRef.current[fallbackStatus].items;
+        let task = findTaskById(tree, highlightTaskId);
+        const seenPaginationStates = new Set<string>();
+        let paginationAttempts = 0;
+
+        while (!task && taskPagesRef.current[fallbackStatus].hasMore) {
+          const before = taskPagesRef.current[fallbackStatus];
+          const pageStateKey = `${before.nextCursor ?? "null"}:${before.items.length}`;
+          if (seenPaginationStates.has(pageStateKey) || paginationAttempts >= 50) {
+            break;
+          }
+          seenPaginationStates.add(pageStateKey);
+          paginationAttempts += 1;
+
+          await loadTaskPage(fallbackStatus);
+          if (cancelled) return;
+          const after = taskPagesRef.current[fallbackStatus];
+          tree = after.items;
+          task = findTaskById(tree, highlightTaskId);
+
+          if (!task && after.items.length === before.items.length && after.nextCursor === before.nextCursor) {
+            break;
+          }
+        }
+
+        if (task) {
+          focusHighlightedTask(fallbackStatus, tree, task);
+          return;
+        }
+
+        if (activeTab !== fallbackStatus) {
+          setActiveTab(fallbackStatus);
+        }
+      } catch (error) {
+        console.error("Error resolving highlighted task:", error);
       }
 
       isHighlightingRef.current = false;
@@ -360,7 +501,145 @@ function TasksPageContent() {
   }, [highlightTaskId, activeTab, loadTaskPage, findTaskById, getAllParentIds]);
 
   useEffect(() => {
-    if (!highlightTaskId || processedHighlightRef.current !== highlightTaskId || expandedTasks.size === 0) {
+    if (!highlightedHabitId || processedHabitHighlightRef.current === highlightedHabitId) {
+      if (!highlightedHabitId) {
+        processedHabitHighlightRef.current = null;
+        isHabitHighlightingRef.current = false;
+      }
+      return;
+    }
+
+    let cancelled = false;
+
+    const ensureHighlightedHabitLoaded = async () => {
+      isHabitHighlightingRef.current = true;
+
+      try {
+        const habit = await getHabit(highlightedHabitId);
+        if (cancelled) return;
+
+        const parentTaskId = habit.parentTask?.id || habit.parentTaskId;
+        if (!parentTaskId) {
+          processedHabitHighlightRef.current = highlightedHabitId;
+          isHabitHighlightingRef.current = false;
+          return;
+        }
+
+        let statusesToTry: TaskStatus[] = TASK_STATUSES;
+        try {
+          const parentTask = await getTask(parentTaskId);
+          if (!cancelled) {
+            const predictedStatus = getTaskStatus(parentTask);
+            statusesToTry = [predictedStatus, ...TASK_STATUSES.filter((status) => status !== predictedStatus)];
+          }
+        } catch {
+          // Continue with default status order if parent task lookup fails.
+        }
+
+        const focusHighlightedHabit = (status: TaskStatus, tree: Task[], parentTask: Task) => {
+          processedHabitHighlightRef.current = highlightedHabitId;
+          if (activeTab !== status) {
+            setActiveTab(status);
+          }
+
+          const treeParentIds = getAllParentIds(tree, parentTask.id);
+          const ancestorIds: string[] = [];
+          let currentTaskId: string | null = parentTask.parentId ?? null;
+          while (currentTaskId) {
+            ancestorIds.push(currentTaskId);
+            const currentTask = findTaskById(tree, currentTaskId);
+            currentTaskId = currentTask?.parentId ?? null;
+          }
+
+          const allParentIds = Array.from(new Set([...treeParentIds, ...ancestorIds].filter(Boolean)));
+          const tasksToExpand = [...allParentIds, parentTask.id];
+
+          setExpandedTasks((prev) => {
+            const next = new Set(prev);
+            tasksToExpand.forEach((id) => next.add(id));
+            return next;
+          });
+        };
+
+        for (const status of statusesToTry) {
+          if (cancelled) return;
+
+          if (!taskPagesRef.current[status].initialized) {
+            await loadTaskPage(status, { reset: true, highlightId: parentTaskId });
+            if (cancelled) return;
+          }
+
+          let tree = taskPagesRef.current[status].items;
+          let parentTask = findTaskById(tree, parentTaskId);
+
+          const seenPaginationStates = new Set<string>();
+          let paginationAttempts = 0;
+          while (!parentTask && taskPagesRef.current[status].hasMore) {
+            const before = taskPagesRef.current[status];
+            const pageStateKey = `${before.nextCursor ?? "null"}:${before.items.length}`;
+            if (seenPaginationStates.has(pageStateKey) || paginationAttempts >= 50) {
+              break;
+            }
+            seenPaginationStates.add(pageStateKey);
+            paginationAttempts += 1;
+
+            await loadTaskPage(status);
+            if (cancelled) return;
+            const after = taskPagesRef.current[status];
+            tree = after.items;
+            parentTask = findTaskById(tree, parentTaskId);
+
+            if (!parentTask && after.items.length === before.items.length && after.nextCursor === before.nextCursor) {
+              break;
+            }
+          }
+
+          if (!parentTask) {
+            continue;
+          }
+
+          focusHighlightedHabit(status, tree, parentTask);
+          return;
+        }
+
+        for (const status of TASK_STATUSES) {
+          if (cancelled) return;
+
+          if (!taskPagesRef.current[status].initialized) continue;
+          const tree = taskPagesRef.current[status].items;
+          const parentTask = findTaskByHabitId(tree, highlightedHabitId);
+          if (!parentTask) continue;
+
+          focusHighlightedHabit(status, tree, parentTask);
+          return;
+        }
+      } catch (error) {
+        console.error("Error resolving highlighted habit in tasks:", error);
+      }
+
+      isHabitHighlightingRef.current = false;
+    };
+
+    ensureHighlightedHabitLoaded();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [highlightedHabitId, activeTab, loadTaskPage, findTaskById, findTaskByHabitId, getAllParentIds]);
+
+  useEffect(() => {
+    if (pathname !== "/tasks") return;
+    if (highlightTaskId || highlightedHabitId) return;
+    if (suppressAutoActiveTabRef.current) {
+      suppressAutoActiveTabRef.current = false;
+      return;
+    }
+
+    setActiveTab("active");
+  }, [pathname, highlightTaskId, highlightedHabitId]);
+
+  useEffect(() => {
+    if (!highlightTaskId || processedHighlightRef.current !== highlightTaskId) {
       return;
     }
 
@@ -399,6 +678,7 @@ function TasksPageContent() {
 
           const params = new URLSearchParams(window.location.search);
           if (params.has("highlight")) {
+            suppressAutoActiveTabRef.current = true;
             params.delete("highlight");
             const nextUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
             window.history.replaceState({}, "", nextUrl);
@@ -418,6 +698,59 @@ function TasksPageContent() {
       }
     }, scrollDelay);
   }, [highlightTaskId, expandedTasks, activeTab, taskPages, findTaskById, getAllParentIds]);
+
+  useEffect(() => {
+    if (!highlightedHabitId || processedHabitHighlightRef.current !== highlightedHabitId) {
+      return;
+    }
+
+    const tree = taskPages[activeTab].items;
+    const parentTask = findTaskByHabitId(tree, highlightedHabitId);
+    if (!parentTask) return;
+
+    const treeParentIds = getAllParentIds(tree, parentTask.id);
+    const ancestorIds: string[] = [];
+    let currentTaskId: string | null = parentTask.parentId ?? null;
+    while (currentTaskId) {
+      ancestorIds.push(currentTaskId);
+      const currentTask = findTaskById(tree, currentTaskId);
+      currentTaskId = currentTask?.parentId ?? null;
+    }
+
+    const allParentIds = Array.from(new Set([...treeParentIds, ...ancestorIds].filter(Boolean)));
+    const allTasksToExpand = [...allParentIds, parentTask.id];
+    const allExpanded = allTasksToExpand.length === 0 || allTasksToExpand.every((id) => expandedTasks.has(id));
+    if (!allExpanded) return;
+
+    const scrollToHabit = () => {
+      const element = document.querySelector<HTMLElement>(`[data-habit-card-id="${highlightedHabitId}"]`);
+      if (element && element.offsetParent !== null) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+        element.classList.add("ring-2", "ring-indigo-300");
+
+        setTimeout(() => {
+          element.classList.remove("ring-2", "ring-indigo-300");
+          const params = new URLSearchParams(window.location.search);
+          if (params.has("highlightHabit")) {
+            suppressAutoActiveTabRef.current = true;
+            params.delete("highlightHabit");
+            const nextUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
+            window.history.replaceState({}, "", nextUrl);
+          }
+          processedHabitHighlightRef.current = null;
+          isHabitHighlightingRef.current = false;
+        }, 2000);
+        return true;
+      }
+      return false;
+    };
+
+    setTimeout(() => {
+      if (!scrollToHabit()) {
+        setTimeout(scrollToHabit, 500);
+      }
+    }, 300);
+  }, [highlightedHabitId, expandedTasks, activeTab, taskPages, findTaskById, findTaskByHabitId, getAllParentIds]);
 
   const handleToggleExpand = (taskId: string) => {
     const newExpanded = new Set(expandedTasks);
@@ -591,9 +924,9 @@ function TasksPageContent() {
   const handleProgressUpdate = async (taskId: string, newProgress: number) => {
     try {
       await updateTask({ id: taskId, progress: newProgress });
-      await refreshInitializedTaskPages();
     } catch (error) {
       console.error("Error updating task progress:", error);
+      throw error;
     }
   };
 
@@ -613,10 +946,15 @@ function TasksPageContent() {
   const futureTasks = taskPages.future.items;
   const completedTasks = taskPages.completed.items;
   const totalTaskCount = statusCounts.active + statusCounts.future + statusCounts.completed;
+  const hasAnyInitializedTaskPage = TASK_STATUSES.some((status) => taskPages[status].initialized);
+  const anyTaskPageLoading = TASK_STATUSES.some((status) => taskPages[status].loadingMore);
+  const isInitialTaskDataPending =
+    loading ||
+    (!hasAnyInitializedTaskPage && (anyTaskPageLoading || !!highlightTaskId || !!highlightedHabitId));
 
   const availableTasks = taskOptions.length > 0 ? taskOptions : allLoadedTasks;
 
-  if (loading) {
+  if (isInitialTaskDataPending) {
     return (
       <div className="max-w-6xl mx-auto space-y-6">
         <LoadingSkeleton count={10} />

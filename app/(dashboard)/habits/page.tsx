@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useMemo, useCallback, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
 import { useHeaderAction } from "../layout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -89,6 +89,43 @@ function getHabitProgressValue(habit: Habit): number {
   return Math.min(100, Math.max(0, Math.round(progress)));
 }
 
+function getDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getUtcDateKeyFromIso(isoDate: string): string {
+  const parsed = parseISO(isoDate);
+  const year = parsed.getUTCFullYear();
+  const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getProgressFromCounts(currentCount: number, targetCount: number): number {
+  if (!targetCount) return 0;
+  return Math.min(100, Math.max(0, Math.round((currentCount / targetCount) * 100)));
+}
+
+function getHabitStatus(habit: Habit): HabitStatus {
+  const progress = getHabitProgressValue(habit);
+  if (progress >= 100) return "completed";
+
+  if (habit.startDate) {
+    const startDate = new Date(habit.startDate);
+    if (!Number.isNaN(startDate.getTime())) {
+      startDate.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (startDate > today) return "future";
+    }
+  }
+
+  return "active";
+}
+
 interface HabitPageState {
   items: Habit[];
   nextCursor: string | null;
@@ -110,6 +147,19 @@ function createEmptyHabitPageState(): HabitPageState {
 const HABITS_PAGE_SIZE = 10;
 const HABIT_STATUSES: HabitStatus[] = ["active", "future", "completed"];
 
+function mergeUniqueHabitsById(existing: Habit[], incoming: Habit[]): Habit[] {
+  const merged: Habit[] = [];
+  const seen = new Set<string>();
+
+  for (const habit of [...existing, ...incoming]) {
+    if (seen.has(habit.id)) continue;
+    seen.add(habit.id);
+    merged.push(habit);
+  }
+
+  return merged;
+}
+
 interface HabitFormPayload {
   title: string;
   type: "DAILY" | "WEEKLY" | "MONTHLY";
@@ -127,6 +177,7 @@ interface HabitFormPayload {
 
 function HabitsPageContent() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const { setHeaderRightAction, setHeaderSubtitle } = useHeaderAction();
   const [habitPages, setHabitPages] = useState<Record<HabitStatus, HabitPageState>>({
@@ -154,9 +205,11 @@ function HabitsPageContent() {
   const selectedHabitId = selectedHabit?.id;
   const habitRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const habitPagesRef = useRef(habitPages);
+  const selectedHabitLogsRequestRef = useRef(0);
   const highlightHabitId = searchParams.get("highlight");
   const initialHighlightIdRef = useRef(highlightHabitId);
   const processedHighlightRef = useRef<string | null>(null);
+  const suppressAutoActiveTabRef = useRef(false);
   const habits = useMemo(() => {
     return [
       ...habitPages.active.items,
@@ -184,7 +237,7 @@ function HabitsPageContent() {
     };
   }, [setHeaderRightAction, setHeaderSubtitle, habits.length]);
 
-  const loadHabitPage = useCallback(async (status: HabitStatus, options?: { reset?: boolean }): Promise<Habit[] | null> => {
+  const loadHabitPage = useCallback(async (status: HabitStatus, options?: { reset?: boolean; highlightId?: string }): Promise<Habit[] | null> => {
     const reset = options?.reset ?? false;
     const page = habitPagesRef.current[status];
     if (page.loadingMore) return null;
@@ -207,12 +260,16 @@ function HabitsPageContent() {
         status,
         limit: HABITS_PAGE_SIZE,
         cursor: reset ? null : page.nextCursor,
+        highlightId: options?.highlightId,
       });
       setHabitPages((prev) => {
+        const mergedItems = reset
+          ? mergeUniqueHabitsById([], result.items)
+          : mergeUniqueHabitsById(prev[status].items, result.items);
         const next = {
           ...prev,
           [status]: {
-            items: reset ? result.items : [...prev[status].items, ...result.items],
+            items: mergedItems,
             nextCursor: result.nextCursor,
             hasMore: result.hasMore,
             initialized: true,
@@ -241,17 +298,57 @@ function HabitsPageContent() {
     }
   }, []);
 
-  const refreshInitializedHabitPages = useCallback(async () => {
+  const refreshInitializedHabitPages = useCallback(async (foregroundStatus?: HabitStatus) => {
+    const targetStatus = foregroundStatus || activeTab;
     const initializedStatuses = HABIT_STATUSES.filter((status) => habitPagesRef.current[status].initialized);
     if (initializedStatuses.length === 0) {
-      await loadHabitPage(activeTab, { reset: true });
+      await loadHabitPage(targetStatus, { reset: true });
       return;
     }
 
-    for (const status of initializedStatuses) {
-      await loadHabitPage(status, { reset: true });
+    const foreground = initializedStatuses.includes(targetStatus)
+      ? targetStatus
+      : initializedStatuses[0];
+
+    await loadHabitPage(foreground, { reset: true });
+
+    const backgroundStatuses = initializedStatuses.filter((status) => status !== foreground);
+    if (backgroundStatuses.length > 0) {
+      void Promise.all(
+        backgroundStatuses.map((status) => loadHabitPage(status, { reset: true }))
+      );
     }
   }, [activeTab, loadHabitPage]);
+
+  const applyHabitPatchToLoadedPages = useCallback((habitId: string, patch: Partial<Habit>) => {
+    setHabitPages((prev) => {
+      const next = {
+        active: {
+          ...prev.active,
+          items: prev.active.items.map((habit) => {
+            if (habit.id !== habitId) return habit;
+            return { ...habit, ...patch };
+          }),
+        },
+        future: {
+          ...prev.future,
+          items: prev.future.items.map((habit) => {
+            if (habit.id !== habitId) return habit;
+            return { ...habit, ...patch };
+          }),
+        },
+        completed: {
+          ...prev.completed,
+          items: prev.completed.items.map((habit) => {
+            if (habit.id !== habitId) return habit;
+            return { ...habit, ...patch };
+          }),
+        },
+      };
+      habitPagesRef.current = next;
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     async function loadData() {
@@ -263,10 +360,13 @@ function HabitsPageContent() {
         ]);
         setGroups(groupsData);
         setLabels(labelsData);
-        const activePageItems = await loadHabitPage("active", { reset: true });
         const highlightId = initialHighlightIdRef.current;
-        if (!highlightId && activePageItems && activePageItems.length > 0) {
-          setSelectedHabit(activePageItems[0]);
+        if (!highlightId) {
+          setActiveTab("active");
+        }
+        const activePageItems = await loadHabitPage("active", { reset: true });
+        if (!highlightId) {
+          setSelectedHabit(activePageItems && activePageItems.length > 0 ? activePageItems[0] : null);
         }
       } catch (error) {
         console.error("Error loading habits:", error);
@@ -301,6 +401,17 @@ function HabitsPageContent() {
   }, [creatingHabit, editingHabit, tasks.length]);
 
   useEffect(() => {
+    if (pathname !== "/habits") return;
+    if (highlightHabitId) return;
+    if (suppressAutoActiveTabRef.current) {
+      suppressAutoActiveTabRef.current = false;
+      return;
+    }
+
+    setActiveTab("active");
+  }, [pathname, highlightHabitId]);
+
+  useEffect(() => {
     if (!highlightHabitId || processedHighlightRef.current === highlightHabitId) {
       if (!highlightHabitId) {
         processedHighlightRef.current = null;
@@ -311,26 +422,10 @@ function HabitsPageContent() {
     let cancelled = false;
 
     const ensureHighlightedHabitLoaded = async () => {
-      for (const status of HABIT_STATUSES) {
-        if (cancelled) return;
-
-        if (!habitPagesRef.current[status].initialized) {
-          await loadHabitPage(status, { reset: true });
-          if (cancelled) return;
-        }
-
-        let habit = habitPagesRef.current[status].items.find((h) => h.id === highlightHabitId);
-        while (!habit && habitPagesRef.current[status].hasMore) {
-          await loadHabitPage(status);
-          if (cancelled) return;
-          habit = habitPagesRef.current[status].items.find((h) => h.id === highlightHabitId);
-        }
-
-        if (!habit) continue;
-
+      const focusHighlightedHabit = (status: HabitStatus, habit: Habit) => {
         processedHighlightRef.current = highlightHabitId;
-        setSelectedHabit(habit);
-        if (activeTab !== status) {
+        const switchingTab = activeTab !== status;
+        if (switchingTab) {
           setActiveTab(status);
         }
 
@@ -344,6 +439,7 @@ function HabitsPageContent() {
               element.classList.remove("bg-indigo-50");
               const params = new URLSearchParams(window.location.search);
               if (params.has("highlight")) {
+                suppressAutoActiveTabRef.current = true;
                 params.delete("highlight");
                 const nextUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
                 window.history.replaceState({}, "", nextUrl);
@@ -356,6 +452,7 @@ function HabitsPageContent() {
         };
 
         setTimeout(() => {
+          setSelectedHabit(habit);
           if (!scrollToHabit()) {
             setTimeout(() => {
               if (!scrollToHabit()) {
@@ -365,9 +462,89 @@ function HabitsPageContent() {
               }
             }, 500);
           }
-        }, 500);
+        }, switchingTab ? 250 : 0);
+      };
 
+      for (const status of HABIT_STATUSES) {
+        if (cancelled) return;
+
+        if (!habitPagesRef.current[status].initialized) {
+          await loadHabitPage(status, { reset: true, highlightId: highlightHabitId });
+          if (cancelled) return;
+        }
+
+        let habit = habitPagesRef.current[status].items.find((h) => h.id === highlightHabitId);
+        const seenPaginationStates = new Set<string>();
+        let paginationAttempts = 0;
+        while (!habit && habitPagesRef.current[status].hasMore) {
+          const before = habitPagesRef.current[status];
+          const pageStateKey = `${before.nextCursor ?? "null"}:${before.items.length}`;
+          if (seenPaginationStates.has(pageStateKey) || paginationAttempts >= 50) {
+            break;
+          }
+          seenPaginationStates.add(pageStateKey);
+          paginationAttempts += 1;
+
+          await loadHabitPage(status);
+          if (cancelled) return;
+          const after = habitPagesRef.current[status];
+          habit = habitPagesRef.current[status].items.find((h) => h.id === highlightHabitId);
+
+          if (!habit && after.items.length === before.items.length && after.nextCursor === before.nextCursor) {
+            break;
+          }
+        }
+
+        if (!habit) continue;
+
+        focusHighlightedHabit(status, habit);
         return;
+      }
+
+      try {
+        const fallbackHabit = await getHabit(highlightHabitId);
+        if (cancelled) return;
+
+        const fallbackStatus = getHabitStatus(fallbackHabit);
+        if (!habitPagesRef.current[fallbackStatus].initialized) {
+          await loadHabitPage(fallbackStatus, { reset: true, highlightId: highlightHabitId });
+          if (cancelled) return;
+        }
+
+        let habit = habitPagesRef.current[fallbackStatus].items.find((h) => h.id === highlightHabitId);
+        const seenPaginationStates = new Set<string>();
+        let paginationAttempts = 0;
+
+        while (!habit && habitPagesRef.current[fallbackStatus].hasMore) {
+          const before = habitPagesRef.current[fallbackStatus];
+          const pageStateKey = `${before.nextCursor ?? "null"}:${before.items.length}`;
+          if (seenPaginationStates.has(pageStateKey) || paginationAttempts >= 50) {
+            break;
+          }
+          seenPaginationStates.add(pageStateKey);
+          paginationAttempts += 1;
+
+          await loadHabitPage(fallbackStatus);
+          if (cancelled) return;
+          const after = habitPagesRef.current[fallbackStatus];
+          habit = after.items.find((h) => h.id === highlightHabitId);
+
+          if (!habit && after.items.length === before.items.length && after.nextCursor === before.nextCursor) {
+            break;
+          }
+        }
+
+        if (habit) {
+          focusHighlightedHabit(fallbackStatus, habit);
+          return;
+        }
+
+        if (activeTab !== fallbackStatus) {
+          setActiveTab(fallbackStatus);
+        }
+        setSelectedHabit(fallbackHabit);
+      } catch (error) {
+        console.error("Error resolving highlighted habit:", error);
       }
     };
 
@@ -379,109 +556,170 @@ function HabitsPageContent() {
   }, [highlightHabitId, activeTab, loadHabitPage]);
 
   useEffect(() => {
-    async function loadSelectedHabitLogs() {
-      if (!selectedHabitId) {
-        setSelectedHabitLogs([]);
-        return;
-      }
+    const requestId = ++selectedHabitLogsRequestRef.current;
 
+    if (!selectedHabitId) {
+      setSelectedHabitLogs([]);
+      return;
+    }
+    const habitId = selectedHabitId;
+
+    // Clear previous habit logs immediately to avoid stale flash on habit switch.
+    setSelectedHabitLogs([]);
+
+    let cancelled = false;
+    async function loadSelectedHabitLogs() {
       try {
-        const logsData = await getHabitLogs(selectedHabitId);
+        const logsData = await getHabitLogs(habitId);
+        if (cancelled || selectedHabitLogsRequestRef.current !== requestId) return;
         setSelectedHabitLogs(logsData);
       } catch (error) {
+        if (cancelled || selectedHabitLogsRequestRef.current !== requestId) return;
         console.error("Error loading selected habit logs:", error);
         setSelectedHabitLogs([]);
       }
     }
 
     loadSelectedHabitLogs();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedHabitId]);
 
-  const [loggingDate, setLoggingDate] = useState<string | null>(null);
-
   const handleDateClick = async (date: Date, decrease: boolean = false) => {
-    if (!selectedHabit || loggingDate) return; // Prevent multiple clicks
-    
-    // Create date string in YYYY-MM-DD format
-    // Use the date components as displayed (don't convert timezone)
-    // This ensures we log for the date the user actually clicked
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const dateStr = `${year}-${month}-${day}`;
-    
-    // Create a unique key to prevent duplicate clicks on the same date
+    if (!selectedHabit) return;
+
+    const dateStr = getDateKey(date);
     const clickKey = `${selectedHabit.id}-${dateStr}`;
-    setLoggingDate(clickKey);
-    
+    const previousLogs = [...selectedHabitLogs];
+    const previousHabit = selectedHabit;
+
     try {
-      // Find existing log for this date (compare dates properly)
-      // Compare using formatted date strings to avoid timezone issues
-      const existingLog = selectedHabitLogs.find(log => {
-        const logDate = parseISO(log.date);
-        // Format both dates consistently for comparison
-        const logYear = logDate.getUTCFullYear();
-        const logMonth = String(logDate.getUTCMonth() + 1).padStart(2, '0');
-        const logDay = String(logDate.getUTCDate()).padStart(2, '0');
-        const logDateStr = `${logYear}-${logMonth}-${logDay}`;
-        return logDateStr === dateStr;
+      const existingLog = previousLogs.find((log) => {
+        return getUtcDateKeyFromIso(log.date) === dateStr;
       });
-      
       const countPerPeriod = selectedHabit.countPerPeriod || 1;
-      
+
+      let operation:
+        | { kind: "create" }
+        | { kind: "increment"; logId: string }
+        | { kind: "update"; logId: string; count: number }
+        | { kind: "delete"; logId: string; removedCount: number }
+        | null = null;
+
       if (existingLog && existingLog.habitId === selectedHabit.id) {
         if (decrease && countPerPeriod > 1) {
-          // Decrease count (only for countPerPeriod > 1)
-          const newCount = existingLog.count - 1;
-          if (newCount <= 0) {
-            // Delete log if count reaches 0
-            await deleteHabitLog(selectedHabit.id, existingLog.id);
+          const nextCount = existingLog.count - 1;
+          if (nextCount <= 0) {
+            operation = { kind: "delete", logId: existingLog.id, removedCount: existingLog.count };
           } else {
-            // Update log with decreased count
-            await updateHabitLogCount(selectedHabit.id, existingLog.id, newCount);
+            operation = { kind: "update", logId: existingLog.id, count: nextCount };
           }
         } else if (countPerPeriod > 1) {
-          // Increment count (allow going overboard only if countPerPeriod > 1)
-          await logHabit(selectedHabit.id, { 
-            date: dateStr + 'T00:00:00.000Z',
-            count: 1 
-          });
+          operation = { kind: "increment", logId: existingLog.id };
         } else {
-          // Delete the log (toggle off for countPerPeriod === 1)
-          await deleteHabitLog(selectedHabit.id, existingLog.id);
+          operation = { kind: "delete", logId: existingLog.id, removedCount: existingLog.count };
         }
-      } else {
-        // Create new log (only if not decreasing)
-        if (!decrease) {
-          await logHabit(selectedHabit.id, { 
-            date: dateStr + 'T00:00:00.000Z',
-            count: 1 
-          });
-        }
+      } else if (!decrease) {
+        operation = { kind: "create" };
       }
-      
-      // Refresh current tab list and selected habit details.
-      const [updatedLogs, updatedHabit] = await Promise.all([
-        getHabitLogs(selectedHabit.id),
-        getHabit(selectedHabit.id),
-      ]);
-      setSelectedHabitLogs(updatedLogs);
-      setSelectedHabit(updatedHabit);
-      await refreshInitializedHabitPages();
+
+      if (!operation) {
+        return;
+      }
+
+      const baseCount = selectedHabit.currentCount ?? previousLogs.reduce((sum, log) => sum + log.count, 0);
+      let deltaCount = 0;
+      let optimisticLogs = previousLogs;
+
+      if (operation.kind === "create") {
+        deltaCount = 1;
+        const optimisticLog: HabitLog = {
+          id: `optimistic-${clickKey}`,
+          habitId: selectedHabit.id,
+          date: `${dateStr}T00:00:00.000Z`,
+          count: 1,
+        };
+        optimisticLogs = [optimisticLog, ...previousLogs];
+      } else if (operation.kind === "increment") {
+        deltaCount = 1;
+        optimisticLogs = previousLogs.map((log) => {
+          if (log.id !== operation.logId) return log;
+          return { ...log, count: log.count + 1 };
+        });
+      } else if (operation.kind === "update") {
+        const currentLog = previousLogs.find((log) => log.id === operation.logId);
+        const currentCount = currentLog?.count || 0;
+        deltaCount = operation.count - currentCount;
+        optimisticLogs = previousLogs.map((log) => {
+          if (log.id !== operation.logId) return log;
+          return { ...log, count: operation.count };
+        });
+      } else {
+        deltaCount = -operation.removedCount;
+        optimisticLogs = previousLogs.filter((log) => log.id !== operation.logId);
+      }
+
+      const nextCurrentCount = Math.max(0, baseCount + deltaCount);
+      const nextProgress = getProgressFromCounts(nextCurrentCount, selectedHabit.targetCount);
+
+      setSelectedHabitLogs(optimisticLogs);
+      setSelectedHabit((prev) => {
+        if (!prev || prev.id !== selectedHabit.id) return prev;
+        return {
+          ...prev,
+          currentCount: nextCurrentCount,
+          progress: nextProgress,
+        };
+      });
+      applyHabitPatchToLoadedPages(selectedHabit.id, {
+        currentCount: nextCurrentCount,
+        progress: nextProgress,
+      });
+
+      if (operation.kind === "create" || operation.kind === "increment") {
+        const serverLog = await logHabit(selectedHabit.id, {
+          date: `${dateStr}T00:00:00.000Z`,
+          count: 1,
+        });
+        setSelectedHabitLogs((prev) => {
+          const filtered = prev.filter((log) => {
+            return !(log.habitId === selectedHabit.id && getUtcDateKeyFromIso(log.date) === dateStr);
+          });
+          return [serverLog, ...filtered].sort((a, b) => {
+            const dateA = parseISO(a.date).getTime();
+            const dateB = parseISO(b.date).getTime();
+            return dateB - dateA;
+          });
+        });
+      } else if (operation.kind === "update") {
+        await updateHabitLogCount(selectedHabit.id, operation.logId, operation.count);
+      } else {
+        await deleteHabitLog(selectedHabit.id, operation.logId);
+      }
+
     } catch (error: unknown) {
       console.error("Error toggling habit log:", error);
-      // If log not found, it might have been deleted already - just reload data for this habit
-      if (error instanceof Error && error.message.includes("Log not found") && selectedHabit) {
-        // Reload logs for this habit only to sync state
-        const updatedLogs = await getHabitLogs(selectedHabit.id);
-        setSelectedHabitLogs(updatedLogs);
+      setSelectedHabitLogs(previousLogs);
+      setSelectedHabit(previousHabit);
+
+      if (previousHabit) {
+        const rollbackCount = previousHabit.currentCount ?? previousLogs.reduce((sum, log) => sum + log.count, 0);
+        const rollbackProgress = typeof previousHabit.progress === "number"
+          ? previousHabit.progress
+          : getProgressFromCounts(rollbackCount, previousHabit.targetCount);
+        applyHabitPatchToLoadedPages(previousHabit.id, {
+          currentCount: rollbackCount,
+          progress: rollbackProgress,
+        });
       }
-    } finally {
-      // Clear logging state after operation completes
-      // Use a small delay to prevent rapid clicks
-      setTimeout(() => {
-        setLoggingDate(null);
-      }, 300);
+
+      if (error instanceof Error && error.message.includes("Log not found")) {
+        void getHabitLogs(selectedHabit.id)
+          .then((updatedLogs) => setSelectedHabitLogs(updatedLogs))
+          .catch((syncError) => console.error("Error syncing habit logs after failure:", syncError));
+      }
     }
   };
 
@@ -611,7 +849,13 @@ function HabitsPageContent() {
     );
   };
 
-  if (loading) {
+  const hasAnyInitializedHabitPage = HABIT_STATUSES.some((status) => habitPages[status].initialized);
+  const anyHabitPageLoading = HABIT_STATUSES.some((status) => habitPages[status].loadingMore);
+  const isInitialHabitDataPending =
+    loading ||
+    (!hasAnyInitializedHabitPage && (anyHabitPageLoading || !!highlightHabitId));
+
+  if (isInitialHabitDataPending) {
     return (
       <div className="max-w-6xl mx-auto space-y-6">
         <LoadingSkeleton count={10} />
@@ -803,7 +1047,6 @@ function HabitsPageContent() {
                       onDateClick={handleDateClick}
                       currentMonth={currentMonth}
                       onMonthChange={setCurrentMonth}
-                      isLogging={!!loggingDate}
                     />
                   </div>
 
