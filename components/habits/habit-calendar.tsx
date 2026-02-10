@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, getDay, addMonths, subMonths, parseISO } from "date-fns";
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, addMonths, subMonths, parseISO } from "date-fns";
 import { Habit, HabitLog } from "@/types";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -131,8 +131,9 @@ export function HabitCalendar({
           const dayOfWeek = getDay(day);
           const isActive = isActiveDay(dayOfWeek);
           const isComplete = count >= countPerPeriod;
-          // Only allow going overboard if countPerPeriod > 1
-          const isOverboard = countPerPeriod > 1 && count > countPerPeriod;
+          const isWeeklyOrMonthly = habit.type === "WEEKLY" || habit.type === "MONTHLY";
+          // Keep overboard highlighting only for daily habits.
+          const isOverboard = habit.type === "DAILY" && countPerPeriod > 1 && count > countPerPeriod;
           // Check if date is in the future
           const isFuture = day > new Date(new Date().setHours(23, 59, 59, 999));
 
@@ -141,13 +142,8 @@ export function HabitCalendar({
               key={dayKey}
               onClick={(event) => {
                 if (isFuture) return;
-                onDateClick?.(day, event.shiftKey);
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                if (!isFuture && countPerPeriod > 1 && isLogged) {
-                  onDateClick?.(day, true);
-                }
+                const shouldDecrease = isWeeklyOrMonthly ? event.shiftKey : false;
+                onDateClick?.(day, shouldDecrease);
               }}
               disabled={isFuture}
               className={cn(
@@ -172,7 +168,7 @@ export function HabitCalendar({
               </span>
               {isLogged && (
                 <div className="absolute top-0.5 right-0.5 flex items-center gap-0.5">
-                  {countPerPeriod > 1 ? (
+                  {habit.type === "DAILY" && countPerPeriod > 1 ? (
                     <span className={cn(
                       "text-[9px] font-medium px-0.5 rounded leading-tight",
                       isComplete ? "text-green-700" : "text-green-600",

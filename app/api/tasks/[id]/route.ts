@@ -12,6 +12,8 @@ import {
   removeChildFromTask,
 } from "@/lib/progress-calculator"
 import { serializeTask } from "@/lib/utils"
+import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
+import { getUserTimezone } from "@/lib/user-timezone"
 import {
   getInheritedLabelsFromTask,
   getInheritedGroupFromTask,
@@ -27,6 +29,7 @@ export async function GET(
 ) {
   try {
     const { userId } = await getAuthenticatedUser()
+    const userTimeZone = await getUserTimezone(userId)
     const { id } = await params
     const { searchParams } = new URL(request.url)
     const includeChildren = searchParams.get("include") === "children"
@@ -86,6 +89,39 @@ export async function GET(
           },
         ],
       })
+
+      const allHabits = allTasks.flatMap((task) => task.habits || [])
+      if (allHabits.length > 0) {
+        const habitIds = [...new Set(allHabits.map((habit) => habit.id))]
+        const logs = await prisma.habitLog.findMany({
+          where: {
+            habitId: {
+              in: habitIds,
+            },
+          },
+          select: {
+            habitId: true,
+            date: true,
+            count: true,
+          },
+        })
+
+        const logsByHabitId = new Map<string, { date: Date; count: number }[]>()
+        for (const log of logs) {
+          const existing = logsByHabitId.get(log.habitId) || []
+          existing.push({ date: log.date, count: log.count })
+          logsByHabitId.set(log.habitId, existing)
+        }
+
+        for (const habit of allHabits) {
+          const periodMetrics = calculateHabitPeriodMetrics(
+            habit,
+            logsByHabitId.get(habit.id) || [],
+            { timeZone: userTimeZone }
+          )
+          Object.assign(habit, periodMetrics)
+        }
+      }
 
       // Find the requested task
       const task = allTasks.find((t) => t.id === id)
@@ -164,6 +200,38 @@ export async function GET(
 
     if (!task) {
       return NextResponse.json({ error: "Task not found" }, { status: 404 })
+    }
+
+    if (task.habits && task.habits.length > 0) {
+      const habitIds = [...new Set(task.habits.map((habit) => habit.id))]
+      const logs = await prisma.habitLog.findMany({
+        where: {
+          habitId: {
+            in: habitIds,
+          },
+        },
+        select: {
+          habitId: true,
+          date: true,
+          count: true,
+        },
+      })
+
+      const logsByHabitId = new Map<string, { date: Date; count: number }[]>()
+      for (const log of logs) {
+        const existing = logsByHabitId.get(log.habitId) || []
+        existing.push({ date: log.date, count: log.count })
+        logsByHabitId.set(log.habitId, existing)
+      }
+
+      for (const habit of task.habits) {
+        const periodMetrics = calculateHabitPeriodMetrics(
+          habit,
+          logsByHabitId.get(habit.id) || [],
+          { timeZone: userTimeZone }
+        )
+        Object.assign(habit, periodMetrics)
+      }
     }
 
     return NextResponse.json({ data: serializeTask(task) })

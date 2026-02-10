@@ -5,8 +5,8 @@ import { HabitType } from "@prisma/client"
  *
  * @param type - Habit type (DAILY, WEEKLY, MONTHLY)
  * @param endDate - End date of the habit
- * @param activeDays - Active days for WEEKLY habits (0=Sun, 1=Mon, ..., 6=Sat) - used as constraint, not for calculation
- * @param createdAt - When the habit was created (defaults to now)
+ * @param activeDays - Active days for WEEKLY habits (kept for API compatibility, not used in calculation)
+ * @param startDate - Start date anchor for the habit lifecycle
  * @param countPerPeriod - How many times per day/week/month (defaults to 1)
  * @returns Calculated targetCount or null if cannot be calculated
  */
@@ -14,46 +14,60 @@ export function calculateTargetCount(
   type: HabitType,
   endDate: Date | null | undefined,
   activeDays: number[] | null | undefined = null,
-  createdAt: Date = new Date(),
+  startDate: Date | null | undefined,
   countPerPeriod: number = 1
 ): number | null {
+  void activeDays
+
   if (!endDate) {
-    return null; // Cannot auto-calculate without endDate
+    return null
   }
 
-  const startDate = new Date(createdAt)
-  startDate.setHours(0, 0, 0, 0)
+  if (!startDate) {
+    return null
+  }
+
+  const start = new Date(startDate)
+  if (Number.isNaN(start.getTime())) return null
+  start.setUTCHours(0, 0, 0, 0)
+
   const end = new Date(endDate)
-  end.setHours(23, 59, 59, 999)
+  if (Number.isNaN(end.getTime())) return null
+  end.setUTCHours(0, 0, 0, 0)
 
-  // Calculate days between start and end
-  const diffTime = end.getTime() - startDate.getTime()
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-
-  if (diffDays <= 0) {
-    return null; // Invalid date range
+  if (end.getTime() < start.getTime()) {
+    return null
   }
+
+  const normalizedCountPerPeriod = Math.max(1, Math.floor(countPerPeriod || 1))
+  const diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1
 
   switch (type) {
     case HabitType.DAILY:
-      // For daily habits: days × countPerPeriod
-      return diffDays * countPerPeriod
+      return diffDays * normalizedCountPerPeriod
 
     case HabitType.WEEKLY:
-      // For weekly habits: weeks × countPerPeriod
-      // activeDays is used as a constraint/reminder in UI, not for calculation
-      const weeks = Math.ceil(diffDays / 7)
-      return weeks * countPerPeriod
+      {
+        const startOfWeek = new Date(start)
+        startOfWeek.setUTCDate(start.getUTCDate() - start.getUTCDay())
+
+        const endOfWeek = new Date(end)
+        endOfWeek.setUTCDate(end.getUTCDate() - end.getUTCDay())
+
+        const weeks = Math.floor((endOfWeek.getTime() - startOfWeek.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1
+        return weeks * normalizedCountPerPeriod
+      }
 
     case HabitType.MONTHLY:
-      // For monthly habits: months × countPerPeriod
-      const startMonth = startDate.getMonth()
-      const startYear = startDate.getFullYear()
-      const endMonth = end.getMonth()
-      const endYear = end.getFullYear()
+      {
+      const startMonth = start.getUTCMonth()
+      const startYear = start.getUTCFullYear()
+      const endMonth = end.getUTCMonth()
+      const endYear = end.getUTCFullYear()
 
       const monthsDiff = (endYear - startYear) * 12 + (endMonth - startMonth) + 1
-      return monthsDiff * countPerPeriod
+      return monthsDiff * normalizedCountPerPeriod
+      }
 
     default:
       return null

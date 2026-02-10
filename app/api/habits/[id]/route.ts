@@ -17,6 +17,8 @@ import {
   getInheritedGroupFromHabit,
   canChangeHabitGroup,
 } from "@/lib/inheritance-helpers"
+import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
+import { getUserTimezone } from "@/lib/user-timezone"
 import { serializeHabit } from "@/lib/utils"
 
 // GET /api/habits/[id] - Get a specific habit
@@ -27,6 +29,7 @@ export async function GET(
   try {
     const { id } = await params
     const { userId } = await getAuthenticatedUser()
+    const userTimeZone = await getUserTimezone(userId)
 
     const habit = await prisma.habit.findFirst({
       where: {
@@ -72,11 +75,20 @@ export async function GET(
 
     // Calculate progress on-demand
     const progress = await calculateHabitCompletion(habit.id)
+    const metricLogs = await prisma.habitLog.findMany({
+      where: { habitId: habit.id },
+      select: {
+        date: true,
+        count: true,
+      },
+    })
+    const periodMetrics = calculateHabitPeriodMetrics(habit, metricLogs, { timeZone: userTimeZone })
 
     return NextResponse.json({
       data: serializeHabit({
         ...habit,
         progress,
+        ...periodMetrics,
       }),
     })
   } catch (error) {
@@ -92,6 +104,7 @@ export async function PUT(
   try {
     const { id } = await params
     const { userId } = await getAuthenticatedUser()
+    const userTimeZone = await getUserTimezone(userId)
 
     // Check if habit exists and belongs to user
     const existingHabit = await prisma.habit.findFirst({
@@ -149,6 +162,9 @@ export async function PUT(
     const finalEndDate = validatedData.endDate !== undefined
       ? (validatedData.endDate ? new Date(validatedData.endDate) : null)
       : existingHabit.endDate
+    const finalStartDate = validatedData.startDate !== undefined
+      ? (validatedData.startDate ? new Date(validatedData.startDate) : null)
+      : (existingHabit.startDate || existingHabit.createdAt)
 
     // Recalculate targetCount if countPerPeriod changed or targetCount is not set
     const countPerPeriodChanged = validatedData.countPerPeriod !== undefined &&
@@ -159,7 +175,7 @@ export async function PUT(
         finalType,
         finalEndDate,
         finalActiveDays,
-        existingHabit.createdAt,
+        finalStartDate,
         finalCountPerPeriod
       )
       if (calculated !== null) {
@@ -467,11 +483,20 @@ export async function PUT(
 
     // Calculate progress on-demand
     const progress = await calculateHabitCompletion(habit.id)
+    const metricLogs = await prisma.habitLog.findMany({
+      where: { habitId: habit.id },
+      select: {
+        date: true,
+        count: true,
+      },
+    })
+    const periodMetrics = calculateHabitPeriodMetrics(updatedHabit!, metricLogs, { timeZone: userTimeZone })
 
     return NextResponse.json({
       data: serializeHabit({
         ...updatedHabit!,
         progress,
+        ...periodMetrics,
       }),
     })
   } catch (error) {

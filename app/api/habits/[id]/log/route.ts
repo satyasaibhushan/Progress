@@ -6,10 +6,17 @@ import { prisma } from "@/lib/prisma"
 import { logHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { calculateHabitProgressFromCount } from "@/lib/progress-calculator"
+import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
+import { getUserTimezone } from "@/lib/user-timezone"
 
 type HabitForLogMutation = {
   id: string
+  type: "DAILY" | "WEEKLY" | "MONTHLY"
   targetCount: number
+  countPerPeriod: number
+  activeDays: number[]
+  startDate: Date | null
+  endDate: Date | null
   currentCount: number
   parentTaskId: string | null
   importance: number
@@ -43,6 +50,11 @@ function getUtcDateFromInput(dateInput?: string, timezoneOffsetMinutes?: number)
 
   const now = new Date()
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+}
+
+function toUtcDateKey(date: Date | null | undefined): string | null {
+  if (!date) return null
+  return toDateKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate())
 }
 
 async function propagateTaskAggregatesTx(
@@ -97,6 +109,7 @@ export async function POST(
   try {
     const { id } = await params
     const { userId } = await getAuthenticatedUser()
+    const userTimeZone = await getUserTimezone(userId)
     const body = await request.json()
     const validatedData = logHabitSchema.parse(body)
     const incrementBy = validatedData.count || 1
@@ -118,7 +131,12 @@ export async function POST(
         where: { id, userId },
         select: {
           id: true,
+          type: true,
           targetCount: true,
+          countPerPeriod: true,
+          activeDays: true,
+          startDate: true,
+          endDate: true,
           currentCount: true,
           parentTaskId: true,
           importance: true,
@@ -127,6 +145,22 @@ export async function POST(
 
       if (!habit) {
         return { kind: "habit_not_found" as const }
+      }
+
+      const startDateKey = toUtcDateKey(habit.startDate)
+      if (startDateKey && logDateKey < startDateKey) {
+        return {
+          kind: "before_start" as const,
+          startDateKey,
+        }
+      }
+
+      const endDateKey = toUtcDateKey(habit.endDate)
+      if (endDateKey && logDateKey > endDateKey) {
+        return {
+          kind: "after_end" as const,
+          endDateKey,
+        }
       }
 
       const oldCurrentCount = habit.currentCount || 0
@@ -166,6 +200,14 @@ export async function POST(
 
       const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
       await applyHabitProgressDeltaToParentTx(tx, habit, oldProgress, newProgress)
+      const metricLogs = await tx.habitLog.findMany({
+        where: { habitId: id },
+        select: {
+          date: true,
+          count: true,
+        },
+      })
+      const periodMetrics = calculateHabitPeriodMetrics(habit, metricLogs, { timeZone: userTimeZone })
 
       return {
         kind: "ok" as const,
@@ -175,6 +217,7 @@ export async function POST(
         newCurrentCount,
         oldProgress,
         newProgress,
+        periodMetrics,
       }
     })
 
@@ -182,11 +225,26 @@ export async function POST(
       return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
 
+    if (result.kind === "before_start") {
+      return NextResponse.json(
+        { error: `Cannot log habit before start date (${result.startDateKey})` },
+        { status: 400 }
+      )
+    }
+
+    if (result.kind === "after_end") {
+      return NextResponse.json(
+        { error: `Cannot log habit after end date (${result.endDateKey})` },
+        { status: 400 }
+      )
+    }
+
     return NextResponse.json(
       {
         data: result.log,
         currentCount: result.newCurrentCount,
         progress: result.newProgress,
+        ...result.periodMetrics,
       },
       { status: result.created ? 201 : 200 }
     )
@@ -258,6 +316,7 @@ export async function DELETE(
   try {
     const { id } = await params
     const { userId } = await getAuthenticatedUser()
+    const userTimeZone = await getUserTimezone(userId)
     const body = await request.json()
     const { logId } = body
 
@@ -273,7 +332,12 @@ export async function DELETE(
         where: { id, userId },
         select: {
           id: true,
+          type: true,
           targetCount: true,
+          countPerPeriod: true,
+          activeDays: true,
+          startDate: true,
+          endDate: true,
           currentCount: true,
           parentTaskId: true,
           importance: true,
@@ -309,6 +373,14 @@ export async function DELETE(
 
       const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
       await applyHabitProgressDeltaToParentTx(tx, habit, oldProgress, newProgress)
+      const metricLogs = await tx.habitLog.findMany({
+        where: { habitId: id },
+        select: {
+          date: true,
+          count: true,
+        },
+      })
+      const periodMetrics = calculateHabitPeriodMetrics(habit, metricLogs, { timeZone: userTimeZone })
 
       return {
         kind: "ok" as const,
@@ -316,6 +388,7 @@ export async function DELETE(
         newCurrentCount,
         oldProgress,
         newProgress,
+        periodMetrics,
       }
     })
 
@@ -331,6 +404,7 @@ export async function DELETE(
       message: "Log deleted successfully",
       currentCount: result.newCurrentCount,
       progress: result.newProgress,
+      ...result.periodMetrics,
     })
   } catch (error) {
     return handleApiError(error)
@@ -345,6 +419,7 @@ export async function PATCH(
   try {
     const { id } = await params
     const { userId } = await getAuthenticatedUser()
+    const userTimeZone = await getUserTimezone(userId)
     const body = await request.json()
     const { logId, count } = body
 
@@ -367,7 +442,12 @@ export async function PATCH(
         where: { id, userId },
         select: {
           id: true,
+          type: true,
           targetCount: true,
+          countPerPeriod: true,
+          activeDays: true,
+          startDate: true,
+          endDate: true,
           currentCount: true,
           parentTaskId: true,
           importance: true,
@@ -415,6 +495,14 @@ export async function PATCH(
 
       const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
       await applyHabitProgressDeltaToParentTx(tx, habit, oldProgress, newProgress)
+      const metricLogs = await tx.habitLog.findMany({
+        where: { habitId: id },
+        select: {
+          date: true,
+          count: true,
+        },
+      })
+      const periodMetrics = calculateHabitPeriodMetrics(habit, metricLogs, { timeZone: userTimeZone })
 
       return {
         kind: "ok" as const,
@@ -423,6 +511,7 @@ export async function PATCH(
         newCurrentCount,
         oldProgress,
         newProgress,
+        periodMetrics,
       }
     })
 
@@ -439,6 +528,7 @@ export async function PATCH(
       data: result.updatedLog,
       currentCount: result.newCurrentCount,
       progress: result.newProgress,
+      ...result.periodMetrics,
     })
   } catch (error) {
     return handleApiError(error)

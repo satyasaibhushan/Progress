@@ -48,6 +48,18 @@ export interface LogHabitInput {
   timezoneOffsetMinutes?: number;
 }
 
+export interface HabitLogMutationResult {
+  log: HabitLog | null;
+  currentCount?: number;
+  progress?: number;
+  streak?: number;
+  streakPeriod?: Habit["type"];
+  currentPeriodCount?: number;
+  currentPeriodTarget?: number;
+  currentPeriodComplete?: boolean;
+  weeklyDistinctDays?: number;
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: "Unknown error" }));
@@ -150,7 +162,7 @@ export async function deleteHabit(id: string): Promise<void> {
   }
 }
 
-export async function logHabit(habitId: string, input?: LogHabitInput): Promise<HabitLog> {
+export async function logHabit(habitId: string, input?: LogHabitInput): Promise<HabitLogMutationResult> {
   const payload: LogHabitInput = { ...(input || {}) };
   if (payload.timezoneOffsetMinutes === undefined && typeof window !== "undefined") {
     payload.timezoneOffsetMinutes = new Date().getTimezoneOffset();
@@ -161,7 +173,22 @@ export async function logHabit(habitId: string, input?: LogHabitInput): Promise<
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  return handleResponse<HabitLog>(response);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: "Unknown error" }));
+    throw new Error(error.error || `HTTP error! status: ${response.status}`);
+  }
+  const data = await response.json();
+  return {
+    log: data.data || null,
+    currentCount: data.currentCount,
+    progress: data.progress,
+    streak: data.streak,
+    streakPeriod: data.streakPeriod,
+    currentPeriodCount: data.currentPeriodCount,
+    currentPeriodTarget: data.currentPeriodTarget,
+    currentPeriodComplete: data.currentPeriodComplete,
+    weeklyDistinctDays: data.weeklyDistinctDays,
+  };
 }
 
 export async function getHabitLogs(
@@ -177,7 +204,7 @@ export async function getHabitLogs(
   return handleResponse<HabitLog[]>(response);
 }
 
-export async function deleteHabitLog(habitId: string, logId: string): Promise<void> {
+export async function deleteHabitLog(habitId: string, logId: string): Promise<HabitLogMutationResult> {
   const response = await fetch(`/api/habits/${habitId}/log`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
@@ -187,9 +214,21 @@ export async function deleteHabitLog(habitId: string, logId: string): Promise<vo
     const error = await response.json().catch(() => ({ error: "Unknown error" }));
     throw new Error(error.error || `HTTP error! status: ${response.status}`);
   }
+  const data = await response.json();
+  return {
+    log: data.data || null,
+    currentCount: data.currentCount,
+    progress: data.progress,
+    streak: data.streak,
+    streakPeriod: data.streakPeriod,
+    currentPeriodCount: data.currentPeriodCount,
+    currentPeriodTarget: data.currentPeriodTarget,
+    currentPeriodComplete: data.currentPeriodComplete,
+    weeklyDistinctDays: data.weeklyDistinctDays,
+  };
 }
 
-export async function updateHabitLogCount(habitId: string, logId: string, count: number): Promise<void> {
+export async function updateHabitLogCount(habitId: string, logId: string, count: number): Promise<HabitLogMutationResult> {
   const response = await fetch(`/api/habits/${habitId}/log`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -199,6 +238,18 @@ export async function updateHabitLogCount(habitId: string, logId: string, count:
     const error = await response.json().catch(() => ({ error: "Unknown error" }));
     throw new Error(error.error || `HTTP error! status: ${response.status}`);
   }
+  const data = await response.json();
+  return {
+    log: data.data || null,
+    currentCount: data.currentCount,
+    progress: data.progress,
+    streak: data.streak,
+    streakPeriod: data.streakPeriod,
+    currentPeriodCount: data.currentPeriodCount,
+    currentPeriodTarget: data.currentPeriodTarget,
+    currentPeriodComplete: data.currentPeriodComplete,
+    weeklyDistinctDays: data.weeklyDistinctDays,
+  };
 }
 
 export async function addHabitLabel(habitId: string, labelId: string): Promise<void> {

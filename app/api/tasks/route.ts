@@ -8,6 +8,8 @@ import { validateUniqueTaskTitle } from "@/lib/validations/uniqueness"
 import { addChildToTask } from "@/lib/progress-calculator"
 import { serializeTask, serializeTasks } from "@/lib/utils"
 import { calculateIdealProgress, isPending } from "@/lib/date-helpers"
+import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
+import { getUserTimezone } from "@/lib/user-timezone"
 import {
   getInheritedLabelsFromTask,
 } from "@/lib/inheritance-helpers"
@@ -81,6 +83,7 @@ export async function GET(request: Request) {
     const groupId = searchParams.get("groupId")
     const includeChildren = searchParams.get("include") === "children"
     const includeHabits = searchParams.get("includeHabits") !== "false"
+    const userTimeZone = includeHabits ? await getUserTimezone(userId) : "UTC"
     const status = searchParams.get("status")
     const paginate = searchParams.get("paginate") === "true"
     const highlightId = searchParams.get("highlightId")
@@ -185,8 +188,39 @@ export async function GET(request: Request) {
         }
 
         const allHabits = allTasks.flatMap((task) => task.habits || [])
+        const logsByHabitId = new Map<string, { date: Date; count: number }[]>()
+
+        if (allHabits.length > 0) {
+          const habitIds = [...new Set(allHabits.map((habit) => habit.id))]
+          const logs = await prisma.habitLog.findMany({
+            where: {
+              habitId: {
+                in: habitIds,
+              },
+            },
+            select: {
+              habitId: true,
+              date: true,
+              count: true,
+            },
+          })
+
+          for (const log of logs) {
+            const existing = logsByHabitId.get(log.habitId) || []
+            existing.push({ date: log.date, count: log.count })
+            logsByHabitId.set(log.habitId, existing)
+          }
+        }
+
         const habitProgressByHabitId = new Map<string, number>()
         for (const habit of allHabits) {
+          const periodMetrics = calculateHabitPeriodMetrics(
+            habit,
+            logsByHabitId.get(habit.id) || [],
+            { timeZone: userTimeZone }
+          )
+          Object.assign(habit, periodMetrics)
+
           if (habitProgressByHabitId.has(habit.id)) continue
           const totalCount = habit.currentCount || 0
           const targetCount = habit.targetCount || 0
@@ -457,6 +491,42 @@ export async function GET(request: Request) {
         },
       ],
     })
+
+    if (includeHabits) {
+      const allHabits = tasks.flatMap((task) => task.habits || [])
+      const logsByHabitId = new Map<string, { date: Date; count: number }[]>()
+
+      if (allHabits.length > 0) {
+        const habitIds = [...new Set(allHabits.map((habit) => habit.id))]
+        const logs = await prisma.habitLog.findMany({
+          where: {
+            habitId: {
+              in: habitIds,
+            },
+          },
+          select: {
+            habitId: true,
+            date: true,
+            count: true,
+          },
+        })
+
+        for (const log of logs) {
+          const existing = logsByHabitId.get(log.habitId) || []
+          existing.push({ date: log.date, count: log.count })
+          logsByHabitId.set(log.habitId, existing)
+        }
+      }
+
+      for (const habit of allHabits) {
+        const periodMetrics = calculateHabitPeriodMetrics(
+          habit,
+          logsByHabitId.get(habit.id) || [],
+          { timeZone: userTimeZone }
+        )
+        Object.assign(habit, periodMetrics)
+      }
+    }
 
     const taskMeta = new Map<string, {
       rank: number

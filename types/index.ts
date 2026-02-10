@@ -75,6 +75,12 @@ export interface Habit {
   labels?: Label[];
   currentCount?: number; // Calculated from logs
   habitLogs?: HabitLog[]; // Logs included when requested via includeLogs
+  streak?: number;
+  streakPeriod?: 'DAILY' | 'WEEKLY' | 'MONTHLY';
+  currentPeriodCount?: number;
+  currentPeriodTarget?: number;
+  currentPeriodComplete?: boolean;
+  weeklyDistinctDays?: number;
 }
 
 export interface HabitLog {

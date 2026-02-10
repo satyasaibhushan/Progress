@@ -22,7 +22,7 @@ import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ServerLazyList } from "@/components/shared/server-lazy-list";
 import { Calendar as CalendarIcon, ListTodo } from "lucide-react";
-import { isSameDay, parseISO } from "date-fns";
+import { parseISO } from "date-fns";
 import {
   Dialog,
   DialogContent,
@@ -39,50 +39,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-
-// Calculate streak for a habit
-function calculateStreak(logs: HabitLog[]): number {
-  if (logs.length === 0) return 0;
-  
-  // Sort logs by date descending
-  const sortedLogs = [...logs].sort((a, b) => {
-    const dateA = parseISO(a.date);
-    const dateB = parseISO(b.date);
-    return dateB.getTime() - dateA.getTime();
-  });
-
-  let streak = 0;
-  const currentDate = new Date();
-  currentDate.setHours(0, 0, 0, 0);
-
-  // Check if today is logged
-  const todayLogged = sortedLogs.some(log => {
-    const logDate = parseISO(log.date);
-    logDate.setHours(0, 0, 0, 0);
-    return isSameDay(logDate, currentDate);
-  });
-
-  if (!todayLogged) {
-    // If today is not logged, start from yesterday
-    currentDate.setDate(currentDate.getDate() - 1);
-  }
-
-  // Count consecutive days
-  for (const log of sortedLogs) {
-    const logDate = parseISO(log.date);
-    logDate.setHours(0, 0, 0, 0);
-    
-    if (isSameDay(logDate, currentDate)) {
-      streak++;
-      currentDate.setDate(currentDate.getDate() - 1);
-    } else if (logDate < currentDate) {
-      // Gap found, break streak
-      break;
-    }
-  }
-
-  return streak;
-}
 
 function getHabitProgressValue(habit: Habit): number {
   const progress = typeof habit.progress === "number" ? habit.progress : 0;
@@ -124,6 +80,12 @@ function getHabitStatus(habit: Habit): HabitStatus {
   }
 
   return "active";
+}
+
+function getStreakLabel(period?: Habit["type"]): string {
+  if (period === "WEEKLY") return "weeks";
+  if (period === "MONTHLY") return "months";
+  return "days";
 }
 
 interface HabitPageState {
@@ -600,6 +562,7 @@ function HabitsPageContent() {
         return getUtcDateKeyFromIso(log.date) === dateStr;
       });
       const countPerPeriod = selectedHabit.countPerPeriod || 1;
+      const isWeeklyOrMonthly = selectedHabit.type === "WEEKLY" || selectedHabit.type === "MONTHLY";
 
       let operation:
         | { kind: "create" }
@@ -609,7 +572,22 @@ function HabitsPageContent() {
         | null = null;
 
       if (existingLog && existingLog.habitId === selectedHabit.id) {
-        if (decrease && countPerPeriod > 1) {
+        if (isWeeklyOrMonthly) {
+          if (decrease) {
+            const nextCount = existingLog.count - 1;
+            if (nextCount <= 0) {
+              operation = { kind: "delete", logId: existingLog.id, removedCount: existingLog.count };
+            } else {
+              operation = { kind: "update", logId: existingLog.id, count: nextCount };
+            }
+          } else if (countPerPeriod > 1) {
+            if (existingLog.count < countPerPeriod) {
+              operation = { kind: "increment", logId: existingLog.id };
+            }
+          } else {
+            operation = { kind: "delete", logId: existingLog.id, removedCount: existingLog.count };
+          }
+        } else if (decrease && countPerPeriod > 1) {
           const nextCount = existingLog.count - 1;
           if (nextCount <= 0) {
             operation = { kind: "delete", logId: existingLog.id, removedCount: existingLog.count };
@@ -678,8 +656,10 @@ function HabitsPageContent() {
         progress: nextProgress,
       });
 
+      let mutationResult: Awaited<ReturnType<typeof logHabit>> | null = null;
+
       if (operation.kind === "create" || operation.kind === "increment") {
-        const serverLog = await logHabit(selectedHabit.id, {
+        mutationResult = await logHabit(selectedHabit.id, {
           date: `${dateStr}T00:00:00.000Z`,
           count: 1,
         });
@@ -687,16 +667,56 @@ function HabitsPageContent() {
           const filtered = prev.filter((log) => {
             return !(log.habitId === selectedHabit.id && getUtcDateKeyFromIso(log.date) === dateStr);
           });
-          return [serverLog, ...filtered].sort((a, b) => {
+          if (!mutationResult?.log) return filtered;
+          return [mutationResult.log, ...filtered].sort((a, b) => {
             const dateA = parseISO(a.date).getTime();
             const dateB = parseISO(b.date).getTime();
             return dateB - dateA;
           });
         });
       } else if (operation.kind === "update") {
-        await updateHabitLogCount(selectedHabit.id, operation.logId, operation.count);
+        mutationResult = await updateHabitLogCount(selectedHabit.id, operation.logId, operation.count);
       } else {
-        await deleteHabitLog(selectedHabit.id, operation.logId);
+        mutationResult = await deleteHabitLog(selectedHabit.id, operation.logId);
+      }
+
+      if (mutationResult) {
+        const serverPatch: Partial<Habit> = {};
+        if (typeof mutationResult.currentCount === "number") {
+          serverPatch.currentCount = mutationResult.currentCount;
+        }
+        if (typeof mutationResult.progress === "number") {
+          serverPatch.progress = mutationResult.progress;
+        }
+        if (typeof mutationResult.streak === "number") {
+          serverPatch.streak = mutationResult.streak;
+        }
+        if (mutationResult.streakPeriod) {
+          serverPatch.streakPeriod = mutationResult.streakPeriod;
+        }
+        if (typeof mutationResult.currentPeriodCount === "number") {
+          serverPatch.currentPeriodCount = mutationResult.currentPeriodCount;
+        }
+        if (typeof mutationResult.currentPeriodTarget === "number") {
+          serverPatch.currentPeriodTarget = mutationResult.currentPeriodTarget;
+        }
+        if (typeof mutationResult.currentPeriodComplete === "boolean") {
+          serverPatch.currentPeriodComplete = mutationResult.currentPeriodComplete;
+        }
+        if (typeof mutationResult.weeklyDistinctDays === "number") {
+          serverPatch.weeklyDistinctDays = mutationResult.weeklyDistinctDays;
+        }
+
+        if (Object.keys(serverPatch).length > 0) {
+          setSelectedHabit((prev) => {
+            if (!prev || prev.id !== selectedHabit.id) return prev;
+            return {
+              ...prev,
+              ...serverPatch,
+            };
+          });
+          applyHabitPatchToLoadedPages(selectedHabit.id, serverPatch);
+        }
       }
 
     } catch (error: unknown) {
@@ -712,6 +732,12 @@ function HabitsPageContent() {
         applyHabitPatchToLoadedPages(previousHabit.id, {
           currentCount: rollbackCount,
           progress: rollbackProgress,
+          streak: previousHabit.streak,
+          streakPeriod: previousHabit.streakPeriod,
+          currentPeriodCount: previousHabit.currentPeriodCount,
+          currentPeriodTarget: previousHabit.currentPeriodTarget,
+          currentPeriodComplete: previousHabit.currentPeriodComplete,
+          weeklyDistinctDays: previousHabit.weeklyDistinctDays,
         });
       }
 
@@ -810,12 +836,14 @@ function HabitsPageContent() {
 
   // Calculate progress and streak for selected habit
   const selectedHabitProgress = selectedHabit ? getHabitProgressValue(selectedHabit) : 0;
-  const selectedHabitStreak = selectedHabit ? calculateStreak(selectedHabitLogs) : 0;
+  const selectedHabitStreak = selectedHabit?.streak || 0;
 
   const renderHabitItem = (habit: Habit) => {
     const habitProgress = getHabitProgressValue(habit);
     const currentCount = habit.currentCount || 0;
-    const streak = selectedHabit?.id === habit.id ? calculateStreak(selectedHabitLogs) : 0;
+    const streak = selectedHabit?.id === habit.id
+      ? (selectedHabit.streak ?? habit.streak ?? 0)
+      : (habit.streak ?? 0);
     const group = groups.find((g) => g.id === habit.groupId);
     const linkedTask = habit.parentTask;
 
@@ -1033,7 +1061,7 @@ function HabitsPageContent() {
                       <div>
                         <p className="text-muted-foreground mb-0.5 text-xs">Streak</p>
                         <p className="text-base font-semibold">
-                          {selectedHabitStreak} days
+                          {selectedHabitStreak} {getStreakLabel(selectedHabit.streakPeriod || selectedHabit.type)}
                         </p>
                       </div>
                     </div>

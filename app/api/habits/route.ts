@@ -9,6 +9,8 @@ import { addHabitToTask } from "@/lib/progress-calculator"
 import { calculateTargetCount } from "@/lib/habit-helpers"
 import { HabitType } from "@prisma/client"
 import { calculateIdealProgress, isPending } from "@/lib/date-helpers"
+import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
+import { getUserTimezone } from "@/lib/user-timezone"
 import {
   getInheritedLabelsFromHabit,
 } from "@/lib/inheritance-helpers"
@@ -19,6 +21,7 @@ export async function GET(request: Request) {
   try {
     const { userId } = await getAuthenticatedUser()
     const { searchParams } = new URL(request.url)
+    const userTimeZone = await getUserTimezone(userId)
 
     const clampProgress = (value: number): number => {
       if (!Number.isFinite(value)) return 0
@@ -131,16 +134,53 @@ export async function GET(request: Request) {
       },
     })
 
+    const habitIds = habits.map((habit) => habit.id)
+    const logsByHabitId = new Map<string, { date: Date; count: number }[]>()
+
+    if (includeLogs) {
+      for (const habit of habits) {
+        const logs = Array.isArray(habit.habitLogs)
+          ? habit.habitLogs.map((log) => ({ date: log.date, count: log.count }))
+          : []
+        logsByHabitId.set(habit.id, logs)
+      }
+    } else if (habitIds.length > 0) {
+      const logs = await prisma.habitLog.findMany({
+        where: {
+          habitId: {
+            in: habitIds,
+          },
+        },
+        select: {
+          habitId: true,
+          date: true,
+          count: true,
+        },
+      })
+
+      for (const log of logs) {
+        const existing = logsByHabitId.get(log.habitId) || []
+        existing.push({ date: log.date, count: log.count })
+        logsByHabitId.set(log.habitId, existing)
+      }
+    }
+
     // Calculate progress for each habit and serialize
     const habitsWithProgress = habits.map((habit) => {
       const currentCount = includeLogs && Array.isArray(habit.habitLogs)
         ? habit.habitLogs.reduce((sum: number, log: any) => sum + (log.count || 0), 0)
         : (habit.currentCount || 0)
       const progress = getHabitProgress(habit, currentCount)
+      const periodMetrics = calculateHabitPeriodMetrics(
+        habit,
+        logsByHabitId.get(habit.id) || [],
+        { timeZone: userTimeZone }
+      )
       return serializeHabit({
         ...habit,
         progress,
         currentCount,
+        ...periodMetrics,
       })
     })
 
@@ -304,11 +344,14 @@ export async function POST(request: Request) {
     let targetCount = validatedData.targetCount
     if (!targetCount && validatedData.endDate) {
       const endDate = new Date(validatedData.endDate)
+      const startAnchor = validatedData.startDate
+        ? new Date(validatedData.startDate)
+        : new Date()
       const calculated = calculateTargetCount(
         validatedData.type,
         endDate,
         validatedData.activeDays || null,
-        new Date(),
+        startAnchor,
         countPerPeriod
       )
       if (calculated === null) {

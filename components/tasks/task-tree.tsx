@@ -1,6 +1,6 @@
 "use client";
 
-import { Task, Group, Habit, HabitLog } from "@/types";
+import { Task, Group, Habit } from "@/types";
 import { TaskCard } from "./task-card";
 import { ChevronRight, ChevronDown, Flame, Folder } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { cn } from "@/lib/utils";
-import { parseISO, isSameDay } from "date-fns";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -39,50 +38,6 @@ function hasChildren(task: Task): boolean {
 
 function hasHabits(task: Task): boolean {
   return task.habits ? task.habits.length > 0 : false;
-}
-
-// Calculate streak for a habit
-function calculateStreak(logs: HabitLog[]): number {
-  if (logs.length === 0) return 0;
-  
-  // Sort logs by date descending
-  const sortedLogs = [...logs].sort((a, b) => {
-    const dateA = parseISO(a.date);
-    const dateB = parseISO(b.date);
-    return dateB.getTime() - dateA.getTime();
-  });
-
-  let streak = 0;
-  const currentDate = new Date();
-  currentDate.setHours(0, 0, 0, 0);
-
-  // Check if today is logged
-  const todayLogged = sortedLogs.some(log => {
-    const logDate = parseISO(log.date);
-    logDate.setHours(0, 0, 0, 0);
-    return isSameDay(logDate, currentDate);
-  });
-
-  if (!todayLogged) {
-    // If today is not logged, start from yesterday
-    currentDate.setDate(currentDate.getDate() - 1);
-  }
-
-  // Count consecutive days
-  for (const log of sortedLogs) {
-    const logDate = parseISO(log.date);
-    logDate.setHours(0, 0, 0, 0);
-    
-    if (isSameDay(logDate, currentDate)) {
-      streak++;
-      currentDate.setDate(currentDate.getDate() - 1);
-    } else if (logDate < currentDate) {
-      // Gap found, break streak
-      break;
-    }
-  }
-
-  return streak;
 }
 
 // Calculate progress for a task (handles parent tasks)
@@ -258,8 +213,7 @@ export function TaskTree({
                 }
               }
               
-              // Calculate streak from logs
-              const streak = fullHabit.habitLogs ? calculateStreak(fullHabit.habitLogs) : 0;
+              const streak = fullHabit.streak ?? 0;
               const isHabitHighlighted = highlightedHabitId === habit.id;
               
               return (
