@@ -11,7 +11,6 @@ import {
   calculateHabitCompletion,
   updateHabitContribution,
 } from "@/lib/progress-calculator"
-import { calculateTargetCount } from "@/lib/habit-helpers"
 import {
   getInheritedLabelsFromHabit,
   getInheritedGroupFromHabit,
@@ -21,6 +20,21 @@ import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
 import { getUserTimezone } from "@/lib/user-timezone"
 import { parseDateInputToUTCDate } from "@/lib/date-only"
 import { serializeHabit } from "@/lib/utils"
+
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6] as const
+
+function normalizeActiveDays(activeDays: number[] | null | undefined): number[] {
+  const normalized = (activeDays || [])
+    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    .sort((a, b) => a - b)
+
+  return Array.from(new Set(normalized))
+}
+
+function sameDays(left: number[], right: number[]): boolean {
+  if (left.length !== right.length) return false
+  return left.every((value, index) => value === right[index])
+}
 
 // GET /api/habits/[id] - Get a specific habit
 export async function GET(
@@ -150,60 +164,22 @@ export async function PUT(
       await validateUniqueHabitTitle(userId, updateFields.title, id)
     }
 
-    // Validate activeDays for WEEKLY habits
     const finalType = updateFields.type ?? existingHabit.type
-    const finalActiveDays = updateFields.activeDays ?? existingHabit.activeDays
-    
-    if (finalType === "WEEKLY") {
-      if (!finalActiveDays || finalActiveDays.length === 0) {
-        return NextResponse.json(
-          { error: "activeDays is required for WEEKLY habits" },
-          { status: 400 }
-        )
-      }
-      // Validate day numbers are 0-6
-      const invalidDays = finalActiveDays.filter((day: number) => day < 0 || day > 6)
-      if (invalidDays.length > 0) {
-        return NextResponse.json(
-          { error: "activeDays must contain numbers between 0 (Sunday) and 6 (Saturday)" },
-          { status: 400 }
-        )
-      }
-    }
+    const finalCountPerPeriod = finalType === "DAILY"
+      ? 1
+      : (validatedData.countPerPeriod ?? existingHabit.countPerPeriod ?? 1)
+    const finalMaxCountPerDay = validatedData.maxCountPerDay ?? existingHabit.maxCountPerDay ?? 1
+    const finalActiveDays = finalType === "DAILY"
+      ? (() => {
+          const normalized = normalizeActiveDays(updateFields.activeDays ?? existingHabit.activeDays)
+          return normalized.length > 0 ? normalized : [...ALL_DAYS]
+        })()
+      : []
+    const targetCount = validatedData.targetCount ?? existingHabit.targetCount
 
-    // Get countPerPeriod (use provided value, existing value, or default to 1)
-    const finalCountPerPeriod = validatedData.countPerPeriod ?? existingHabit.countPerPeriod ?? 1
-
-    // Auto-calculate targetCount if not provided but endDate is set/changed
-    let targetCount = validatedData.targetCount ?? existingHabit.targetCount
-    const finalEndDate = validatedData.endDate !== undefined
-      ? parsedEndDate
-      : existingHabit.endDate
-    const finalStartDate = validatedData.startDate !== undefined
-      ? parsedStartDate
-      : (existingHabit.startDate || existingHabit.createdAt)
-
-    // Recalculate targetCount if countPerPeriod changed or targetCount is not set
-    const countPerPeriodChanged = validatedData.countPerPeriod !== undefined &&
-      validatedData.countPerPeriod !== existingHabit.countPerPeriod
-
-    if ((!targetCount || countPerPeriodChanged) && finalEndDate) {
-      const calculated = calculateTargetCount(
-        finalType,
-        finalEndDate,
-        finalActiveDays,
-        finalStartDate,
-        finalCountPerPeriod
-      )
-      if (calculated !== null) {
-        targetCount = calculated
-      }
-    }
-
-    // Ensure targetCount is set
     if (!targetCount || targetCount < 1) {
       return NextResponse.json(
-        { error: "targetCount is required and must be positive. Provide it directly or set endDate to auto-calculate." },
+        { error: "targetCount is required and must be positive." },
         { status: 400 }
       )
     }
@@ -283,12 +259,15 @@ export async function PUT(
     if (updateFields.groupId !== undefined) updateData.groupId = updateFields.groupId ?? null
     if (updateFields.parentTaskId !== undefined) updateData.parentTaskId = updateFields.parentTaskId ?? null
 
-    // Set countPerPeriod if changed
-    if (updateFields.countPerPeriod !== undefined) {
-      updateData.countPerPeriod = updateFields.countPerPeriod
+    if (finalCountPerPeriod !== existingHabit.countPerPeriod) {
+      updateData.countPerPeriod = finalCountPerPeriod
     }
 
-    // Set targetCount (use calculated if auto-calculated, otherwise use provided or existing)
+    if (finalMaxCountPerDay !== (existingHabit.maxCountPerDay ?? 1)) {
+      updateData.maxCountPerDay = finalMaxCountPerDay
+    }
+
+    // Set targetCount
     if (targetCount !== existingHabit.targetCount) {
       updateData.targetCount = targetCount
     }
@@ -303,15 +282,17 @@ export async function PUT(
       updateData.endDate = updateFields.endDate ? parsedEndDate : null
     }
     
-    // Set activeDays
-    if (updateFields.activeDays !== undefined) {
-      if (finalType === "WEEKLY") {
-        updateData.activeDays = updateFields.activeDays || []
-      } else {
-        updateData.activeDays = []
+    // Set activeDays (only DAILY uses active days)
+    if (finalType === "DAILY") {
+      const existingDays = normalizeActiveDays(existingHabit.activeDays)
+      if (
+        updateFields.activeDays !== undefined ||
+        updateFields.type !== undefined ||
+        !sameDays(existingDays, finalActiveDays)
+      ) {
+        updateData.activeDays = finalActiveDays
       }
-    } else if (updateFields.type !== undefined && updateFields.type !== "WEEKLY") {
-      // If type changed from WEEKLY to something else, clear activeDays
+    } else if (existingHabit.activeDays.length > 0 || updateFields.activeDays !== undefined || updateFields.type !== undefined) {
       updateData.activeDays = []
     }
 

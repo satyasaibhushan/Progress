@@ -15,15 +15,18 @@ export const createHabitSchema = z.object({
   targetCount: z
     .number()
     .int()
-    .positive("Target count must be positive")
-    .optional()
-    .nullable(), // Can be auto-calculated from endDate
+    .positive("Target count must be positive"),
   countPerPeriod: z
     .number()
     .int()
     .positive("Count per period must be positive")
+    .optional(),
+  maxCountPerDay: z
+    .number()
+    .int()
+    .positive("Max count per day must be positive")
     .default(1)
-    .optional(), // How many times per day/week/month
+    .optional(),
   importance: z
     .number()
     .int()
@@ -35,10 +38,18 @@ export const createHabitSchema = z.object({
   activeDays: z
     .array(z.number().int().min(0).max(6)) // 0=Sun, 1=Mon, ..., 6=Sat
     .optional()
-    .nullable(), // Required for WEEKLY habits, optional for others
+    .nullable(),
   groupId: z.string().optional().nullable(),
   parentTaskId: z.string().optional().nullable(),
   labelIds: z.array(z.string()).optional(),
+}).superRefine((data, ctx) => {
+  if (data.type !== HabitType.DAILY && data.countPerPeriod === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Count per period is required for weekly, monthly, and yearly habits",
+      path: ["countPerPeriod"],
+    })
+  }
 })
 
 export const updateHabitSchema = z.object({
@@ -50,12 +61,17 @@ export const updateHabitSchema = z.object({
     .int()
     .positive("Target count must be positive")
     .optional()
-    .nullable(), // Can be auto-calculated from endDate
+    .nullable(),
   countPerPeriod: z
     .number()
     .int()
     .positive("Count per period must be positive")
-    .optional(), // How many times per day/week/month
+    .optional(),
+  maxCountPerDay: z
+    .number()
+    .int()
+    .positive("Max count per day must be positive")
+    .optional(),
   importance: z
     .number()
     .int()
@@ -81,13 +97,16 @@ export const habitFormSchema = z.object({
   targetCount: z
     .number()
     .int()
-    .positive("Target count must be positive")
-    .optional()
-    .nullable(), // Can be auto-calculated from endDate
+    .positive("Target count must be positive"),
   countPerPeriod: z
     .number()
     .int()
     .positive("Count per period must be positive")
+    .optional(),
+  maxCountPerDay: z
+    .number()
+    .int()
+    .positive("Max count per day must be positive")
     .default(1)
     .optional(),
   importance: z
@@ -106,6 +125,14 @@ export const habitFormSchema = z.object({
   groupId: z.string().optional().nullable(),
   parentTaskId: z.string().optional().nullable(),
   labelIds: z.array(z.string()).optional(),
+}).superRefine((data, ctx) => {
+  if (data.type !== HabitType.DAILY && data.countPerPeriod === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Count per period is required for weekly, monthly, and yearly habits",
+      path: ["countPerPeriod"],
+    })
+  }
 })
 
 export const logHabitSchema = z.object({

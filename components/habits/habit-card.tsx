@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
-import { Flame, Repeat, ArrowRight, ListTodo, MoreVertical, Folder, Clock, Calendar, Edit, Trash2 } from "lucide-react";
+import { Flame, ArrowRight, ListTodo, MoreVertical, Folder, Clock, Calendar, Edit, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isPending } from "@/lib/date-helpers";
 import { useDayRollover } from "@/lib/use-day-rollover";
@@ -159,9 +159,13 @@ export function HabitCard({
             <Badge variant="secondary" className="text-xs">
               {habit.type}
             </Badge>
-            {habit.countPerPeriod && habit.countPerPeriod > 1 && (
+            {habit.type === "DAILY" ? (
               <Badge variant="outline" className="text-xs">
-                {habit.countPerPeriod}x per {habit.type.toLowerCase()}
+                Max/day: {habit.maxCountPerDay || 1}x
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-xs">
+                {habit.countPerPeriod || 1}x per {habit.type.toLowerCase()}
               </Badge>
             )}
             {displayGroup && (

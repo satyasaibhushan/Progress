@@ -55,9 +55,10 @@ export interface Habit {
   id: string;
   title: string;
   description?: string;
-  type: 'DAILY' | 'WEEKLY' | 'MONTHLY';
+  type: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
   targetCount: number;
-  countPerPeriod?: number; // How many times per period (defaults to 1)
+  countPerPeriod?: number; // Used for WEEKLY/MONTHLY/YEARLY habits
+  maxCountPerDay?: number; // Max logs allowed per day (defaults to 1)
   importance: number;
   progress?: number;
   startDate?: string;
@@ -76,7 +77,7 @@ export interface Habit {
   currentCount?: number; // Calculated from logs
   habitLogs?: HabitLog[]; // Logs included when requested via includeLogs
   streak?: number;
-  streakPeriod?: 'DAILY' | 'WEEKLY' | 'MONTHLY';
+  streakPeriod?: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
   currentPeriodCount?: number;
   currentPeriodTarget?: number;
   currentPeriodComplete?: boolean;

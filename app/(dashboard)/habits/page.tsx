@@ -85,6 +85,7 @@ function getHabitStatus(habit: Habit): HabitStatus {
 function getStreakLabel(period?: Habit["type"]): string {
   if (period === "WEEKLY") return "weeks";
   if (period === "MONTHLY") return "months";
+  if (period === "YEARLY") return "years";
   return "days";
 }
 
@@ -124,9 +125,10 @@ function mergeUniqueHabitsById(existing: Habit[], incoming: Habit[]): Habit[] {
 
 interface HabitFormPayload {
   title: string;
-  type: "DAILY" | "WEEKLY" | "MONTHLY";
+  type: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
   targetCount?: number | null;
   countPerPeriod?: number;
+  maxCountPerDay?: number;
   importance?: number;
   description?: string;
   startDate?: string | null;
@@ -604,8 +606,7 @@ function HabitsPageContent() {
       const existingLog = previousLogs.find((log) => {
         return getUtcDateKeyFromIso(log.date) === dateStr;
       });
-      const countPerPeriod = selectedHabit.countPerPeriod || 1;
-      const isWeeklyOrMonthly = selectedHabit.type === "WEEKLY" || selectedHabit.type === "MONTHLY";
+      const maxCountPerDay = selectedHabit.maxCountPerDay || 1;
 
       let operation:
         | { kind: "create" }
@@ -615,30 +616,17 @@ function HabitsPageContent() {
         | null = null;
 
       if (existingLog && existingLog.habitId === selectedHabit.id) {
-        if (isWeeklyOrMonthly) {
-          if (decrease) {
-            const nextCount = existingLog.count - 1;
-            if (nextCount <= 0) {
-              operation = { kind: "delete", logId: existingLog.id, removedCount: existingLog.count };
-            } else {
-              operation = { kind: "update", logId: existingLog.id, count: nextCount };
-            }
-          } else if (countPerPeriod > 1) {
-            if (existingLog.count < countPerPeriod) {
-              operation = { kind: "increment", logId: existingLog.id };
-            }
-          } else {
-            operation = { kind: "delete", logId: existingLog.id, removedCount: existingLog.count };
-          }
-        } else if (decrease && countPerPeriod > 1) {
+        if (decrease) {
           const nextCount = existingLog.count - 1;
           if (nextCount <= 0) {
             operation = { kind: "delete", logId: existingLog.id, removedCount: existingLog.count };
           } else {
             operation = { kind: "update", logId: existingLog.id, count: nextCount };
           }
-        } else if (countPerPeriod > 1) {
-          operation = { kind: "increment", logId: existingLog.id };
+        } else if (maxCountPerDay > 1) {
+          if (existingLog.count < maxCountPerDay) {
+            operation = { kind: "increment", logId: existingLog.id };
+          }
         } else {
           operation = { kind: "delete", logId: existingLog.id, removedCount: existingLog.count };
         }
@@ -803,6 +791,7 @@ function HabitsPageContent() {
         type: data.type,
         targetCount: data.targetCount,
         countPerPeriod: data.countPerPeriod,
+        maxCountPerDay: data.maxCountPerDay,
         importance: data.importance,
         description: data.description,
         startDate: data.startDate || undefined,
@@ -836,6 +825,7 @@ function HabitsPageContent() {
         type: data.type,
         targetCount: data.targetCount,
         countPerPeriod: data.countPerPeriod,
+        maxCountPerDay: data.maxCountPerDay,
         importance: data.importance,
         description: data.description,
         startDate: data.startDate || undefined,
@@ -1059,10 +1049,15 @@ function HabitsPageContent() {
                                 ) : null}
                     </div>
                     <div className="flex items-center gap-4 ml-4">
-                      {selectedHabit.countPerPeriod && selectedHabit.countPerPeriod > 1 && (
+                      {selectedHabit.type === "DAILY" ? (
+                        <div className="flex items-center gap-1">
+                          <span className="text-sm text-muted-foreground">Max/day:</span>
+                          <span className="text-sm font-medium">{selectedHabit.maxCountPerDay || 1}x</span>
+                        </div>
+                      ) : (
                         <div className="flex items-center gap-1">
                           <span className="text-sm text-muted-foreground">Per {selectedHabit.type.toLowerCase()}:</span>
-                          <span className="text-sm font-medium">{selectedHabit.countPerPeriod}x</span>
+                          <span className="text-sm font-medium">{selectedHabit.countPerPeriod || 1}x</span>
                         </div>
                       )}
                       <div className="flex items-center gap-2">

@@ -296,11 +296,11 @@ export function TaskTree({
                             <Badge variant="outline" className="text-xs border-slate-300 text-slate-700 bg-slate-100">
                               Habit
                             </Badge>
-                            {habit.countPerPeriod && habit.countPerPeriod > 1 && (
-                              <Badge variant="secondary" className="text-xs">
-                                {habit.countPerPeriod}x
-                              </Badge>
-                            )}
+                            <Badge variant="secondary" className="text-xs">
+                              {habit.type === "DAILY"
+                                ? `Max/day ${habit.maxCountPerDay || 1}x`
+                                : `${habit.countPerPeriod || 1}x/${habit.type.toLowerCase()}`}
+                            </Badge>
                           </div>
                           {habit.description && (
                             <p className="text-xs text-muted-foreground line-clamp-1">

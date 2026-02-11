@@ -25,7 +25,7 @@ export function HabitCalendar({
 }: HabitCalendarProps) {
   const month = currentMonth;
   const todayKey = useDayRollover();
-  const countPerPeriod = habit.countPerPeriod || 1;
+  const maxCountPerDay = habit.maxCountPerDay || 1;
   
   useEffect(() => {
     if (onMonthChange) {
@@ -58,7 +58,7 @@ export function HabitCalendar({
   const today = todayKey;
 
   const isActiveDay = (dayOfWeek: number) => {
-    if (habit.type !== "WEEKLY") return true;
+    if (habit.type !== "DAILY") return true;
     return habit.activeDays?.includes(dayOfWeek) ?? true;
   };
 
@@ -132,10 +132,8 @@ export function HabitCalendar({
           const isLogged = count > 0;
           const dayOfWeek = getDay(day);
           const isActive = isActiveDay(dayOfWeek);
-          const isComplete = count >= countPerPeriod;
-          const isWeeklyOrMonthly = habit.type === "WEEKLY" || habit.type === "MONTHLY";
-          // Keep overboard highlighting only for daily habits.
-          const isOverboard = habit.type === "DAILY" && countPerPeriod > 1 && count > countPerPeriod;
+          const isComplete = count >= maxCountPerDay;
+          const isOverboard = count > maxCountPerDay;
           // Check if date is in the future
           const isFuture = day > new Date(new Date().setHours(23, 59, 59, 999));
 
@@ -144,7 +142,7 @@ export function HabitCalendar({
               key={dayKey}
               onClick={(event) => {
                 if (isFuture) return;
-                const shouldDecrease = isWeeklyOrMonthly ? event.shiftKey : false;
+                const shouldDecrease = event.shiftKey;
                 onDateClick?.(day, shouldDecrease);
               }}
               disabled={isFuture}
@@ -157,7 +155,7 @@ export function HabitCalendar({
                   ? "bg-green-50 border border-green-200"
                   : "bg-muted hover:bg-muted/80",
                 isOverboard && "bg-orange-100 border border-orange-300",
-                !isActive && habit.type === "WEEKLY" && "opacity-40",
+                !isActive && habit.type === "DAILY" && "opacity-40",
                 isFuture && "opacity-30 cursor-not-allowed blur-[0.5px]"
               )}
             >
@@ -170,13 +168,13 @@ export function HabitCalendar({
               </span>
               {isLogged && (
                 <div className="absolute top-0.5 right-0.5 flex items-center gap-0.5">
-                  {habit.type === "DAILY" && countPerPeriod > 1 ? (
+                  {maxCountPerDay > 1 ? (
                     <span className={cn(
                       "text-[9px] font-medium px-0.5 rounded leading-tight",
                       isComplete ? "text-green-700" : "text-green-600",
                       isOverboard && "text-orange-700"
                     )}>
-                      {count}/{countPerPeriod}
+                      {count}/{maxCountPerDay}
                     </span>
                   ) : (
                     <Check className="w-2.5 h-2.5 text-green-600" />

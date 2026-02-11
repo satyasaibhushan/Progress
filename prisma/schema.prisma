@@ -149,6 +149,7 @@ model Habit {
   targetCount    Int
   currentCount   Int          @default(0)
   countPerPeriod Int          @default(1)
+  maxCountPerDay Int          @default(1)
   importance     Int          @default(50)
   startDate      DateTime?     @db.Date
   endDate        DateTime?     @db.Date
@@ -205,4 +206,5 @@ enum HabitType {
   DAILY
   WEEKLY
   MONTHLY
+  YEARLY
 }

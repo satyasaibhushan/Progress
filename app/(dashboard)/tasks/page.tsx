@@ -836,9 +836,10 @@ function TasksPageContent() {
   const handleCreateHabit = async (data: {
     title: string;
     description?: string;
-    type: "DAILY" | "WEEKLY" | "MONTHLY";
+    type: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
     targetCount?: number | null;
     countPerPeriod?: number;
+    maxCountPerDay?: number;
     importance?: number;
     startDate?: string | null;
     endDate?: string | null;
@@ -857,6 +858,7 @@ function TasksPageContent() {
       type: data.type,
       targetCount: data.targetCount,
       countPerPeriod: data.countPerPeriod,
+      maxCountPerDay: data.maxCountPerDay,
       importance: data.importance,
       startDate: data.startDate || undefined,
       endDate: data.endDate || undefined,

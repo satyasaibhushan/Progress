@@ -3,9 +3,10 @@ import { Habit, HabitLog } from "@/types";
 export interface CreateHabitInput {
   title: string;
   description?: string;
-  type: "DAILY" | "WEEKLY" | "MONTHLY";
+  type: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
   targetCount: number;
   countPerPeriod?: number;
+  maxCountPerDay?: number;
   importance: number;
   startDate?: string;
   endDate?: string;
@@ -20,7 +21,7 @@ export interface UpdateHabitInput extends Partial<CreateHabitInput> {
 }
 
 export interface HabitFilters {
-  type?: "DAILY" | "WEEKLY" | "MONTHLY";
+  type?: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
   groupId?: string;
   parentTaskId?: string;
   includeLogs?: boolean;

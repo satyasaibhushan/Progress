@@ -6,7 +6,6 @@ import { createHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
 import { addHabitToTask } from "@/lib/progress-calculator"
-import { calculateTargetCount } from "@/lib/habit-helpers"
 import { HabitType } from "@prisma/client"
 import { calculateIdealProgress, isPending } from "@/lib/date-helpers"
 import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
@@ -16,6 +15,16 @@ import {
   getInheritedLabelsFromHabit,
 } from "@/lib/inheritance-helpers"
 import { serializeHabit } from "@/lib/utils"
+
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6] as const
+
+function normalizeActiveDays(activeDays: number[] | null | undefined): number[] {
+  const normalized = (activeDays || [])
+    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    .sort((a, b) => a - b)
+
+  return Array.from(new Set(normalized))
+}
 
 // GET /api/habits - Get all habits for the authenticated user with optional filters
 export async function GET(request: Request) {
@@ -336,57 +345,15 @@ export async function POST(request: Request) {
     // Validate unique title
     await validateUniqueHabitTitle(userId, validatedData.title)
 
-    // Validate activeDays for WEEKLY habits
-    if (validatedData.type === "WEEKLY") {
-      if (!validatedData.activeDays || validatedData.activeDays.length === 0) {
-        return NextResponse.json(
-          { error: "activeDays is required for WEEKLY habits" },
-          { status: 400 }
-        )
-      }
-      // Validate day numbers are 0-6
-      const invalidDays = validatedData.activeDays.filter(day => day < 0 || day > 6)
-      if (invalidDays.length > 0) {
-        return NextResponse.json(
-          { error: "activeDays must contain numbers between 0 (Sunday) and 6 (Saturday)" },
-          { status: 400 }
-        )
-      }
-    }
-
-    // Get countPerPeriod (defaults to 1)
-    const countPerPeriod = validatedData.countPerPeriod ?? 1
-
-    // Auto-calculate targetCount if not provided
-    let targetCount = validatedData.targetCount
-    if (!targetCount && parsedEndDate) {
-      const endDate = new Date(parsedEndDate)
-      const startAnchor = parsedStartDate
-        ? new Date(parsedStartDate)
-        : new Date()
-      const calculated = calculateTargetCount(
-        validatedData.type,
-        endDate,
-        validatedData.activeDays || null,
-        startAnchor,
-        countPerPeriod
-      )
-      if (calculated === null) {
-        return NextResponse.json(
-          { error: "Cannot auto-calculate targetCount. Please provide targetCount or ensure endDate is valid." },
-          { status: 400 }
-        )
-      }
-      targetCount = calculated
-    }
-
-    // Ensure targetCount is set
-    if (!targetCount || targetCount < 1) {
-      return NextResponse.json(
-        { error: "targetCount is required and must be positive. Provide it directly or set endDate to auto-calculate." },
-        { status: 400 }
-      )
-    }
+    const isDaily = validatedData.type === "DAILY"
+    const countPerPeriod = isDaily ? 1 : (validatedData.countPerPeriod ?? 1)
+    const maxCountPerDay = validatedData.maxCountPerDay ?? 1
+    const activeDays = isDaily
+      ? (() => {
+          const normalized = normalizeActiveDays(validatedData.activeDays)
+          return normalized.length > 0 ? normalized : [...ALL_DAYS]
+        })()
+      : []
 
     // If parentTaskId is provided, verify it exists and belongs to user
     let parentTask = null
@@ -437,16 +404,17 @@ export async function POST(request: Request) {
     const habitData = {
       title: validatedData.title,
       description: validatedData.description ?? null,
-      type: validatedData.type as "DAILY" | "WEEKLY" | "MONTHLY",
-      targetCount: targetCount,
+      type: validatedData.type as "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY",
+      targetCount: validatedData.targetCount,
       countPerPeriod: countPerPeriod,
+      maxCountPerDay,
       importance: validatedData.importance,
       userId,
       groupId: validatedData.groupId ?? null,
       parentTaskId: validatedData.parentTaskId ?? null,
       startDate: parsedStartDate,
       endDate: parsedEndDate,
-      activeDays: validatedData.type === "WEEKLY" ? (validatedData.activeDays || []) : [],
+      activeDays,
     }
 
     const habit = await prisma.habit.create({

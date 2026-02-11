@@ -47,6 +47,7 @@ const DAYS_OF_WEEK = [
   { value: 5, label: "Friday" },
   { value: 6, label: "Saturday" },
 ];
+const ALL_DAYS = DAYS_OF_WEEK.map((day) => day.value);
 
 export function HabitForm({
   habit,
@@ -64,6 +65,7 @@ export function HabitForm({
     formState: { errors },
     setValue,
     watch,
+    getValues,
   } = useForm<HabitFormData>({
     resolver: zodResolver(habitFormSchema),
       defaultValues: habit
@@ -72,11 +74,14 @@ export function HabitForm({
           description: habit.description || "",
           type: habit.type,
           targetCount: habit.targetCount,
-          countPerPeriod: habit.countPerPeriod || 1,
+          countPerPeriod: habit.type === "DAILY" ? 1 : (habit.countPerPeriod || 1),
+          maxCountPerDay: habit.maxCountPerDay || 1,
           importance: habit.importance,
           startDate: habit.startDate || undefined,
           endDate: habit.endDate || undefined,
-          activeDays: habit.activeDays || [],
+          activeDays: habit.type === "DAILY"
+            ? ((habit.activeDays && habit.activeDays.length > 0) ? habit.activeDays : ALL_DAYS)
+            : [],
           groupId: habit.groupId || undefined,
           parentTaskId: habit.parentTaskId || undefined,
           labelIds: habit.labels?.map((l) => l.id) || [],
@@ -85,8 +90,9 @@ export function HabitForm({
           type: "DAILY",
           targetCount: 30,
           countPerPeriod: 1,
+          maxCountPerDay: 1,
           importance: 50,
-          activeDays: [],
+          activeDays: ALL_DAYS,
           parentTaskId: initialParentTaskId || undefined,
           labelIds: [],
         },
@@ -100,6 +106,7 @@ export function HabitForm({
   }, [initialParentTaskId, habit, setValue]);
 
   const type = watch("type");
+  const isDaily = type === "DAILY";
   const selectedParentTaskId = watch("parentTaskId");
   const selectedGroupId = watch("groupId") || undefined;
   const importance = watch("importance") ?? 50;
@@ -107,6 +114,7 @@ export function HabitForm({
   const selectedLabelIds = React.useMemo(() => watchedLabelIds ?? [], [watchedLabelIds]);
   const activeDays = watch("activeDays") || [];
   const [apiError, setApiError] = useState<string | null>(null);
+  const [showDailySchedule, setShowDailySchedule] = useState(false);
 
   // Flatten all tasks (including nested children) for parent selection
   const flattenTasks = (taskList: Task[]): Task[] => {
@@ -168,6 +176,23 @@ export function HabitForm({
     setValue,
   ]);
 
+  React.useEffect(() => {
+    if (type === "DAILY") {
+      const current = getValues("activeDays") || [];
+      if (current.length === 0) {
+        setValue("activeDays", ALL_DAYS);
+      }
+      if ((getValues("countPerPeriod") || 1) !== 1) {
+        setValue("countPerPeriod", 1);
+      }
+      return;
+    }
+
+    if ((getValues("activeDays") || []).length > 0) {
+      setValue("activeDays", []);
+    }
+  }, [type, getValues, setValue]);
+
   const handleFormSubmit = async (data: HabitFormData) => {
     try {
       setApiError(null);
@@ -228,7 +253,7 @@ export function HabitForm({
           <FormLabel htmlFor="type">Type *</FormLabel>
           <Select
             value={type}
-            onValueChange={(value: "DAILY" | "WEEKLY" | "MONTHLY") =>
+            onValueChange={(value: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY") =>
               setValue("type", value)
             }
           >
@@ -239,6 +264,7 @@ export function HabitForm({
               <SelectItem value="DAILY">Daily</SelectItem>
               <SelectItem value="WEEKLY">Weekly</SelectItem>
               <SelectItem value="MONTHLY">Monthly</SelectItem>
+              <SelectItem value="YEARLY">Yearly</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -272,36 +298,56 @@ export function HabitForm({
         </div>
       </div>
 
-      {/* Active Days for WEEKLY */}
-      {type === "WEEKLY" && (
+      {/* Daily schedule customization */}
+      {isDaily && (
         <div>
-          <FormLabel>Active Days *</FormLabel>
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            {DAYS_OF_WEEK.map((day) => (
-              <div key={day.value} className="flex items-center space-x-2">
-                <Checkbox
-                  id={`day-${day.value}`}
-                  checked={activeDays.includes(day.value)}
-                  onCheckedChange={() => toggleActiveDay(day.value)}
-                />
-                <FormLabel
-                  htmlFor={`day-${day.value}`}
-                  className="text-sm font-normal cursor-pointer"
-                >
-                  {day.label}
-                </FormLabel>
-              </div>
-            ))}
+          <div className="flex items-center justify-between">
+            <FormLabel>Daily schedule</FormLabel>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowDailySchedule((prev) => !prev)}
+            >
+              {showDailySchedule ? "Hide day selection" : "Customize active days"}
+            </Button>
           </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            By default, all 7 days are active.
+          </p>
+          {showDailySchedule && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {DAYS_OF_WEEK.map((day) => (
+                <div key={day.value} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={`day-${day.value}`}
+                    checked={activeDays.includes(day.value)}
+                    onCheckedChange={() => toggleActiveDay(day.value)}
+                  />
+                  <FormLabel
+                    htmlFor={`day-${day.value}`}
+                    className="text-sm font-normal cursor-pointer"
+                  >
+                    {day.label}
+                  </FormLabel>
+                </div>
+              ))}
+            </div>
+          )}
           {errors.activeDays && (
             <p className="text-sm text-red-500 mt-1">
               {errors.activeDays.message}
             </p>
           )}
+          {showDailySchedule && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Unselected days are skipped in daily streak calculations.
+            </p>
+          )}
         </div>
       )}
 
-      {/* Target Count and Count Per Period */}
+      {/* Target Count / max per day / count per period */}
       <div className="grid grid-cols-2 gap-4">
         <div>
           <FormLabel htmlFor="targetCount">Target Count *</FormLabel>
@@ -319,12 +365,34 @@ export function HabitForm({
             </p>
           )}
           <p className="text-xs text-muted-foreground mt-1">
-            Total cumulative count. Can be auto-calculated from end date.
+            Total cumulative count for this habit.
           </p>
         </div>
 
         <div>
-          <FormLabel htmlFor="countPerPeriod">Count Per Period</FormLabel>
+          <FormLabel htmlFor="maxCountPerDay">Max Count Per Day</FormLabel>
+          <Input
+            id="maxCountPerDay"
+            type="number"
+            min="1"
+            {...register("maxCountPerDay", { valueAsNumber: true })}
+            placeholder="e.g., 1"
+            className={errors.maxCountPerDay ? "border-red-500" : ""}
+          />
+          {errors.maxCountPerDay && (
+            <p className="text-sm text-red-500 mt-1">
+              {errors.maxCountPerDay.message}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground mt-1">
+            Maximum logs allowed on a single day.
+          </p>
+        </div>
+      </div>
+
+      {!isDaily && (
+        <div>
+          <FormLabel htmlFor="countPerPeriod">Count Per Period *</FormLabel>
           <Input
             id="countPerPeriod"
             type="number"
@@ -339,10 +407,10 @@ export function HabitForm({
             </p>
           )}
           <p className="text-xs text-muted-foreground mt-1">
-            How many times per {type.toLowerCase()}. Default: 1
+            Required for {type.toLowerCase()} habits.
           </p>
         </div>
-      </div>
+      )}
 
       {/* Start Date and End Date */}
       <div className="grid grid-cols-2 gap-4">
@@ -370,7 +438,7 @@ export function HabitForm({
             placeholder="Pick an end date"
           />
           <p className="text-xs text-muted-foreground mt-1">
-            Used for auto-calculating target count
+            Optional scheduling boundary
           </p>
         </div>
       </div>

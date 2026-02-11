@@ -12,9 +12,10 @@ import { parseDateInputToUTCDate } from "@/lib/date-only"
 
 type HabitForLogMutation = {
   id: string
-  type: "DAILY" | "WEEKLY" | "MONTHLY"
+  type: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY"
   targetCount: number
   countPerPeriod: number
+  maxCountPerDay: number
   activeDays: number[]
   startDate: Date | null
   endDate: Date | null
@@ -135,6 +136,7 @@ export async function POST(
           type: true,
           targetCount: true,
           countPerPeriod: true,
+          maxCountPerDay: true,
           activeDays: true,
           startDate: true,
           endDate: true,
@@ -175,6 +177,16 @@ export async function POST(
           },
         },
       })
+
+      const dayMaxCount = Math.max(1, habit.maxCountPerDay || 1)
+      const existingCount = existingLog?.count || 0
+      const proposedCount = existingCount + incrementBy
+      if (proposedCount > dayMaxCount) {
+        return {
+          kind: "day_limit_exceeded" as const,
+          maxCountPerDay: dayMaxCount,
+        }
+      }
 
       const updatedLog = await tx.habitLog.upsert({
         where: {
@@ -236,6 +248,13 @@ export async function POST(
     if (result.kind === "after_end") {
       return NextResponse.json(
         { error: `Cannot log habit after end date (${result.endDateKey})` },
+        { status: 400 }
+      )
+    }
+
+    if (result.kind === "day_limit_exceeded") {
+      return NextResponse.json(
+        { error: `Max count per day is ${result.maxCountPerDay}` },
         { status: 400 }
       )
     }
@@ -340,6 +359,7 @@ export async function DELETE(
           type: true,
           targetCount: true,
           countPerPeriod: true,
+          maxCountPerDay: true,
           activeDays: true,
           startDate: true,
           endDate: true,
@@ -450,6 +470,7 @@ export async function PATCH(
           type: true,
           targetCount: true,
           countPerPeriod: true,
+          maxCountPerDay: true,
           activeDays: true,
           startDate: true,
           endDate: true,
@@ -483,6 +504,13 @@ export async function PATCH(
           where: { id: existingLog.id },
         })
       } else {
+        const dayMaxCount = Math.max(1, habit.maxCountPerDay || 1)
+        if (count > dayMaxCount) {
+          return {
+            kind: "day_limit_exceeded" as const,
+            maxCountPerDay: dayMaxCount,
+          }
+        }
         const deltaCount = count - existingLog.count
         newCurrentCount = Math.max(0, oldCurrentCount + deltaCount)
         updatedLog = await tx.habitLog.update({
@@ -526,6 +554,13 @@ export async function PATCH(
 
     if (result.kind === "log_not_found") {
       return NextResponse.json({ error: "Log not found" }, { status: 404 })
+    }
+
+    if (result.kind === "day_limit_exceeded") {
+      return NextResponse.json(
+        { error: `Max count per day is ${result.maxCountPerDay}` },
+        { status: 400 }
+      )
     }
 
     return NextResponse.json({

@@ -25,6 +25,7 @@ export function isHabitDoneToday(
 
     case "WEEKLY":
     case "MONTHLY":
+    case "YEARLY":
       // For weekly/monthly, we consider it done for today if logged at least once
       return todayCount > 0
 
@@ -50,6 +51,7 @@ export function getHabitCompletionPercentage(
 
     case "WEEKLY":
     case "MONTHLY":
+    case "YEARLY":
       // For weekly/monthly, today's completion is binary (logged or not)
       return todayCount > 0 ? 100 : 0
 
