@@ -1,4 +1,4 @@
-import { Group } from "@/types";
+import { Group, Habit, Task } from "@/types";
 
 export interface CreateGroupInput {
   name: string;
@@ -68,8 +68,8 @@ export async function deleteGroup(id: string): Promise<void> {
 }
 
 export interface GroupItems {
-  tasks: any[];
-  habits: any[];
+  tasks: Task[];
+  habits: Habit[];
 }
 
 export async function getGroupItems(id: string): Promise<GroupItems> {

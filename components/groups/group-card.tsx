@@ -4,7 +4,6 @@ import { Group } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Folder, MoreVertical, ArrowRight, Edit, Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,6 +34,18 @@ export function GroupCard({
     <Card
       className="p-6 cursor-pointer hover:border-slate-300 transition-colors"
       onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      aria-label={onClick ? `Open group ${group.name}` : undefined}
+      onKeyDown={
+        onClick
+          ? (event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              onClick();
+            }
+          : undefined
+      }
     >
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-start gap-3 flex-1">
@@ -60,7 +71,7 @@ export function GroupCard({
           {(onEdit || onDelete) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                <button className="p-1 hover:bg-slate-100 rounded">
+                <button className="p-1 hover:bg-slate-100 rounded" aria-label={`Group actions for ${group.name}`}>
                   <MoreVertical className="w-4 h-4 text-muted-foreground" />
                 </button>
               </DropdownMenuTrigger>

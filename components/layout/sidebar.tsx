@@ -72,6 +72,7 @@ export function Sidebar({ onSuggestionsClick, onClose, isMobile }: SidebarProps)
           <button
             onClick={onClose}
             className="p-1 hover:bg-slate-100 rounded-lg transition-colors"
+            aria-label="Close sidebar"
           >
             <X className="w-5 h-5" />
           </button>

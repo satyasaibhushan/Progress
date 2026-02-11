@@ -18,6 +18,7 @@ const formSchema = z.object({
 });
 
 type GroupFormData = z.infer<typeof formSchema>;
+export type { GroupFormData };
 
 interface GroupFormProps {
   group?: Group;
@@ -128,6 +129,8 @@ export function GroupForm({
                   : "border-transparent hover:border-slate-300"
               )}
               style={{ backgroundColor: color }}
+              aria-label={`Set group color to ${color}`}
+              aria-pressed={selectedColor === color}
             />
           ))}
         </div>

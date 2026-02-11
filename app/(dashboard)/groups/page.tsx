@@ -8,7 +8,7 @@ import { getGroups } from "@/lib/api/groups";
 import { createGroup, updateGroup, deleteGroup } from "@/lib/api/groups";
 import { Group } from "@/types";
 import { GroupCard } from "@/components/groups/group-card";
-import { GroupForm } from "@/components/groups/group-form";
+import { GroupForm, GroupFormData } from "@/components/groups/group-form";
 import { Button } from "@/components/ui/button";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -65,7 +65,7 @@ export default function GroupsPage() {
     return () => setHeaderSubtitle(null);
   }, [setHeaderSubtitle, allGroups.length]);
 
-  const handleCreate = async (data: any) => {
+  const handleCreate = async (data: GroupFormData) => {
     setSaving(true);
     try {
       await createGroup(data);
@@ -80,7 +80,7 @@ export default function GroupsPage() {
     }
   };
 
-  const handleEdit = async (data: any) => {
+  const handleEdit = async (data: GroupFormData) => {
     if (!editingGroup) return;
     setSaving(true);
     try {

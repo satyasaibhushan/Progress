@@ -3,9 +3,7 @@
 import { Task, Group, Habit } from "@/types";
 import { TaskTree } from "@/components/tasks/task-tree";
 import { HabitCard } from "@/components/habits/habit-card";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getHabitLogs } from "@/lib/api/habits";
-import { useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 
 interface TasksHabitsTreeProps {
   tasks: Task[];
@@ -18,17 +16,19 @@ interface TasksHabitsTreeProps {
   showCounts?: boolean;
 }
 
-// Calculate habit progress from logs
-function calculateHabitProgress(habit: Habit): number {
-  if (habit.habitLogs && habit.habitLogs.length > 0) {
-    const totalCount = habit.habitLogs.reduce((sum, log) => sum + log.count, 0);
-    if (habit.targetCount === 0) return 0;
-    return Math.min(100, Math.round((totalCount / habit.targetCount) * 100));
-  }
-  if (habit.currentCount !== undefined && habit.targetCount) {
-    return Math.min(100, Math.round((habit.currentCount / habit.targetCount) * 100));
-  }
-  return 0;
+function getAllLeafTasks(taskList: Task[]): Task[] {
+  const leafTasks: Task[] = [];
+  const traverse = (tasks: Task[]) => {
+    tasks.forEach((task) => {
+      if (task.children && task.children.length > 0) {
+        traverse(task.children);
+      } else {
+        leafTasks.push(task);
+      }
+    });
+  };
+  traverse(taskList);
+  return leafTasks;
 }
 
 export function TasksHabitsTree({
@@ -42,14 +42,11 @@ export function TasksHabitsTree({
   showCounts = true,
 }: TasksHabitsTreeProps) {
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
-  const [habitProgresses, setHabitProgresses] = useState<Record<string, number>>({});
-  const [habitCounts, setHabitCounts] = useState<Record<string, number>>({});
 
-  // Calculate habit progresses
-  useEffect(() => {
+  const { habitProgresses, habitCounts } = useMemo(() => {
     const progresses: Record<string, number> = {};
     const counts: Record<string, number> = {};
-    
+
     for (const habit of habits) {
       if (habit.habitLogs && habit.habitLogs.length > 0) {
         const totalCount = habit.habitLogs.reduce((sum, log) => sum + log.count, 0);
@@ -71,9 +68,11 @@ export function TasksHabitsTree({
         counts[habit.id] = 0;
       }
     }
-    
-    setHabitProgresses(progresses);
-    setHabitCounts(counts);
+
+    return {
+      habitProgresses: progresses,
+      habitCounts: counts,
+    };
   }, [habits]);
 
   const handleToggleExpand = (taskId: string) => {
@@ -88,34 +87,19 @@ export function TasksHabitsTree({
     });
   };
 
-  // Get all leaf tasks for counting
-  const getAllLeafTasks = (taskList: Task[]): Task[] => {
-    const leafTasks: Task[] = [];
-    const traverse = (tasks: Task[]) => {
-      tasks.forEach((task) => {
-        if (task.children && task.children.length > 0) {
-          traverse(task.children);
-        } else {
-          leafTasks.push(task);
-        }
-      });
-    };
-    traverse(taskList);
-    return leafTasks;
-  };
-
-  const allLeafTasks = getAllLeafTasks(tasks);
+  const allLeafTasks = useMemo(() => getAllLeafTasks(tasks), [tasks]);
   const totalTasks = allLeafTasks.length;
   const totalHabits = habits.length;
 
-  // Separate habits that are linked to tasks vs standalone
-  const linkedHabitIds = new Set<string>();
-  tasks.forEach((task) => {
-    if (task.habits) {
-      task.habits.forEach((habit) => linkedHabitIds.add(habit.id));
-    }
-  });
-  const standaloneHabits = habits.filter((h) => !linkedHabitIds.has(h.id));
+  const standaloneHabits = useMemo(() => {
+    const linkedHabitIds = new Set<string>();
+    tasks.forEach((task) => {
+      if (task.habits) {
+        task.habits.forEach((habit) => linkedHabitIds.add(habit.id));
+      }
+    });
+    return habits.filter((habit) => !linkedHabitIds.has(habit.id));
+  }, [tasks, habits]);
 
   return (
     <div className="space-y-6">

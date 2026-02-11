@@ -81,6 +81,18 @@ export function HabitCard({
         onClick && "cursor-pointer"
       )}
       onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      aria-label={onClick ? `Open habit ${habit.title}` : undefined}
+      onKeyDown={
+        onClick
+          ? (event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              onClick();
+            }
+          : undefined
+      }
     >
       <div className="flex items-start gap-3">
         {/* Placeholder for checkbox alignment (habits don't have checkboxes) */}
@@ -119,6 +131,7 @@ export function HabitCard({
                       isSelected && "opacity-100"
                     )}
                     onClick={(e) => e.stopPropagation()}
+                    aria-label={`Habit actions for ${habit.title}`}
                   >
                     <MoreVertical className="w-4 h-4 text-muted-foreground" />
                   </button>

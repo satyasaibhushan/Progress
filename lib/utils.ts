@@ -5,9 +5,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-function toDateOnlyString(value: Date | string | null | undefined): string | null {
+function toDateOnlyString(value: unknown): string | null {
   if (!value) return null
-  const date = value instanceof Date ? value : new Date(value)
+  const date = value instanceof Date || typeof value === "string" ? new Date(value) : null
+  if (!date) return null
   if (Number.isNaN(date.getTime())) return null
   const year = date.getUTCFullYear()
   const month = String(date.getUTCMonth() + 1).padStart(2, "0")
@@ -85,11 +86,20 @@ export function parseDateString(dateStr: string | null | undefined): string | nu
  * Recursively handles nested tasks (children)
  * Transforms taskLabels to labels array
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function serializeTask(task: any): any {
-  if (!task) return task
+type LabelLink = {
+  label: {
+    id: string
+    name: string
+    color: string
+  }
+}
 
-  const serialized = { ...task }
+type SerializableObject = Record<string, unknown>
+
+export function serializeTask(task: unknown): unknown {
+  if (!task || typeof task !== "object") return task
+
+  const serialized: SerializableObject = { ...(task as SerializableObject) }
 
   // Convert BigInt fields to strings
   if (serialized.total_weight !== null && serialized.total_weight !== undefined && typeof serialized.total_weight === 'bigint') {
@@ -108,7 +118,7 @@ export function serializeTask(task: any): any {
 
   // Transform taskLabels to labels array
   if (Array.isArray(serialized.taskLabels)) {
-    serialized.labels = serialized.taskLabels.map((tl: any) => ({
+    serialized.labels = (serialized.taskLabels as LabelLink[]).map((tl) => ({
       id: tl.label.id,
       name: tl.label.name,
       color: tl.label.color,
@@ -133,24 +143,22 @@ export function serializeTask(task: any): any {
 /**
  * Convert BigInt fields in an array of tasks to strings for JSON serialization
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function serializeTasks(tasks: any[]): any[] {
+export function serializeTasks(tasks: unknown[]): unknown[] {
   return tasks.map((task) => serializeTask(task))
 }
 
 /**
  * Transform habitLabels to labels array for habit serialization
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function serializeHabit(habit: any): any {
-  if (!habit) return habit
+export function serializeHabit(habit: unknown): unknown {
+  if (!habit || typeof habit !== "object") return habit
 
-  const serialized = { ...habit }
+  const serialized: SerializableObject = { ...(habit as SerializableObject) }
 
   // Transform habitLabels to labels array
   if (Array.isArray(serialized.habitLabels)) {
     if (serialized.habitLabels.length > 0) {
-      serialized.labels = serialized.habitLabels.map((hl: any) => ({
+      serialized.labels = (serialized.habitLabels as LabelLink[]).map((hl) => ({
         id: hl.label.id,
         name: hl.label.name,
         color: hl.label.color,
@@ -176,7 +184,6 @@ export function serializeHabit(habit: any): any {
 /**
  * Serialize an array of habits
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function serializeHabits(habits: any[]): any[] {
+export function serializeHabits(habits: unknown[]): unknown[] {
   return habits.map((habit) => serializeHabit(habit))
 }

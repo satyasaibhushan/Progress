@@ -11,9 +11,9 @@ function runHabitPeriodMetricsUnitTests(): void {
     const metrics = calculateHabitPeriodMetrics(
       {
         type: "WEEKLY",
-        maxCountPerDay: 2,
         countPerPeriod: 5,
-        activeDays: [2, 1, 4, 5, 6], // Tue, Mon, Thu, Fri, Sat
+        maxCountPerDay: 1,
+        activeDays: [2, 1, 4, 5, 6],
         startDate: "2026-01-12",
       },
       [
@@ -28,8 +28,8 @@ function runHabitPeriodMetricsUnitTests(): void {
       { now: new Date("2026-02-11T12:00:00.000Z"), timeZone: "UTC" }
     )
 
-    assertEqual(metrics.streak, 7, "scheduled-day streak on weekly habit with activeDays")
-    assertEqual(metrics.streakPeriod, "DAILY", "scheduled-day streak label")
+    assertEqual(metrics.streak, 7, "weekly streak: current partial week + previous complete week")
+    assertEqual(metrics.streakPeriod, "DAILY", "weekly streak is returned in day/log unit")
     assertEqual(metrics.currentPeriodCount, 2, "weekly current period count remains period-based")
     assertEqual(metrics.currentPeriodTarget, 5, "weekly target uses countPerPeriod")
   }
@@ -38,9 +38,9 @@ function runHabitPeriodMetricsUnitTests(): void {
     const metrics = calculateHabitPeriodMetrics(
       {
         type: "WEEKLY",
-        maxCountPerDay: 2,
         countPerPeriod: 5,
-        activeDays: [2, 1, 4, 5, 6], // Tue, Mon, Thu, Fri, Sat
+        maxCountPerDay: 1,
+        activeDays: [2, 1, 4, 5, 6],
         startDate: "2026-01-12",
       },
       [
@@ -55,7 +55,7 @@ function runHabitPeriodMetricsUnitTests(): void {
       { now: new Date("2026-02-12T12:00:00.000Z"), timeZone: "UTC" } // Thu active day, not logged
     )
 
-    assertEqual(metrics.streak, 7, "scheduled-day streak does not break on unlogged today")
+    assertEqual(metrics.streak, 7, "weekly streak does not break on unlogged day in current open week")
   }
 
   {
@@ -68,15 +68,17 @@ function runHabitPeriodMetricsUnitTests(): void {
         // Current week (2 logs)
         { date: "2026-02-11", count: 1 },
         { date: "2026-02-10", count: 1 },
-        // Previous week (2 logs)
+        // Previous week (4 logs, below target 5)
+        { date: "2026-02-07", count: 1 },
+        { date: "2026-02-06", count: 1 },
         { date: "2026-02-05", count: 1 },
         { date: "2026-02-03", count: 1 },
       ],
       { now: new Date("2026-02-12T12:00:00.000Z"), timeZone: "UTC" }
     )
 
-    assertEqual(metrics.streak, 4, "weekly streak counts total logs across contiguous non-empty weeks")
-    assertEqual(metrics.streakPeriod, "DAILY", "weekly streak label uses daily unit")
+    assertEqual(metrics.streak, 2, "weekly streak stops when first previous week misses countPerPeriod")
+    assertEqual(metrics.streakPeriod, "DAILY", "weekly streak period label remains daily/log unit")
   }
 
   {
@@ -108,16 +110,22 @@ function runHabitPeriodMetricsUnitTests(): void {
       },
       [
         // No logs in current (open) week
-        // Previous two weeks have logs: total 4
+        // Previous two weeks are complete: 5 + 5
+        { date: "2026-02-07", count: 1 },
+        { date: "2026-02-06", count: 1 },
         { date: "2026-02-05", count: 1 },
+        { date: "2026-02-04", count: 1 },
         { date: "2026-02-03", count: 1 },
+        { date: "2026-01-31", count: 1 },
+        { date: "2026-01-30", count: 1 },
         { date: "2026-01-29", count: 1 },
+        { date: "2026-01-28", count: 1 },
         { date: "2026-01-27", count: 1 },
       ],
       { now: new Date("2026-02-12T12:00:00.000Z"), timeZone: "UTC" }
     )
 
-    assertEqual(metrics.streak, 4, "weekly streak does not break just because current week has no logs yet")
+    assertEqual(metrics.streak, 10, "weekly streak ignores empty current open week and continues with prior complete weeks")
   }
 
   {

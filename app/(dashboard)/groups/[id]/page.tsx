@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { ArrowLeft, Edit, Trash2 } from "lucide-react";
-import { getGroup, deleteGroup, getGroupItems, updateGroup, UpdateGroupInput } from "@/lib/api/groups";
+import { getGroup, deleteGroup, getGroupItems } from "@/lib/api/groups";
 import { getGroups } from "@/lib/api/groups";
 import { Group, Task, Habit } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { TasksHabitsTree } from "@/components/shared/tasks-habits-tree";
-import { GroupForm } from "@/components/groups/group-form";
 import { useSearchParams } from "next/navigation";
 import {
   AlertDialog,
@@ -23,12 +22,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 function getAllLeafTasks(tasks: Task[]): Task[] {
   const leafTasks: Task[] = [];
@@ -56,8 +49,6 @@ function GroupDetailPageContent() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [editingGroup, setEditingGroup] = useState(false);
-  const [saving, setSaving] = useState(false);
   const highlightedTaskId = searchParams.get("highlightTask");
   const highlightedHabitId = searchParams.get("highlightHabit");
 
@@ -93,32 +84,6 @@ function GroupDetailPageContent() {
     }
   };
 
-  const handleEdit = async (data: any) => {
-    if (!group) return;
-    setSaving(true);
-    try {
-      const input: UpdateGroupInput = {
-        id: groupId,
-        name: data.name,
-        description: data.description,
-        color: data.color,
-      };
-      await updateGroup(input);
-      const [groupData, groupsData] = await Promise.all([
-        getGroup(groupId),
-        getGroups(),
-      ]);
-      setGroup(groupData);
-      setGroups(groupsData);
-      setEditingGroup(false);
-    } catch (error) {
-      console.error("Error updating group:", error);
-      throw error;
-    } finally {
-      setSaving(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto space-y-6">
@@ -149,47 +114,6 @@ function GroupDetailPageContent() {
     }
     return 0;
   };
-  
-  // Calculate weighted progress for overall average
-  let totalWeight = 0;
-  let weightedProgress = 0;
-  
-  const rootTasks = tasks.filter((t) => !t.parentId);
-  for (const task of rootTasks) {
-    const isLeaf = !task.children || task.children.length === 0;
-    if (isLeaf) {
-      const taskProgress = Math.min(100, Math.max(0, task.progress || 0));
-      totalWeight += task.importance;
-      weightedProgress += taskProgress * task.importance;
-    } else if (task.total_weight && task.weighted_progress) {
-      // weighted_progress is already the sum of (progress * importance) for all children
-      // total_weight is the sum of importance for all children
-      // So we can use them directly without recalculating
-      const taskWeight = Number(task.total_weight);
-      const taskWeightedProgress = Number(task.weighted_progress);
-      if (taskWeight > 0) {
-        totalWeight += taskWeight;
-        weightedProgress += taskWeightedProgress;
-      }
-    }
-  }
-  
-  // Get task IDs to exclude linked habits from root habits calculation
-  const taskIds = new Set(tasks.map((t) => t.id));
-  const rootHabits = habits.filter((h) => !h.parentTaskId && !taskIds.has(h.parentTaskId || ""));
-  for (const habit of rootHabits) {
-    const habitProgress = getHabitProgress(habit);
-    totalWeight += habit.importance;
-    weightedProgress += habitProgress * habit.importance;
-  }
-  
-  // Ensure progress is between 0-100
-  // weighted_progress is sum of (progress * importance) where progress is 0-100
-  // total_weight is sum of importance
-  // So weightedProgress / totalWeight gives us average progress (0-100)
-  const avgProgress = totalWeight > 0 
-    ? Math.min(100, Math.max(0, Math.round(weightedProgress / totalWeight))) 
-    : 0;
   
   // Calculate task progress (weighted average of leaf tasks)
   let taskTotalWeight = 0;
@@ -333,23 +257,6 @@ function GroupDetailPageContent() {
           </CardContent>
         </Card>
       )}
-
-      {/* Edit Group Dialog */}
-      <Dialog open={editingGroup} onOpenChange={setEditingGroup}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Edit Group</DialogTitle>
-          </DialogHeader>
-          {group && (
-            <GroupForm
-              group={group}
-              onSubmit={handleEdit}
-              onCancel={() => setEditingGroup(false)}
-              loading={saving}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* Delete Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

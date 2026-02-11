@@ -3,7 +3,7 @@
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { SuggestionsCarousel } from "@/components/suggestions/suggestions-carousel";
 import { useState, createContext, useContext } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 // Context for header actions
 const HeaderActionContext = createContext<{

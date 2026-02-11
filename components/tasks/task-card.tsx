@@ -3,10 +3,9 @@
 import { Task, Group, Habit } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
-import { Calendar, Folder, MoreVertical, ListTodo, CheckCircle2, Circle, Clock, Plus, Edit, Trash2 } from "lucide-react";
+import { Calendar, Folder, MoreVertical, CheckCircle2, Circle, Clock, Plus, Edit, Trash2 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { isPending } from "@/lib/date-helpers";
@@ -40,15 +39,12 @@ interface TaskCardProps {
 export function TaskCard({
   task,
   group,
-  linkedHabits = [],
   level = 0,
-  hasChildren = false,
   calculatedProgress,
   isLeaf = false,
   onEdit,
   onDelete,
   onProgressUpdate,
-  onHabitClick,
   onAddTask,
   onAddHabit,
   crossOut = false,
@@ -110,7 +106,7 @@ export function TaskCard({
     setIsUpdating(true);
     try {
       await onProgressUpdate(newProgress);
-    } catch (error) {
+    } catch {
       // Revert on error
       setProgressValue(displayProgress);
     } finally {
@@ -135,6 +131,7 @@ export function TaskCard({
             className="flex-shrink-0 mt-1"
             disabled={isUpdating}
             title={isCompleted ? "Mark as incomplete" : "Mark as complete"}
+            aria-label={isCompleted ? `Mark ${task.title} as incomplete` : `Mark ${task.title} as complete`}
           >
             {isCompleted ? (
               <CheckCircle2 className="w-5 h-5 text-green-600" />
@@ -167,7 +164,7 @@ export function TaskCard({
             {(onEdit || onDelete || onAddTask || onAddHabit) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="p-1 hover:bg-slate-100 rounded">
+                  <button className="p-1 hover:bg-slate-100 rounded" aria-label={`Task actions for ${task.title}`}>
                     <MoreVertical className="w-4 h-4 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
@@ -284,6 +281,7 @@ export function TaskCard({
                 max={100}
                 interactive={isLeaf && !!onProgressUpdate}
                 showPercentageOnHover={true}
+                ariaLabel={`Update progress for ${task.title}`}
               />
             </div>
           </div>

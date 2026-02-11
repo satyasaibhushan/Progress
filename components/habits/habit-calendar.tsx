@@ -83,6 +83,7 @@ export function HabitCalendar({
             size="icon"
             className="h-8 w-8"
             onClick={handlePreviousMonth}
+            aria-label="Previous month"
           >
             <ChevronLeft className="w-4 h-4" />
           </Button>
@@ -94,6 +95,7 @@ export function HabitCalendar({
             size="icon"
             className="h-8 w-8"
             onClick={handleNextMonth}
+            aria-label="Next month"
           >
             <ChevronRight className="w-4 h-4" />
           </Button>

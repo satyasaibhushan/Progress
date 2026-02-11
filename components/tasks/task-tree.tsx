@@ -134,6 +134,7 @@ export function TaskTree({
               size="icon"
               className="h-6 w-6"
               onClick={() => handleToggleExpand(task.id)}
+              aria-label={isExpanded ? `Collapse ${task.title}` : `Expand ${task.title}`}
             >
               {isExpanded ? (
                 <ChevronDown className="w-4 h-4" />
@@ -150,6 +151,18 @@ export function TaskTree({
               isTaskHighlighted && "bg-indigo-50"
             )}
             onClick={() => onTaskClick?.(task.id)}
+            role={onTaskClick ? "button" : undefined}
+            tabIndex={onTaskClick ? 0 : undefined}
+            aria-label={onTaskClick ? `Open task ${task.title}` : undefined}
+            onKeyDown={
+              onTaskClick
+                ? (event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    onTaskClick(task.id);
+                  }
+                : undefined
+            }
             ref={taskRefs ? (el) => {
               if (typeof taskRefs[task.id] === 'function') {
                 (taskRefs[task.id] as (el: HTMLDivElement | null) => void)(el);
@@ -192,7 +205,7 @@ export function TaskTree({
               const fullHabit = habits.find((h) => h.id === habit.id) || habit;
               
               // Get group from habit or groups array
-              const habitGroup = (fullHabit as any).group || groups.find((g) => g.id === fullHabit.groupId);
+              const habitGroup = (fullHabit as Habit & { group?: Group }).group || groups.find((g) => g.id === fullHabit.groupId);
               
               // Calculate habit progress from logs if available, otherwise use currentCount
               let habitProgress = 0;
@@ -278,6 +291,14 @@ export function TaskTree({
             onClick={onHabitClick}
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
+            role="button"
+            tabIndex={0}
+            aria-label={`Open habit ${habit.title}`}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              onHabitClick();
+            }}
           >
                     <div className="flex items-start gap-3">
                       <div className="w-6 flex-shrink-0" />

@@ -9,6 +9,7 @@ interface UnifiedProgressBarProps {
   onValueChange?: (value: number) => void | Promise<void>;
   disabled?: boolean;
   className?: string;
+  ariaLabel?: string;
   min?: number;
   max?: number;
   showPercentageOnHover?: boolean;
@@ -21,6 +22,7 @@ export function UnifiedProgressBar({
   onValueChange,
   disabled = false,
   className,
+  ariaLabel = "Progress",
   min = 0,
   max = 100,
   showPercentageOnHover = false,
@@ -126,6 +128,35 @@ export function UnifiedProgressBar({
     [interactive, disabled, isUpdating, value, min, max, debouncedUpdate, onValueChange]
   );
 
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (!interactive || disabled || isUpdating || !onValueChange) return;
+
+      let nextValue = value;
+      if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+        nextValue = Math.min(max, value + 1);
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+        nextValue = Math.max(min, value - 1);
+      } else if (event.key === "PageUp") {
+        nextValue = Math.min(max, value + 10);
+      } else if (event.key === "PageDown") {
+        nextValue = Math.max(min, value - 10);
+      } else if (event.key === "Home") {
+        nextValue = min;
+      } else if (event.key === "End") {
+        nextValue = max;
+      } else {
+        return;
+      }
+
+      event.preventDefault();
+      if (nextValue !== value) {
+        debouncedUpdate(nextValue);
+      }
+    },
+    [interactive, disabled, isUpdating, onValueChange, value, min, max, debouncedUpdate]
+  );
+
   const showHoverPreview = interactive && hoverValue !== null && hoverValue !== value && !isUpdating && clickedValue === null;
   const showClickAnimation = interactive && clickedValue !== null;
   const showPercentage = (isHovered || isHighlighted) && showPercentageOnHover;
@@ -136,11 +167,19 @@ export function UnifiedProgressBar({
         ref={progressRef}
         className={cn(
           "relative",
-          interactive && !disabled && "cursor-pointer"
+          interactive && !disabled && "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-offset-2 rounded"
         )}
         onMouseMove={interactive || showPercentageOnHover ? handleMouseMove : undefined}
         onMouseLeave={interactive || showPercentageOnHover ? handleMouseLeave : undefined}
         onClick={interactive ? handleClick : undefined}
+        onKeyDown={interactive ? handleKeyDown : undefined}
+        role={interactive ? "slider" : undefined}
+        tabIndex={interactive && !disabled ? 0 : undefined}
+        aria-label={interactive ? ariaLabel : undefined}
+        aria-valuemin={interactive ? min : undefined}
+        aria-valuemax={interactive ? max : undefined}
+        aria-valuenow={interactive ? value : undefined}
+        aria-valuetext={interactive ? `${value}%` : undefined}
       >
         {/* Base Progress Bar (current value) */}
         <ProgressPrimitive.Root

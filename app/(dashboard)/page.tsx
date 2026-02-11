@@ -17,7 +17,7 @@ import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { LazyList } from "@/components/shared/lazy-list";
 import { ScrollHint } from "@/components/shared/scroll-hint";
-import { parseISO, subDays, subMonths, subQuarters, subYears } from "date-fns";
+import { parseISO } from "date-fns";
 import { useHeaderAction } from "./layout";
 import { isPending } from "@/lib/date-helpers";
 import { useDayRollover } from "@/lib/use-day-rollover";
@@ -51,6 +51,16 @@ function getHabitProgress(habit: Habit): number {
     : habit.currentCount || 0;
   if (!habit.targetCount) return 0;
   return clampProgress(Math.round((totalCount / habit.targetCount) * 100));
+}
+
+function getTrendLabel(period: TimePeriod, index: number): string {
+  if (period === "week") {
+    return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][index % 7];
+  }
+  if (period === "month") {
+    return `Day ${index + 1}`;
+  }
+  return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][index % 12];
 }
 
 export default function DashboardPage() {
@@ -122,43 +132,7 @@ export default function DashboardPage() {
     void loadDashboardData(false);
   }, [dayKey, loadDashboardData]);
 
-  // Calculate date range
-  const getDateRange = () => {
-    const today = new Date();
-    let startDate: Date;
-    switch (timePeriod) {
-      case "week":
-        startDate = subDays(today, 7);
-        break;
-      case "month":
-        startDate = subMonths(today, 1);
-        break;
-      case "quarter":
-        startDate = subQuarters(today, 1);
-        break;
-      case "year":
-        startDate = subYears(today, 1);
-        break;
-    }
-    return { startDate, endDate: today };
-  };
-
-  const { startDate, endDate } = getDateRange();
-
-  // Filter tasks by date range
-  const filteredTasks = useMemo(() => {
-    return tasks.filter((task) => {
-      if (!task.createdAt) return false;
-      const createdDate = new Date(task.createdAt);
-      return createdDate >= startDate && createdDate <= endDate;
-    });
-  }, [tasks, startDate, endDate]);
-
   const allLeafTasks = useMemo(() => getAllLeafTasks(tasks), [tasks]);
-  const filteredLeafTasks = useMemo(
-    () => getAllLeafTasks(filteredTasks),
-    [filteredTasks]
-  );
 
   // Calculate stats
   const totalTasks = allLeafTasks.length;
@@ -192,29 +166,26 @@ export default function DashboardPage() {
   const habitCompletionRate =
     activeHabits > 0 ? Math.round((habitsOnTrack / activeHabits) * 100) : 0;
 
-  // Generate trend data
-  const generateTrendData = () => {
+  const trendData = useMemo(() => {
     const points = timePeriod === "week" ? 7 : timePeriod === "month" ? 30 : 12;
-    const data = [];
-    for (let i = 0; i < points; i++) {
-      let label = "";
-      if (timePeriod === "week") {
-        label = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][i % 7];
-      } else if (timePeriod === "month") {
-        label = `Day ${i + 1}`;
-      } else {
-        label = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][i % 12];
-      }
-      data.push({
-        name: label,
-        tasks: Math.min(100, 45 + i * 5 + Math.random() * 10),
-        habits: Math.min(100, 40 + i * 4 + Math.random() * 15),
-      });
-    }
-    return data;
-  };
+    const taskBaseProgress = clampProgress(avgProgress);
+    const habitBaseProgress = clampProgress(
+      habits.length > 0
+        ? Math.round(
+            habits.reduce((sum, habit) => sum + getHabitProgress(habit), 0) / habits.length
+          )
+        : 0
+    );
 
-  const trendData = generateTrendData();
+    return Array.from({ length: points }, (_, index) => {
+      const progression = (index + 1) / points;
+      return {
+        name: getTrendLabel(timePeriod, index),
+        tasks: Math.round(taskBaseProgress * progression),
+        habits: Math.round(habitBaseProgress * progression),
+      };
+    });
+  }, [timePeriod, avgProgress, habits]);
 
   useEffect(() => {
     if (!selectedLabel && labels.length > 0) {

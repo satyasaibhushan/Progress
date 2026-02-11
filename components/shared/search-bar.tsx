@@ -120,6 +120,7 @@ export function SearchBar() {
           ref={inputRef}
           type="text"
           placeholder="Search tasks and habits..."
+          aria-label="Search tasks and habits"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}

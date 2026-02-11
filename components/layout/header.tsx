@@ -25,6 +25,7 @@ export function Header({ title, subtitle, onMenuClick, onSuggestionsClick, class
             size="icon"
             onClick={onMenuClick}
             className="lg:hidden"
+            aria-label="Open navigation menu"
           >
             <Menu className="w-6 h-6" />
           </Button>
@@ -48,6 +49,7 @@ export function Header({ title, subtitle, onMenuClick, onSuggestionsClick, class
             size="icon"
             onClick={onSuggestionsClick}
             className="lg:hidden bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600"
+            aria-label="Open suggestions"
           >
             <Sparkles className="w-5 h-5" />
           </Button>

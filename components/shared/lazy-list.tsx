@@ -27,29 +27,48 @@ export function LazyList<T>({
   forceShowAll = false,
   resetKey,
 }: LazyListProps<T>) {
+  const componentKey = `${String(resetKey ?? "__lazy_list__")}:${pageSize}:${forceShowAll ? "all" : "paged"}`;
+
+  return (
+    <LazyListContent
+      key={componentKey}
+      items={items}
+      render={render}
+      pageSize={pageSize}
+      className={className}
+      sentinelClassName={sentinelClassName}
+      rootMargin={rootMargin}
+      threshold={threshold}
+      forceShowAll={forceShowAll}
+    />
+  );
+}
+
+interface LazyListContentProps<T> {
+  items: T[];
+  render: (visibleItems: T[]) => ReactNode;
+  pageSize: number;
+  className?: string;
+  sentinelClassName?: string;
+  rootMargin: string;
+  threshold: number;
+  forceShowAll: boolean;
+}
+
+function LazyListContent<T>({
+  items,
+  render,
+  pageSize,
+  className,
+  sentinelClassName,
+  rootMargin,
+  threshold,
+  forceShowAll,
+}: LazyListContentProps<T>) {
   const [visibleCount, setVisibleCount] = useState(() =>
     forceShowAll ? items.length : Math.min(pageSize, items.length)
   );
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const lastResetKeyRef = useRef<typeof resetKey>(resetKey);
-
-  useEffect(() => {
-    const shouldReset = lastResetKeyRef.current !== resetKey;
-    lastResetKeyRef.current = resetKey;
-    if (forceShowAll) {
-      setVisibleCount(items.length);
-      return;
-    }
-    if (shouldReset) {
-      setVisibleCount(Math.min(pageSize, items.length));
-      return;
-    }
-    setVisibleCount((prev) => {
-      if (items.length === 0) return 0;
-      const next = Math.max(prev, Math.min(pageSize, items.length));
-      return next;
-    });
-  }, [items.length, pageSize, forceShowAll, resetKey]);
 
   useEffect(() => {
     if (forceShowAll) return;
@@ -69,12 +88,18 @@ export function LazyList<T>({
     return () => observer.disconnect();
   }, [items.length, pageSize, rootMargin, threshold, forceShowAll, visibleCount]);
 
+  const effectiveVisibleCount = useMemo(() => {
+    if (forceShowAll) return items.length;
+    const minimumVisible = Math.min(pageSize, items.length);
+    return Math.min(items.length, Math.max(visibleCount, minimumVisible));
+  }, [forceShowAll, items.length, pageSize, visibleCount]);
+
   const visibleItems = useMemo(() => {
     if (forceShowAll) return items;
-    return items.slice(0, visibleCount);
-  }, [items, visibleCount, forceShowAll]);
+    return items.slice(0, effectiveVisibleCount);
+  }, [items, effectiveVisibleCount, forceShowAll]);
 
-  const hasMore = !forceShowAll && visibleCount < items.length;
+  const hasMore = !forceShowAll && effectiveVisibleCount < items.length;
 
   return (
     <div className={className}>

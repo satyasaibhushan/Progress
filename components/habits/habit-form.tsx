@@ -20,10 +20,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { Checkbox } from "@/components/ui/checkbox";
 import { DatePicker } from "@/components/shared/date-picker";
 import { LabelSelector } from "@/components/shared/label-selector";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
+import { DailyScheduleSection } from "./form-sections/daily-schedule-section";
+import { ALL_DAYS, flattenTasks } from "./form-sections/habit-form-helpers";
 
 type HabitFormData = z.infer<typeof habitFormSchema>;
 
@@ -37,17 +38,6 @@ interface HabitFormProps {
   onCancel?: () => void;
   loading?: boolean;
 }
-
-const DAYS_OF_WEEK = [
-  { value: 0, label: "Sunday" },
-  { value: 1, label: "Monday" },
-  { value: 2, label: "Tuesday" },
-  { value: 3, label: "Wednesday" },
-  { value: 4, label: "Thursday" },
-  { value: 5, label: "Friday" },
-  { value: 6, label: "Saturday" },
-];
-const ALL_DAYS = DAYS_OF_WEEK.map((day) => day.value);
 
 export function HabitForm({
   habit,
@@ -115,21 +105,6 @@ export function HabitForm({
   const activeDays = watch("activeDays") || [];
   const [apiError, setApiError] = useState<string | null>(null);
   const [showDailySchedule, setShowDailySchedule] = useState(false);
-
-  // Flatten all tasks (including nested children) for parent selection
-  const flattenTasks = (taskList: Task[]): Task[] => {
-    const flattened: Task[] = [];
-    const traverse = (tasks: Task[]) => {
-      tasks.forEach((t) => {
-        flattened.push(t);
-        if (t.children && t.children.length > 0) {
-          traverse(t.children);
-        }
-      });
-    };
-    traverse(taskList);
-    return flattened;
-  };
 
   const parentOptions = React.useMemo(() => flattenTasks(availableTasks), [availableTasks]);
 
@@ -298,54 +273,14 @@ export function HabitForm({
         </div>
       </div>
 
-      {/* Daily schedule customization */}
-      {isDaily && (
-        <div>
-          <div className="flex items-center justify-between">
-            <FormLabel>Daily schedule</FormLabel>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setShowDailySchedule((prev) => !prev)}
-            >
-              {showDailySchedule ? "Hide day selection" : "Customize active days"}
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            By default, all 7 days are active.
-          </p>
-          {showDailySchedule && (
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              {DAYS_OF_WEEK.map((day) => (
-                <div key={day.value} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={`day-${day.value}`}
-                    checked={activeDays.includes(day.value)}
-                    onCheckedChange={() => toggleActiveDay(day.value)}
-                  />
-                  <FormLabel
-                    htmlFor={`day-${day.value}`}
-                    className="text-sm font-normal cursor-pointer"
-                  >
-                    {day.label}
-                  </FormLabel>
-                </div>
-              ))}
-            </div>
-          )}
-          {errors.activeDays && (
-            <p className="text-sm text-red-500 mt-1">
-              {errors.activeDays.message}
-            </p>
-          )}
-          {showDailySchedule && (
-            <p className="text-xs text-muted-foreground mt-1">
-              Unselected days are skipped in daily streak calculations.
-            </p>
-          )}
-        </div>
-      )}
+      <DailyScheduleSection
+        isDaily={isDaily}
+        showDailySchedule={showDailySchedule}
+        activeDays={activeDays}
+        activeDaysError={errors.activeDays?.message}
+        onToggleExpanded={() => setShowDailySchedule((prev) => !prev)}
+        onToggleDay={toggleActiveDay}
+      />
 
       {/* Target Count / max per day / count per period */}
       <div className="grid grid-cols-2 gap-4">

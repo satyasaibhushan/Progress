@@ -5,7 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { getGroup, updateGroup, UpdateGroupInput } from "@/lib/api/groups";
 import { Group } from "@/types";
-import { GroupForm } from "@/components/groups/group-form";
+import { GroupForm, GroupFormData } from "@/components/groups/group-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
@@ -34,7 +34,7 @@ export default function EditGroupPage() {
     }
   }, [groupId]);
 
-  const handleSubmit = async (data: any) => {
+  const handleSubmit = async (data: GroupFormData) => {
     setSubmitting(true);
     try {
       const input: UpdateGroupInput = {

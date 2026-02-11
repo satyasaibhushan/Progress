@@ -1,4 +1,4 @@
-import { Task, Habit, Group, Label } from "@/types";
+import { Group, Label } from "@/types";
 
 export interface Suggestion {
   id: string;

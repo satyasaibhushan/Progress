@@ -42,6 +42,14 @@ export function GroupBreakdown({ groups, limit }: GroupBreakdownProps) {
                     key={group.id} 
                     className="space-y-2 cursor-pointer hover:bg-muted/50 p-2 rounded transition-colors"
                     onClick={() => router.push(`/groups/${group.id}`)}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open group ${group.name}`}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      router.push(`/groups/${group.id}`);
+                    }}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">

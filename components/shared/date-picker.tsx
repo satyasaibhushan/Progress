@@ -155,6 +155,7 @@ export function DatePicker({
               size="icon"
               disabled={disabled}
               className="shrink-0"
+              aria-label="Open calendar"
             >
               <CalendarIcon className="h-4 w-4" />
             </Button>

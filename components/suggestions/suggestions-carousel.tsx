@@ -140,24 +140,24 @@ export function SuggestionsCarousel({ onClose, onNavigate }: SuggestionsCarousel
 	return (
 		<Dialog open onOpenChange={onClose}>
 			<DialogContent
-				className="border-0 bg-transparent shadow-none !p-0"
+				className="border-0 bg-transparent shadow-none !p-0 w-[min(92vw,800px)] sm:w-[min(88vw,800px)]"
 				showCloseButton={false}
-				style={{
-					width: "auto",
-					minWidth: "700px",
-					maxWidth: "800px",
-					padding: 0,
-					gap: 0,
-				}}
 			>
 				<DialogTitle className="sr-only">Suggested Next</DialogTitle>
 
 				{/* Blue Card - Main Content with all buttons inside */}
 				<div className="relative group w-full">
 					<div
-						className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl text-white cursor-pointer hover:shadow-lg transition-shadow relative"
-						style={{ padding: "3.5rem 3.5rem 4.5rem 3.5rem" }}
+						className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl text-white cursor-pointer hover:shadow-lg transition-shadow relative p-6 pb-14 sm:p-12 sm:pb-16"
 						onClick={() => handleCardClick(currentSuggestion)}
+						role="button"
+						tabIndex={0}
+						aria-label={`Open suggestion ${currentSuggestion.title}`}
+						onKeyDown={(event) => {
+							if (event.key !== "Enter" && event.key !== " ") return;
+							event.preventDefault();
+							handleCardClick(currentSuggestion);
+						}}
 					>
 						{/* Close Button - Inside blue card */}
 						<button
@@ -167,6 +167,7 @@ export function SuggestionsCarousel({ onClose, onNavigate }: SuggestionsCarousel
 							}}
 							className="absolute z-20 rounded-xs opacity-40 transition-opacity hover:opacity-70 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none p-1.5 text-white/60 hover:text-white/80"
 							style={{ top: "1rem", right: "1rem" }}
+							aria-label="Close suggestions"
 						>
 							<span className="sr-only">Close</span>
 							<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -188,6 +189,7 @@ export function SuggestionsCarousel({ onClose, onNavigate }: SuggestionsCarousel
 									"opacity-0 group-hover:opacity-60",
 								)}
 								style={{ left: "0.75rem" }}
+								aria-label="Previous suggestion"
 							>
 								<ChevronLeft className="w-4 h-4" />
 							</button>
@@ -207,6 +209,7 @@ export function SuggestionsCarousel({ onClose, onNavigate }: SuggestionsCarousel
 									"opacity-0 hover:opacity-60 group-hover:opacity-60",
 								)}
 								style={{ right: "0.75rem" }}
+								aria-label="Next suggestion"
 							>
 								<ChevronRight className="w-4 h-4" />
 							</button>
