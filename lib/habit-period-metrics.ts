@@ -97,14 +97,8 @@ function dayKeyFromDate(date: Date, timeZone: string): string {
   return toDayKey(parts.year, parts.month, parts.day);
 }
 
-function monthKeyFromDate(date: Date, timeZone: string): string {
-  const parts = getLocalDateParts(date, timeZone);
-  return `${parts.year}-${pad2(parts.month)}`;
-}
-
-function yearKeyFromDate(date: Date, timeZone: string): string {
-  const parts = getLocalDateParts(date, timeZone);
-  return String(parts.year);
+function dayKeyFromDateOnly(date: Date): string {
+  return toDayKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 }
 
 function dayKeyToEpochDay(dayKey: string): number {
@@ -122,18 +116,17 @@ function epochDayToDayKey(epochDay: number): string {
   return toDayKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 }
 
-function weekKeyFromDate(date: Date, timeZone: string): string {
-  const parts = getLocalDateParts(date, timeZone);
-  const epochDay = Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / MS_PER_DAY);
-  const startOfWeekEpochDay = epochDay - parts.weekday;
+function weekKeyFromDayKey(dayKey: string): string {
+  const epochDay = dayKeyToEpochDay(dayKey);
+  const startOfWeekEpochDay = epochDay - dayKeyToWeekday(dayKey);
   return epochDayToDayKey(startOfWeekEpochDay);
 }
 
-function getPeriodKeyFromDate(type: HabitType, date: Date, timeZone: string): string {
-  if (type === "DAILY") return dayKeyFromDate(date, timeZone);
-  if (type === "WEEKLY") return weekKeyFromDate(date, timeZone);
-  if (type === "YEARLY") return yearKeyFromDate(date, timeZone);
-  return monthKeyFromDate(date, timeZone);
+function getPeriodKeyFromDayKey(type: HabitType, dayKey: string): string {
+  if (type === "DAILY") return dayKey;
+  if (type === "WEEKLY") return weekKeyFromDayKey(dayKey);
+  if (type === "YEARLY") return dayKey.slice(0, 4);
+  return dayKey.slice(0, 7);
 }
 
 function getPreviousPeriodKey(type: HabitType, currentKey: string): string {
@@ -204,12 +197,12 @@ export function calculateHabitPeriodMetrics(
 
   const startDate = getValidDate(habit.startDate);
   const endDate = getValidDate(habit.endDate);
-  const startDayKey = startDate ? dayKeyFromDate(startDate, timeZone) : null;
-  const endDayKey = endDate ? dayKeyFromDate(endDate, timeZone) : null;
-
-  const referenceDate = endDate && endDate.getTime() < now.getTime() ? endDate : now;
-  const currentPeriodKey = getPeriodKeyFromDate(type, referenceDate, timeZone);
-  const currentDayKey = dayKeyFromDate(referenceDate, timeZone);
+  const startDayKey = startDate ? dayKeyFromDateOnly(startDate) : null;
+  const endDayKey = endDate ? dayKeyFromDateOnly(endDate) : null;
+  const todayDayKey = dayKeyFromDate(now, timeZone);
+  const referenceDayKey = endDayKey && endDayKey < todayDayKey ? endDayKey : todayDayKey;
+  const currentPeriodKey = getPeriodKeyFromDayKey(type, referenceDayKey);
+  const currentDayKey = referenceDayKey;
 
   const dailyCounts = new Map<string, number>();
   const periodCounts = new Map<string, number>();
@@ -219,7 +212,7 @@ export function calculateHabitPeriodMetrics(
     const logDate = getValidDate(log.date);
     if (!logDate) continue;
 
-    const dayKey = dayKeyFromDate(logDate, timeZone);
+    const dayKey = dayKeyFromDateOnly(logDate);
     if (startDayKey && dayKey < startDayKey) continue;
     if (endDayKey && dayKey > endDayKey) continue;
 
@@ -228,10 +221,10 @@ export function calculateHabitPeriodMetrics(
 
     dailyCounts.set(dayKey, (dailyCounts.get(dayKey) || 0) + count);
 
-    const periodKey = getPeriodKeyFromDate(type, logDate, timeZone);
+    const periodKey = getPeriodKeyFromDayKey(type, dayKey);
     periodCounts.set(periodKey, (periodCounts.get(periodKey) || 0) + count);
 
-    const weekKey = weekKeyFromDate(logDate, timeZone);
+    const weekKey = weekKeyFromDayKey(dayKey);
     const distinct = weeklyDistinctDays.get(weekKey) || new Set<string>();
     distinct.add(dayKey);
     weeklyDistinctDays.set(weekKey, distinct);
@@ -252,9 +245,35 @@ export function calculateHabitPeriodMetrics(
     : 0;
 
   let streak = 0;
-  if (type === "DAILY") {
+  let streakPeriod: HabitType = type;
+  const usesScheduledDayStreak = (habit.activeDays?.length || 0) > 0;
+  if (type === "WEEKLY") {
+    streakPeriod = "DAILY";
+    const lowerBoundWeekKey = startDayKey ? getPeriodKeyFromDayKey("WEEKLY", startDayKey) : null;
+    const referenceWeekKey = getPeriodKeyFromDayKey("WEEKLY", referenceDayKey);
+    const todayWeekKey = getPeriodKeyFromDayKey("WEEKLY", todayDayKey);
+    const isCurrentOpenWeek = referenceWeekKey === todayWeekKey && (!endDayKey || endDayKey >= todayDayKey);
+    const currentWeekCount = getPeriodCount(referenceWeekKey);
+
+    let streakWeekKey = referenceWeekKey;
+    if (isCurrentOpenWeek && currentWeekCount <= 0) {
+      streakWeekKey = getPreviousPeriodKey("WEEKLY", referenceWeekKey);
+    }
+
+    while (true) {
+      if (lowerBoundWeekKey && streakWeekKey < lowerBoundWeekKey) break;
+      const weekCount = getPeriodCount(streakWeekKey);
+      if (weekCount <= 0) break;
+      streak += weekCount;
+      streakWeekKey = getPreviousPeriodKey("WEEKLY", streakWeekKey);
+    }
+  } else if (usesScheduledDayStreak) {
+    streakPeriod = "DAILY";
     const activeDaySet = getDailyActiveDaySet(habit.activeDays);
-    let streakDayKey = getPreviousScheduledDayKey(currentDayKey, activeDaySet, true);
+    const todayIsScheduled = activeDaySet.has(dayKeyToWeekday(currentDayKey));
+    const todayHasProgress = (dailyCounts.get(currentDayKey) || 0) >= 1;
+    const includeToday = !todayIsScheduled || todayHasProgress;
+    let streakDayKey = getPreviousScheduledDayKey(currentDayKey, activeDaySet, includeToday);
 
     while (true) {
       if (startDayKey && streakDayKey < startDayKey) break;
@@ -263,7 +282,8 @@ export function calculateHabitPeriodMetrics(
       streakDayKey = getPreviousScheduledDayKey(streakDayKey, activeDaySet, false);
     }
   } else {
-    const lowerBoundPeriodKey = startDate ? getPeriodKeyFromDate(type, startDate, timeZone) : null;
+    streakPeriod = type;
+    const lowerBoundPeriodKey = startDayKey ? getPeriodKeyFromDayKey(type, startDayKey) : null;
     let streakKey = currentPeriodComplete ? currentPeriodKey : getPreviousPeriodKey(type, currentPeriodKey);
 
     while (true) {
@@ -276,7 +296,7 @@ export function calculateHabitPeriodMetrics(
 
   return {
     streak,
-    streakPeriod: type,
+    streakPeriod,
     currentPeriodCount,
     currentPeriodTarget: periodTarget,
     currentPeriodComplete,
