@@ -191,7 +191,7 @@ export async function GET(request: Request) {
         progress,
         currentCount,
         ...periodMetrics,
-      })
+      }) as { id: string; [key: string]: unknown }
     })
 
     const habitMeta = new Map<string, {

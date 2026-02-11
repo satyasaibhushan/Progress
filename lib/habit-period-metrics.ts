@@ -253,19 +253,26 @@ export function calculateHabitPeriodMetrics(
     const referenceWeekKey = getPeriodKeyFromDayKey("WEEKLY", referenceDayKey);
     const todayWeekKey = getPeriodKeyFromDayKey("WEEKLY", todayDayKey);
     const isCurrentOpenWeek = referenceWeekKey === todayWeekKey && (!endDayKey || endDayKey >= todayDayKey);
-    const currentWeekCount = getPeriodCount(referenceWeekKey);
+    const weeklyTarget = Math.max(1, countPerPeriod);
 
     let streakWeekKey = referenceWeekKey;
-    if (isCurrentOpenWeek && currentWeekCount <= 0) {
-      streakWeekKey = getPreviousPeriodKey("WEEKLY", referenceWeekKey);
-    }
-
+    let isFirstWeek = true;
     while (true) {
       if (lowerBoundWeekKey && streakWeekKey < lowerBoundWeekKey) break;
       const weekCount = getPeriodCount(streakWeekKey);
-      if (weekCount <= 0) break;
-      streak += weekCount;
+
+      if (isFirstWeek && isCurrentOpenWeek) {
+        // Current week is in-progress: include partial progress, but do not let 0 break streak.
+        if (weekCount > 0) {
+          streak += weekCount;
+        }
+      } else {
+        if (weekCount < weeklyTarget) break;
+        streak += weekCount;
+      }
+
       streakWeekKey = getPreviousPeriodKey("WEEKLY", streakWeekKey);
+      isFirstWeek = false;
     }
   } else if (usesScheduledDayStreak) {
     streakPeriod = "DAILY";
