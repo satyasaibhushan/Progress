@@ -10,6 +10,7 @@ import { serializeTask, serializeTasks } from "@/lib/utils"
 import { calculateIdealProgress, isPending } from "@/lib/date-helpers"
 import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
 import { getUserTimezone } from "@/lib/user-timezone"
+import { parseDateInputToUTCDate } from "@/lib/date-only"
 import {
   getInheritedLabelsFromTask,
 } from "@/lib/inheritance-helpers"
@@ -661,11 +662,27 @@ export async function POST(request: Request) {
     const validatedData = createTaskSchema.parse(body)
 
     // Validate that deadline is not in the past
-    if (validatedData.deadline) {
-      const deadline = new Date(validatedData.deadline)
+    const parsedStartDate = parseDateInputToUTCDate(validatedData.startDate)
+    const parsedDeadline = parseDateInputToUTCDate(validatedData.deadline)
+
+    if (validatedData.deadline && !parsedDeadline) {
+      return NextResponse.json(
+        { error: "Invalid deadline" },
+        { status: 400 }
+      )
+    }
+
+    if (validatedData.startDate && !parsedStartDate) {
+      return NextResponse.json(
+        { error: "Invalid startDate" },
+        { status: 400 }
+      )
+    }
+
+    if (parsedDeadline) {
       const now = new Date()
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
-      deadline.setHours(0, 0, 0, 0)
+      const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+      const deadline = new Date(parsedDeadline)
 
       if (deadline < today) {
         return NextResponse.json(
@@ -709,8 +726,8 @@ export async function POST(request: Request) {
       }
 
       // Validate: child deadline must not be after parent deadline (if both have deadlines)
-      if (validatedData.deadline && parentTask.deadline) {
-        const childDeadline = new Date(validatedData.deadline)
+      if (parsedDeadline && parentTask.deadline) {
+        const childDeadline = new Date(parsedDeadline)
         const parentDeadline = new Date(parentTask.deadline)
 
         if (childDeadline > parentDeadline) {
@@ -750,8 +767,8 @@ export async function POST(request: Request) {
       description: validatedData.description ?? null,
       importance: validatedData.importance,
       progress: validatedData.progress ?? 0,
-      startDate: validatedData.startDate ? new Date(validatedData.startDate) : null,
-      deadline: validatedData.deadline ? new Date(validatedData.deadline) : null,
+      startDate: parsedStartDate,
+      deadline: parsedDeadline,
       groupId: validatedData.groupId ?? null,
       parentId: validatedData.parentId ?? null,
       userId,

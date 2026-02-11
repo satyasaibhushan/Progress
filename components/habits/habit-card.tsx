@@ -9,7 +9,7 @@ import { Flame, Repeat, ArrowRight, ListTodo, MoreVertical, Folder, Clock, Calen
 import { cn } from "@/lib/utils";
 import { isPending } from "@/lib/date-helpers";
 import { useDayRollover } from "@/lib/use-day-rollover";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -60,7 +60,8 @@ export function HabitCard({
   const isOverdue = (() => {
     if (!habit.endDate) return false;
     if (clampedProgress >= 100) return false;
-    const endDate = new Date(habit.endDate);
+    const endDate = parseISO(habit.endDate);
+    if (Number.isNaN(endDate.getTime())) return false;
     endDate.setHours(0, 0, 0, 0);
     const today = new Date(`${todayKey}T00:00:00`);
     return endDate < today;
@@ -191,13 +192,13 @@ export function HabitCard({
             {habit.startDate && (
               <div className="flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
-                <span>Start: {format(new Date(habit.startDate), "MMM d")}</span>
+                <span>Start: {format(parseISO(habit.startDate), "MMM d")}</span>
               </div>
             )}
             {habit.endDate && (
               <div className="flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
-                <span>End: {format(new Date(habit.endDate), "MMM d, yyyy")}</span>
+                <span>End: {format(parseISO(habit.endDate), "MMM d, yyyy")}</span>
               </div>
             )}
             {isScheduled && (

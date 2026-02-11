@@ -1,6 +1,7 @@
 /**
  * Helper functions for date-related logic
  */
+import { parseISO } from "date-fns"
 
 /**
  * Parse a date string flexibly - accepts any text and tries to parse it as a date
@@ -24,13 +25,20 @@ export function parseDateString(dateStr: string | null | undefined): string | nu
   return date.toISOString()
 }
 
+function toComparableDate(value: Date | string): Date {
+  if (typeof value === "string") {
+    return parseISO(value)
+  }
+  return new Date(value)
+}
+
 /**
  * Check if a start date is in the future (task/habit hasn't started yet)
  */
 export function isPending(startDate: Date | string | null | undefined): boolean {
   if (!startDate) return false
 
-  const start = typeof startDate === 'string' ? new Date(startDate) : startDate
+  const start = toComparableDate(startDate)
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   start.setHours(0, 0, 0, 0)
@@ -48,8 +56,8 @@ export function calculateIdealProgress(
 ): number | null {
   if (!startDate || !deadline) return null
 
-  const start = typeof startDate === 'string' ? new Date(startDate) : startDate
-  const end = typeof deadline === 'string' ? new Date(deadline) : deadline
+  const start = toComparableDate(startDate)
+  const end = toComparableDate(deadline)
   const now = new Date()
 
   start.setHours(0, 0, 0, 0)

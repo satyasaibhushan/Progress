@@ -5,6 +5,7 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { format, parseISO } from "date-fns";
 import { Habit, Group, Label, Task } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -348,9 +349,9 @@ export function HabitForm({
         <div>
           <FormLabel>Start Date</FormLabel>
           <DatePicker
-            date={watch("startDate") ? new Date(watch("startDate")!) : undefined}
+            date={watch("startDate") ? parseISO(watch("startDate")!) : undefined}
             onSelect={(date) =>
-              setValue("startDate", date ? date.toISOString() : undefined)
+              setValue("startDate", date ? format(date, "yyyy-MM-dd") : undefined)
             }
             placeholder="Pick a start date"
           />
@@ -362,9 +363,9 @@ export function HabitForm({
         <div>
           <FormLabel>End Date</FormLabel>
           <DatePicker
-            date={watch("endDate") ? new Date(watch("endDate")!) : undefined}
+            date={watch("endDate") ? parseISO(watch("endDate")!) : undefined}
             onSelect={(date) =>
-              setValue("endDate", date ? date.toISOString() : undefined)
+              setValue("endDate", date ? format(date, "yyyy-MM-dd") : undefined)
             }
             placeholder="Pick an end date"
           />

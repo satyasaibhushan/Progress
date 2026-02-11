@@ -17,7 +17,7 @@ import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { LazyList } from "@/components/shared/lazy-list";
 import { ScrollHint } from "@/components/shared/scroll-hint";
-import { subDays, subMonths, subQuarters, subYears } from "date-fns";
+import { parseISO, subDays, subMonths, subQuarters, subYears } from "date-fns";
 import { useHeaderAction } from "./layout";
 import { isPending } from "@/lib/date-helpers";
 import { useDayRollover } from "@/lib/use-day-rollover";
@@ -177,7 +177,8 @@ export default function DashboardPage() {
   weekEnd.setDate(weekEnd.getDate() + 7);
   const tasksThisWeek = allLeafTasks.filter((task) => {
     if (!task.deadline) return false;
-    const deadline = new Date(task.deadline);
+    const deadline = parseISO(task.deadline);
+    if (Number.isNaN(deadline.getTime())) return false;
     return deadline <= weekEnd;
   }).length;
 

@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { UnifiedProgressBar } from "@/components/shared/unified-progress-bar";
 import { Calendar, Folder, MoreVertical, ListTodo, CheckCircle2, Circle, Clock, Plus, Edit, Trash2 } from "lucide-react";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { isPending } from "@/lib/date-helpers";
 import { useDayRollover } from "@/lib/use-day-rollover";
@@ -84,7 +84,8 @@ export function TaskCard({
   const isOverdue = (() => {
     if (!task.deadline) return false;
     if (displayProgress >= 100) return false;
-    const deadline = new Date(task.deadline);
+    const deadline = parseISO(task.deadline);
+    if (Number.isNaN(deadline.getTime())) return false;
     deadline.setHours(0, 0, 0, 0);
     const today = new Date(`${todayKey}T00:00:00`);
     return deadline < today;
@@ -225,13 +226,13 @@ export function TaskCard({
             {task.startDate && (
               <div className="flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
-                <span>Start: {format(new Date(task.startDate), "MMM d")}</span>
+                <span>Start: {format(parseISO(task.startDate), "MMM d")}</span>
               </div>
             )}
             {task.deadline && (
               <div className="flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
-                <span>Due: {format(new Date(task.deadline), "MMM d, yyyy")}</span>
+                <span>Due: {format(parseISO(task.deadline), "MMM d, yyyy")}</span>
               </div>
             )}
             {isScheduled && (

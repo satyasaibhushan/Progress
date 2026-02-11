@@ -19,6 +19,7 @@ import {
 } from "@/lib/inheritance-helpers"
 import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
 import { getUserTimezone } from "@/lib/user-timezone"
+import { parseDateInputToUTCDate } from "@/lib/date-only"
 import { serializeHabit } from "@/lib/utils"
 
 // GET /api/habits/[id] - Get a specific habit
@@ -124,6 +125,22 @@ export async function PUT(
 
     const body = await request.json()
     const validatedData = updateHabitSchema.parse(body)
+    const parsedStartDate = parseDateInputToUTCDate(validatedData.startDate)
+    const parsedEndDate = parseDateInputToUTCDate(validatedData.endDate)
+
+    if (validatedData.startDate !== undefined && validatedData.startDate !== null && !parsedStartDate) {
+      return NextResponse.json(
+        { error: "Invalid startDate" },
+        { status: 400 }
+      )
+    }
+
+    if (validatedData.endDate !== undefined && validatedData.endDate !== null && !parsedEndDate) {
+      return NextResponse.json(
+        { error: "Invalid endDate" },
+        { status: 400 }
+      )
+    }
     
     // Extract labelIds from validated data
     const { labelIds, ...updateFields } = validatedData
@@ -160,10 +177,10 @@ export async function PUT(
     // Auto-calculate targetCount if not provided but endDate is set/changed
     let targetCount = validatedData.targetCount ?? existingHabit.targetCount
     const finalEndDate = validatedData.endDate !== undefined
-      ? (validatedData.endDate ? new Date(validatedData.endDate) : null)
+      ? parsedEndDate
       : existingHabit.endDate
     const finalStartDate = validatedData.startDate !== undefined
-      ? (validatedData.startDate ? new Date(validatedData.startDate) : null)
+      ? parsedStartDate
       : (existingHabit.startDate || existingHabit.createdAt)
 
     // Recalculate targetCount if countPerPeriod changed or targetCount is not set
@@ -278,12 +295,12 @@ export async function PUT(
 
     // Set startDate
     if (updateFields.startDate !== undefined) {
-      updateData.startDate = updateFields.startDate ? new Date(updateFields.startDate) : null
+      updateData.startDate = updateFields.startDate ? parsedStartDate : null
     }
 
     // Set endDate
     if (updateFields.endDate !== undefined) {
-      updateData.endDate = updateFields.endDate ? new Date(updateFields.endDate) : null
+      updateData.endDate = updateFields.endDate ? parsedEndDate : null
     }
     
     // Set activeDays

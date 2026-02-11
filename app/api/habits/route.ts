@@ -11,6 +11,7 @@ import { HabitType } from "@prisma/client"
 import { calculateIdealProgress, isPending } from "@/lib/date-helpers"
 import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
 import { getUserTimezone } from "@/lib/user-timezone"
+import { parseDateInputToUTCDate } from "@/lib/date-only"
 import {
   getInheritedLabelsFromHabit,
 } from "@/lib/inheritance-helpers"
@@ -315,6 +316,22 @@ export async function POST(request: Request) {
 
     const body = await request.json()
     const validatedData = createHabitSchema.parse(body)
+    const parsedStartDate = parseDateInputToUTCDate(validatedData.startDate)
+    const parsedEndDate = parseDateInputToUTCDate(validatedData.endDate)
+
+    if (validatedData.startDate && !parsedStartDate) {
+      return NextResponse.json(
+        { error: "Invalid startDate" },
+        { status: 400 }
+      )
+    }
+
+    if (validatedData.endDate && !parsedEndDate) {
+      return NextResponse.json(
+        { error: "Invalid endDate" },
+        { status: 400 }
+      )
+    }
 
     // Validate unique title
     await validateUniqueHabitTitle(userId, validatedData.title)
@@ -342,10 +359,10 @@ export async function POST(request: Request) {
 
     // Auto-calculate targetCount if not provided
     let targetCount = validatedData.targetCount
-    if (!targetCount && validatedData.endDate) {
-      const endDate = new Date(validatedData.endDate)
-      const startAnchor = validatedData.startDate
-        ? new Date(validatedData.startDate)
+    if (!targetCount && parsedEndDate) {
+      const endDate = new Date(parsedEndDate)
+      const startAnchor = parsedStartDate
+        ? new Date(parsedStartDate)
         : new Date()
       const calculated = calculateTargetCount(
         validatedData.type,
@@ -427,8 +444,8 @@ export async function POST(request: Request) {
       userId,
       groupId: validatedData.groupId ?? null,
       parentTaskId: validatedData.parentTaskId ?? null,
-      startDate: validatedData.startDate ? new Date(validatedData.startDate) : null,
-      endDate: validatedData.endDate ? new Date(validatedData.endDate) : null,
+      startDate: parsedStartDate,
+      endDate: parsedEndDate,
       activeDays: validatedData.type === "WEEKLY" ? (validatedData.activeDays || []) : [],
     }
 

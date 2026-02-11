@@ -1,5 +1,12 @@
 import { z } from "zod"
 import { HabitType } from "@prisma/client"
+import { isDateOnlyString } from "@/lib/date-only"
+
+const dateInputSchema = z.string().refine((value) => {
+  if (isDateOnlyString(value)) return true
+  const parsed = new Date(value)
+  return !Number.isNaN(parsed.getTime())
+}, "Invalid date")
 
 export const createHabitSchema = z.object({
   title: z.string().min(1, "Title is required").max(200, "Title too long"),
@@ -23,8 +30,8 @@ export const createHabitSchema = z.object({
     .min(1, "Importance must be at least 1")
     .max(100, "Importance must be at most 100")
     .default(50),
-  startDate: z.string().datetime().optional().nullable(),
-  endDate: z.string().datetime().optional().nullable(),
+  startDate: dateInputSchema.optional().nullable(),
+  endDate: dateInputSchema.optional().nullable(),
   activeDays: z
     .array(z.number().int().min(0).max(6)) // 0=Sun, 1=Mon, ..., 6=Sat
     .optional()
@@ -55,8 +62,8 @@ export const updateHabitSchema = z.object({
     .min(1, "Importance must be at least 1")
     .max(100, "Importance must be at most 100")
     .optional(),
-  startDate: z.string().datetime().optional().nullable(),
-  endDate: z.string().datetime().optional().nullable(),
+  startDate: dateInputSchema.optional().nullable(),
+  endDate: dateInputSchema.optional().nullable(),
   activeDays: z
     .array(z.number().int().min(0).max(6)) // 0=Sun, 1=Mon, ..., 6=Sat
     .optional()
@@ -90,8 +97,8 @@ export const habitFormSchema = z.object({
     .max(100, "Importance must be at most 100")
     .default(50)
     .optional(),
-  startDate: z.string().datetime().optional().nullable(),
-  endDate: z.string().datetime().optional().nullable(),
+  startDate: dateInputSchema.optional().nullable(),
+  endDate: dateInputSchema.optional().nullable(),
   activeDays: z
     .array(z.number().int().min(0).max(6))
     .optional()

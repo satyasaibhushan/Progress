@@ -71,13 +71,12 @@ function getHabitStatus(habit: Habit): HabitStatus {
   if (progress >= 100) return "completed";
 
   if (habit.startDate) {
-    const startDate = new Date(habit.startDate);
-    if (!Number.isNaN(startDate.getTime())) {
-      startDate.setHours(0, 0, 0, 0);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      if (startDate > today) return "future";
-    }
+    const startDate = parseISO(habit.startDate);
+    if (Number.isNaN(startDate.getTime())) return "active";
+    startDate.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (startDate > today) return "future";
   }
 
   return "active";

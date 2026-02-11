@@ -5,6 +5,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+function toDateOnlyString(value: Date | string | null | undefined): string | null {
+  if (!value) return null
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const year = date.getUTCFullYear()
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0")
+  const day = String(date.getUTCDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
 /**
  * Parse a date string flexibly - accepts any text and tries to parse it as a date
  * Supports formats: dd/mm/yy, dd-mm-yy, dd-mm-yyyy, and standard date formats
@@ -89,6 +99,13 @@ export function serializeTask(task: any): any {
     serialized.weighted_progress = serialized.weighted_progress.toString()
   }
 
+  if (serialized.startDate !== undefined) {
+    serialized.startDate = toDateOnlyString(serialized.startDate)
+  }
+  if (serialized.deadline !== undefined) {
+    serialized.deadline = toDateOnlyString(serialized.deadline)
+  }
+
   // Transform taskLabels to labels array
   if (Array.isArray(serialized.taskLabels)) {
     serialized.labels = serialized.taskLabels.map((tl: any) => ({
@@ -144,6 +161,13 @@ export function serializeHabit(habit: any): any {
     }
     // Remove habitLabels from response (keep labels)
     delete serialized.habitLabels
+  }
+
+  if (serialized.startDate !== undefined) {
+    serialized.startDate = toDateOnlyString(serialized.startDate)
+  }
+  if (serialized.endDate !== undefined) {
+    serialized.endDate = toDateOnlyString(serialized.endDate)
   }
 
   return serialized

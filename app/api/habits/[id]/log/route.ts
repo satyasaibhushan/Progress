@@ -8,6 +8,7 @@ import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { calculateHabitProgressFromCount } from "@/lib/progress-calculator"
 import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
 import { getUserTimezone } from "@/lib/user-timezone"
+import { parseDateInputToUTCDate } from "@/lib/date-only"
 
 type HabitForLogMutation = {
   id: string
@@ -286,14 +287,18 @@ export async function GET(
     if (startDate || endDate) {
       where.date = {}
       if (startDate) {
-        const start = new Date(startDate)
-        start.setHours(0, 0, 0, 0)
-        where.date.gte = start
+        const parsedStart = parseDateInputToUTCDate(startDate)
+        if (!parsedStart) {
+          return NextResponse.json({ error: "Invalid startDate" }, { status: 400 })
+        }
+        where.date.gte = parsedStart
       }
       if (endDate) {
-        const end = new Date(endDate)
-        end.setHours(0, 0, 0, 0)
-        where.date.lte = end
+        const parsedEnd = parseDateInputToUTCDate(endDate)
+        if (!parsedEnd) {
+          return NextResponse.json({ error: "Invalid endDate" }, { status: 400 })
+        }
+        where.date.lte = parsedEnd
       }
     }
 

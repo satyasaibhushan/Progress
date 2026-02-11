@@ -5,6 +5,7 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { format, parseISO } from "date-fns";
 import { createTaskSchema } from "@/lib/validations/task";
 import { Task, Group, Label, Habit } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -489,9 +490,9 @@ export function TaskForm({
         <div>
           <FormLabel>Start Date</FormLabel>
           <DatePicker
-            date={watch("startDate") ? new Date(watch("startDate")!) : undefined}
+            date={watch("startDate") ? parseISO(watch("startDate")!) : undefined}
             onSelect={(date) =>
-              setValue("startDate", date ? date.toISOString() : undefined)
+              setValue("startDate", date ? format(date, "yyyy-MM-dd") : undefined)
             }
             placeholder="Pick a start date"
           />
@@ -500,9 +501,9 @@ export function TaskForm({
         <div>
           <FormLabel>Deadline</FormLabel>
           <DatePicker
-            date={watch("deadline") ? new Date(watch("deadline")!) : undefined}
+            date={watch("deadline") ? parseISO(watch("deadline")!) : undefined}
             onSelect={(date) =>
-              setValue("deadline", date ? date.toISOString() : undefined)
+              setValue("deadline", date ? format(date, "yyyy-MM-dd") : undefined)
             }
             placeholder="Pick a deadline"
             disablePast={true}

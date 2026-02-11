@@ -105,8 +105,8 @@ model Task {
   progress          Float?      @default(0)
   total_weight      BigInt?
   weighted_progress BigInt?
-  startDate         DateTime?
-  deadline          DateTime?
+  startDate         DateTime?   @db.Date
+  deadline          DateTime?   @db.Date
   groupId           String?
   parentId          String?
   userId            String
@@ -150,8 +150,8 @@ model Habit {
   currentCount   Int          @default(0)
   countPerPeriod Int          @default(1)
   importance     Int          @default(50)
-  startDate      DateTime?
-  endDate        DateTime?
+  startDate      DateTime?     @db.Date
+  endDate        DateTime?     @db.Date
   userId         String
   groupId        String?
   parentTaskId   String?

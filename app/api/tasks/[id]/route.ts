@@ -14,6 +14,7 @@ import {
 import { serializeTask } from "@/lib/utils"
 import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
 import { getUserTimezone } from "@/lib/user-timezone"
+import { parseDateInputToUTCDate } from "@/lib/date-only"
 import {
   getInheritedLabelsFromTask,
   getInheritedGroupFromTask,
@@ -273,13 +274,28 @@ export async function PUT(
 
     const body = await request.json()
     const validatedData = updateTaskSchema.parse(body)
+    const parsedStartDate = parseDateInputToUTCDate(validatedData.startDate)
+    const parsedDeadline = parseDateInputToUTCDate(validatedData.deadline)
+
+    if (validatedData.startDate !== undefined && validatedData.startDate !== null && !parsedStartDate) {
+      return NextResponse.json(
+        { error: "Invalid startDate" },
+        { status: 400 }
+      )
+    }
+
+    if (validatedData.deadline !== undefined && validatedData.deadline !== null && !parsedDeadline) {
+      return NextResponse.json(
+        { error: "Invalid deadline" },
+        { status: 400 }
+      )
+    }
 
     // Validate that deadline is not in the past (if deadline is being updated)
-    if (validatedData.deadline !== undefined && validatedData.deadline !== null) {
-      const deadline = new Date(validatedData.deadline)
+    if (validatedData.deadline !== undefined && validatedData.deadline !== null && parsedDeadline) {
+      const deadline = new Date(parsedDeadline)
       const now = new Date()
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
-      deadline.setHours(0, 0, 0, 0)
+      const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
 
       if (deadline < today) {
         return NextResponse.json(
@@ -352,7 +368,7 @@ export async function PUT(
 
       if (parentToCheck) {
         const taskDeadline = validatedData.deadline !== undefined
-          ? (validatedData.deadline ? new Date(validatedData.deadline) : null)
+          ? parsedDeadline
           : existingTask.deadline
 
         // If both task and parent have deadlines, child must not be after parent
@@ -432,10 +448,10 @@ export async function PUT(
     } = {
       ...rest,
       ...(startDateStr !== undefined && {
-        startDate: startDateStr ? new Date(startDateStr) : null,
+        startDate: startDateStr ? parsedStartDate : null,
       }),
       ...(deadlineStr !== undefined && {
-        deadline: deadlineStr ? new Date(deadlineStr) : null,
+        deadline: deadlineStr ? parsedDeadline : null,
       }),
     }
 
