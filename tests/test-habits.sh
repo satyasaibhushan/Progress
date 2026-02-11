@@ -227,6 +227,22 @@ if [ -n "$DAILY_HABIT_ID" ]; then
     fi
     echo ""
 
+    DATE_ONLY_LOG=$(date -u -v-1d +"%Y-%m-%d" 2>/dev/null || date -u -d "-1 day" +"%Y-%m-%d" 2>/dev/null || echo "2026-02-10")
+    echo "Test 8a: POST /api/habits/${DAILY_HABIT_ID}/log (Date-only YYYY-MM-DD)"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
+        -d "{\"date\":\"${DATE_ONLY_LOG}\",\"count\":1}" \
+        "${BASE_URL}/api/habits/${DAILY_HABIT_ID}/log")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    echo "Status: $HTTP_CODE"
+    if [ "$HTTP_CODE" == "201" ] || [ "$HTTP_CODE" == "200" ]; then
+        echo "✅ Date-only habit log accepted"
+    else
+        echo "❌ ERROR: Expected 200/201, got $HTTP_CODE"
+        echo "Response: $BODY"
+    fi
+    echo ""
+
     FIRST_DAILY_LOG_ID=$(echo "$BODY" | jq -r '.data.id // empty')
 
     echo "Test 9: POST /api/habits/${DAILY_HABIT_ID}/log (Second log should fail at max/day=1)"

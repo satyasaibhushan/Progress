@@ -5,18 +5,77 @@ import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { getSuggestion, getSuggestions } from "@/lib/suggestion-algorithm"
 import { prisma } from "@/lib/prisma"
 
+type SuggestionBase = {
+  id: string
+  type: "task" | "habit"
+  title: string
+  progress: number
+  expectedProgress: number
+  progressGap: number
+  importance: number
+  score: number
+  deadline?: Date | null
+  endDate?: Date | null
+  groupId?: string | null
+  parentId?: string | null
+  parentTaskId?: string | null
+}
+
+type EnrichedSuggestion = {
+  id: string
+  type: string
+  title: string
+  progress: number
+  expectedProgress: number
+  progressGap: number
+  importance: number
+  score: number
+  deadline?: Date | null
+  endDate?: Date | null
+  group?: { id: string; name: string; color: string | null } | null
+  parent?: { id: string; title: string; progress?: number | null }
+  rootGoal?: { id: string; title: string }
+  labels?: Array<{ id: string; name: string; color: string | null }>
+}
+
+type AncestorTask = {
+  id: string
+  title: string
+  parentId: string | null
+}
+
+function resolveRootGoal(
+  startingTaskId: string,
+  ancestorTaskById: Map<string, AncestorTask>
+): { id: string; title: string } | null {
+  let current = ancestorTaskById.get(startingTaskId)
+  let latest: { id: string; title: string } | null = current
+    ? { id: current.id, title: current.title }
+    : null
+
+  const visited = new Set<string>()
+  while (current && current.parentId && !visited.has(current.id)) {
+    visited.add(current.id)
+    const parent = ancestorTaskById.get(current.parentId)
+    if (!parent) break
+    latest = { id: parent.id, title: parent.title }
+    current = parent
+  }
+
+  return latest
+}
+
 // GET /api/suggestions - Get suggestion(s) for the authenticated user
 export async function GET(request: Request) {
   try {
     const { userId } = await getAuthenticatedUser()
     const { searchParams } = new URL(request.url)
 
-    const limit = parseInt(searchParams.get("limit") || "1", 10)
+    const limit = Number.parseInt(searchParams.get("limit") || "1", 10)
     const randomize = searchParams.get("randomize") !== "false" // Default: true
 
-    // Get suggestion(s)
     const items = limit === 1
-      ? await getSuggestion(userId, randomize).then(item => item ? [item] : [])
+      ? await getSuggestion(userId, randomize).then((item) => (item ? [item] : []))
       : await getSuggestions(userId, limit, randomize)
 
     if (items.length === 0) {
@@ -26,166 +85,194 @@ export async function GET(request: Request) {
       )
     }
 
-    // Enrich items with context (parent, root goal, group, labels)
-    const enrichedItems = await Promise.all(
-      items.map(async (item) => {
-        const enriched: {
-          id: string
-          type: string
-          title: string
-          progress: number
-          expectedProgress: number
-          progressGap: number
-          importance: number
-          score: number
-          deadline?: Date | null
-          endDate?: Date | null
-          group?: { id: string; name: string; color: string | null } | null
-          parent?: { id: string; title: string; progress?: number | null }
-          rootGoal?: { id: string; title: string }
-          labels?: Array<{ id: string; name: string; color: string | null }>
-        } = {
-          id: item.id,
-          type: item.type,
-          title: item.title,
-          progress: item.progress,
-          expectedProgress: item.expectedProgress,
-          progressGap: item.progressGap,
-          importance: item.importance,
-          score: item.score,
-          deadline: item.deadline,
-          endDate: item.endDate,
-        }
+    const typedItems = items as SuggestionBase[]
+    const groupIds = [...new Set(typedItems.map((item) => item.groupId).filter((groupId): groupId is string => Boolean(groupId)))]
+    const taskSuggestionIds = typedItems.filter((item) => item.type === "task").map((item) => item.id)
+    const habitSuggestionIds = typedItems.filter((item) => item.type === "habit").map((item) => item.id)
 
-        // Get group if exists
-        if (item.groupId) {
-          const group = await prisma.group.findUnique({
-            where: { id: item.groupId },
+    const [groups, taskDetails, habitDetails] = await Promise.all([
+      groupIds.length > 0
+        ? prisma.group.findMany({
+            where: {
+              id: { in: groupIds },
+              userId,
+            },
             select: { id: true, name: true, color: true },
           })
-          enriched.group = group
-        }
-
-        // Get labels
-        if (item.type === "task") {
-          const task = await prisma.task.findUnique({
-            where: { id: item.id },
+        : Promise.resolve([]),
+      taskSuggestionIds.length > 0
+        ? prisma.task.findMany({
+            where: {
+              id: { in: taskSuggestionIds },
+              userId,
+            },
             include: {
               taskLabels: {
-                include: { label: true },
+                include: {
+                  label: true,
+                },
               },
               parent: {
-                select: { id: true, title: true, progress: true },
+                select: {
+                  id: true,
+                  title: true,
+                  progress: true,
+                },
               },
             },
           })
-
-          if (task) {
-            enriched.labels = task.taskLabels.map((tl) => ({
-              id: tl.label.id,
-              name: tl.label.name,
-              color: tl.label.color,
-            }))
-
-            // Get parent task
-            if (task.parent) {
-              enriched.parent = {
-                id: task.parent.id,
-                title: task.parent.title,
-                progress: task.parent.progress,
-              }
-
-            // Get root goal (traverse up to root)
-            let currentParentId = task.parentId
-            let rootTask: { id: string; title: string } | null = task.parent
-
-            while (currentParentId) {
-              const parent = await prisma.task.findUnique({
-                where: { id: currentParentId },
-                select: { id: true, title: true, parentId: true },
-              })
-
-              if (parent) {
-                rootTask = {
-                  id: parent.id,
-                  title: parent.title,
-                }
-                currentParentId = parent.parentId
-              } else {
-                break
-              }
-            }
-
-            if (rootTask && rootTask.id !== task.parent.id) {
-              enriched.rootGoal = {
-                id: rootTask.id,
-                title: rootTask.title,
-              }
-            }
-            }
-          }
-        } else {
-          // Habit
-          const habit = await prisma.habit.findUnique({
-            where: { id: item.id },
+        : Promise.resolve([]),
+      habitSuggestionIds.length > 0
+        ? prisma.habit.findMany({
+            where: {
+              id: { in: habitSuggestionIds },
+              userId,
+            },
             include: {
               habitLabels: {
-                include: { label: true },
+                include: {
+                  label: true,
+                },
               },
               parentTask: {
-                select: { id: true, title: true },
+                select: {
+                  id: true,
+                  title: true,
+                },
               },
             },
           })
+        : Promise.resolve([]),
+    ])
 
-          if (habit) {
-            enriched.labels = habit.habitLabels.map((hl) => ({
-              id: hl.label.id,
-              name: hl.label.name,
-              color: hl.label.color,
-            }))
+    const groupById = new Map(groups.map((group) => [group.id, group]))
+    const taskById = new Map(taskDetails.map((task) => [task.id, task]))
+    const habitById = new Map(habitDetails.map((habit) => [habit.id, habit]))
 
-            // Get parent task
-            if (habit.parentTask) {
-              enriched.parent = {
-                id: habit.parentTask.id,
-                title: habit.parentTask.title,
-              }
+    const ancestorTaskById = new Map<string, AncestorTask>()
+    for (const task of taskDetails) {
+      ancestorTaskById.set(task.id, {
+        id: task.id,
+        title: task.title,
+        parentId: task.parentId,
+      })
+      if (task.parent) {
+        ancestorTaskById.set(task.parent.id, {
+          id: task.parent.id,
+          title: task.parent.title,
+          parentId: null,
+        })
+      }
+    }
 
-              // Get root goal (traverse up to root)
-              let currentTaskId = habit.parentTaskId
-              let rootTask = habit.parentTask
+    for (const habit of habitDetails) {
+      if (habit.parentTask) {
+        ancestorTaskById.set(habit.parentTask.id, {
+          id: habit.parentTask.id,
+          title: habit.parentTask.title,
+          parentId: null,
+        })
+      }
+    }
 
-              while (currentTaskId) {
-                const parent = await prisma.task.findUnique({
-                  where: { id: currentTaskId },
-                  select: { id: true, title: true, parentId: true },
-                })
+    const pendingAncestorIds = new Set<string>()
+    for (const task of taskDetails) {
+      if (task.parentId) pendingAncestorIds.add(task.parentId)
+    }
+    for (const habit of habitDetails) {
+      if (habit.parentTaskId) pendingAncestorIds.add(habit.parentTaskId)
+    }
 
-                if (parent) {
-                  rootTask = {
-                    id: parent.id,
-                    title: parent.title,
-                  }
-                  currentTaskId = parent.parentId
-                } else {
-                  break
-                }
-              }
+    while (pendingAncestorIds.size > 0) {
+      const idsToFetch = [...pendingAncestorIds].filter((candidateId) => !ancestorTaskById.has(candidateId))
+      pendingAncestorIds.clear()
+      if (idsToFetch.length === 0) break
 
-              if (rootTask && rootTask.id !== habit.parentTask.id) {
-                enriched.rootGoal = {
-                  id: rootTask.id,
-                  title: rootTask.title,
-                }
-              }
+      const ancestors = await prisma.task.findMany({
+        where: {
+          id: { in: idsToFetch },
+          userId,
+        },
+        select: {
+          id: true,
+          title: true,
+          parentId: true,
+        },
+      })
+
+      for (const ancestor of ancestors) {
+        ancestorTaskById.set(ancestor.id, ancestor)
+        if (ancestor.parentId && !ancestorTaskById.has(ancestor.parentId)) {
+          pendingAncestorIds.add(ancestor.parentId)
+        }
+      }
+    }
+
+    const enrichedItems: EnrichedSuggestion[] = typedItems.map((item) => {
+      const enriched: EnrichedSuggestion = {
+        id: item.id,
+        type: item.type,
+        title: item.title,
+        progress: item.progress,
+        expectedProgress: item.expectedProgress,
+        progressGap: item.progressGap,
+        importance: item.importance,
+        score: item.score,
+        deadline: item.deadline,
+        endDate: item.endDate,
+      }
+
+      if (item.groupId) {
+        enriched.group = groupById.get(item.groupId) || null
+      }
+
+      if (item.type === "task") {
+        const task = taskById.get(item.id)
+        if (task) {
+          enriched.labels = task.taskLabels.map((taskLabel) => ({
+            id: taskLabel.label.id,
+            name: taskLabel.label.name,
+            color: taskLabel.label.color,
+          }))
+
+          if (task.parent) {
+            enriched.parent = {
+              id: task.parent.id,
+              title: task.parent.title,
+              progress: task.parent.progress,
+            }
+
+            const rootTask = resolveRootGoal(task.parent.id, ancestorTaskById)
+            if (rootTask && rootTask.id !== task.parent.id) {
+              enriched.rootGoal = rootTask
             }
           }
         }
+      } else {
+        const habit = habitById.get(item.id)
+        if (habit) {
+          enriched.labels = habit.habitLabels.map((habitLabel) => ({
+            id: habitLabel.label.id,
+            name: habitLabel.label.name,
+            color: habitLabel.label.color,
+          }))
 
-        return enriched
-      })
-    )
+          if (habit.parentTask) {
+            enriched.parent = {
+              id: habit.parentTask.id,
+              title: habit.parentTask.title,
+            }
+
+            const rootTask = resolveRootGoal(habit.parentTask.id, ancestorTaskById)
+            if (rootTask && rootTask.id !== habit.parentTask.id) {
+              enriched.rootGoal = rootTask
+            }
+          }
+        }
+      }
+
+      return enriched
+    })
 
     return NextResponse.json({
       data: limit === 1 ? enrichedItems[0] : enrichedItems,

@@ -4,6 +4,8 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { serializeTasks, serializeHabits } from "@/lib/utils"
+import { buildTaskGraph, hasGroupInTaskAncestry } from "@/lib/server/labels-groups/membership"
+import { buildTaskTree, groupTasksByParentId } from "@/lib/server/tree/task-tree"
 
 // GET /api/groups/[id]/items - Get all tasks and habits for a group (including inherited)
 export async function GET(
@@ -83,38 +85,18 @@ export async function GET(
         },
       ],
     })
+    const taskGraph = buildTaskGraph(allTasks)
+    const groupMembershipMemo = new Map<string, boolean>()
+    const hasTaskInGroup = (taskId: string): boolean => {
+      return hasGroupInTaskAncestry(taskId, id, taskGraph.taskById, groupMembershipMemo)
+    }
 
     // Filter tasks that belong to this group (directly or through inheritance)
     // A task belongs to a group if:
     // 1. It has groupId === id, OR
     // 2. Any of its ancestors has groupId === id
     const tasksInGroup = allTasks.filter((task) => {
-      // Check if task itself has the group
-      if (task.groupId === id) {
-        return true
-      }
-      
-      // Check ancestors recursively
-      let currentTask = task
-      const visited = new Set<string>() // Prevent infinite loops
-      
-      while (currentTask.parentId && !visited.has(currentTask.id)) {
-        visited.add(currentTask.id)
-        
-        // Find parent in allTasks
-        const parentTask = allTasks.find((t) => t.id === currentTask.parentId)
-        if (!parentTask) break
-        
-        // Check if parent has the group
-        if (parentTask.groupId === id) {
-          return true
-        }
-        
-        // Move up to parent
-        currentTask = parentTask
-      }
-      
-      return false
+      return hasTaskInGroup(task.id)
     })
 
     // Build task tree for tasks in this group
@@ -129,19 +111,12 @@ export async function GET(
       return !taskIdsInGroup.has(task.parentId)
     })
 
-    const buildTaskTree = (parentId: string | null): typeof tasksInGroup => {
-      return tasksInGroup
-        .filter((task) => task.parentId === parentId)
-        .map((task) => ({
-          ...task,
-          children: buildTaskTree(task.id),
-        }))
-    }
+    const tasksInGroupChildrenByParentId = groupTasksByParentId(tasksInGroup)
 
     // Build tree starting from root tasks within the group
     const rootTasks = rootTasksInGroup.map((task) => ({
       ...task,
-      children: buildTaskTree(task.id),
+      children: buildTaskTree(tasksInGroupChildrenByParentId, task.id),
     }))
 
     // Get all habits for this user
@@ -200,22 +175,11 @@ export async function GET(
       if (habit.groupId === id) {
         return true
       }
-      
-      // Check if parent task (or any ancestor) has the group
-      if (habit.parentTask) {
-        let currentTask = habit.parentTask
-        while (currentTask) {
-          if (currentTask.groupId === id) {
-            return true
-          }
-          if (!currentTask.parent) break
-          // Find parent in allTasks
-          const parentTask = allTasks.find((t) => t.id === currentTask.parentId)
-          if (!parentTask) break
-          currentTask = parentTask as any
-        }
+
+      if (habit.parentTaskId) {
+        return hasTaskInGroup(habit.parentTaskId)
       }
-      
+
       return false
     })
 

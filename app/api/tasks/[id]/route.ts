@@ -12,7 +12,6 @@ import {
   removeChildFromTask,
 } from "@/lib/progress-calculator"
 import { serializeTask } from "@/lib/utils"
-import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
 import { getUserTimezone } from "@/lib/user-timezone"
 import { parseDateInputToUTCDate } from "@/lib/date-only"
 import {
@@ -22,6 +21,8 @@ import {
   propagateLabelsToChildren,
   propagateGroupToChildren,
 } from "@/lib/inheritance-helpers"
+import { attachPeriodMetrics, loadLogsByHabitIds } from "@/lib/server/habits/log-metrics"
+import { buildTaskTree, groupTasksByParentId } from "@/lib/server/tree/task-tree"
 
 // GET /api/tasks/[id] - Get a specific task
 export async function GET(
@@ -93,35 +94,11 @@ export async function GET(
 
       const allHabits = allTasks.flatMap((task) => task.habits || [])
       if (allHabits.length > 0) {
-        const habitIds = [...new Set(allHabits.map((habit) => habit.id))]
-        const logs = await prisma.habitLog.findMany({
-          where: {
-            habitId: {
-              in: habitIds,
-            },
-          },
-          select: {
-            habitId: true,
-            date: true,
-            count: true,
-          },
-        })
-
-        const logsByHabitId = new Map<string, { date: Date; count: number }[]>()
-        for (const log of logs) {
-          const existing = logsByHabitId.get(log.habitId) || []
-          existing.push({ date: log.date, count: log.count })
-          logsByHabitId.set(log.habitId, existing)
-        }
-
-        for (const habit of allHabits) {
-          const periodMetrics = calculateHabitPeriodMetrics(
-            habit,
-            logsByHabitId.get(habit.id) || [],
-            { timeZone: userTimeZone }
-          )
-          Object.assign(habit, periodMetrics)
-        }
+        const logsByHabitId = await loadLogsByHabitIds(
+          prisma,
+          allHabits.map((habit) => habit.id)
+        )
+        attachPeriodMetrics(allHabits, logsByHabitId, userTimeZone)
       }
 
       // Find the requested task
@@ -131,19 +108,11 @@ export async function GET(
         return NextResponse.json({ error: "Task not found" }, { status: 404 })
       }
 
-      // Build the tree structure recursively starting from this task
-      const buildTaskTree = (parentId: string | null): typeof allTasks => {
-        return allTasks
-          .filter((t) => t.parentId === parentId)
-          .map((t) => ({
-            ...t,
-            children: buildTaskTree(t.id),
-          }))
-      }
+      const childrenByParentId = groupTasksByParentId(allTasks)
 
       const taskWithChildren = {
         ...task,
-        children: buildTaskTree(task.id),
+        children: buildTaskTree(childrenByParentId, task.id),
       }
 
       return NextResponse.json({ data: serializeTask(taskWithChildren) })
@@ -204,35 +173,11 @@ export async function GET(
     }
 
     if (task.habits && task.habits.length > 0) {
-      const habitIds = [...new Set(task.habits.map((habit) => habit.id))]
-      const logs = await prisma.habitLog.findMany({
-        where: {
-          habitId: {
-            in: habitIds,
-          },
-        },
-        select: {
-          habitId: true,
-          date: true,
-          count: true,
-        },
-      })
-
-      const logsByHabitId = new Map<string, { date: Date; count: number }[]>()
-      for (const log of logs) {
-        const existing = logsByHabitId.get(log.habitId) || []
-        existing.push({ date: log.date, count: log.count })
-        logsByHabitId.set(log.habitId, existing)
-      }
-
-      for (const habit of task.habits) {
-        const periodMetrics = calculateHabitPeriodMetrics(
-          habit,
-          logsByHabitId.get(habit.id) || [],
-          { timeZone: userTimeZone }
-        )
-        Object.assign(habit, periodMetrics)
-      }
+      const logsByHabitId = await loadLogsByHabitIds(
+        prisma,
+        task.habits.map((habit) => habit.id)
+      )
+      attachPeriodMetrics(task.habits, logsByHabitId, userTimeZone)
     }
 
     return NextResponse.json({ data: serializeTask(task) })
@@ -662,19 +607,11 @@ export async function PUT(
       return NextResponse.json({ error: "Task not found" }, { status: 404 })
     }
 
-    // Build the tree structure recursively starting from this task
-    const buildTaskTree = (parentId: string | null): typeof allTasks => {
-      return allTasks
-        .filter((t) => t.parentId === parentId)
-        .map((t) => ({
-          ...t,
-          children: buildTaskTree(t.id),
-        }))
-    }
+    const childrenByParentId = groupTasksByParentId(allTasks)
 
     const taskWithChildren = {
       ...updatedTask,
-      children: buildTaskTree(updatedTask.id),
+      children: buildTaskTree(childrenByParentId, updatedTask.id),
     }
 
     const isLeaf = task._count.children === 0 && task._count.habits === 0

@@ -5,13 +5,25 @@ import { prisma } from "@/lib/prisma"
 import { createGroupSchema } from "@/lib/validations/group"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueGroupName } from "@/lib/validations/uniqueness"
+import { buildTaskGraph, hasGroupInTaskAncestry } from "@/lib/server/labels-groups/membership"
 
 // GET /api/groups - Get all groups for the authenticated user with optional limit
 export async function GET(request: Request) {
   try {
     const { userId } = await getAuthenticatedUser()
     const { searchParams } = new URL(request.url)
-    const limit = searchParams.get("limit") ? parseInt(searchParams.get("limit")!) : undefined
+    const limitParam = searchParams.get("limit")
+    let limit: number | undefined
+    if (limitParam !== null) {
+      const parsedLimit = Number.parseInt(limitParam, 10)
+      if (!Number.isFinite(parsedLimit) || parsedLimit <= 0) {
+        return NextResponse.json(
+          { error: "Invalid limit. Expected a positive integer." },
+          { status: 400 }
+        )
+      }
+      limit = parsedLimit
+    }
 
     const groups = await prisma.group.findMany({
       where: { userId },
@@ -84,7 +96,8 @@ export async function GET(request: Request) {
       }),
     ])
 
-    const taskById = new Map(allTasks.map((task) => [task.id, task]))
+    const taskGraph = buildTaskGraph(allTasks)
+    const groupMembershipMemo = new Map<string, boolean>()
     const getHabitProgress = (habit: { currentCount?: number | null; targetCount: number }) => {
       const totalCount = habit.currentCount || 0
       return habit.targetCount > 0
@@ -92,34 +105,19 @@ export async function GET(request: Request) {
         : 0
     }
 
+    const hasTaskInGroup = (taskId: string, groupId: string): boolean => {
+      return hasGroupInTaskAncestry(taskId, groupId, taskGraph.taskById, groupMembershipMemo)
+    }
+
     const groupsWithProgress = groups.map((group) => {
       const tasksInGroup = allTasks.filter((task) => {
-        if (task.groupId === group.id) return true
-        let currentTask = task
-        const visited = new Set<string>()
-        while (currentTask.parentId && !visited.has(currentTask.id)) {
-          visited.add(currentTask.id)
-          const parentTask = taskById.get(currentTask.parentId)
-          if (!parentTask) break
-          if (parentTask.groupId === group.id) return true
-          currentTask = parentTask
-        }
-        return false
+        return hasTaskInGroup(task.id, group.id)
       })
 
       const habitsInGroup = allHabits.filter((habit) => {
         if (habit.groupId === group.id) return true
-        if (habit.parentTask) {
-          let currentTask = habit.parentTask as { id: string; groupId: string | null; parentId: string | null; parent: { id: string; groupId: string | null } | null }
-          const visited = new Set<string>()
-          while (currentTask && !visited.has(currentTask.id)) {
-            visited.add(currentTask.id)
-            if (currentTask.groupId === group.id) return true
-            if (!currentTask.parentId) break
-            const parentTask = taskById.get(currentTask.parentId)
-            if (!parentTask) break
-            currentTask = parentTask as typeof currentTask
-          }
+        if (habit.parentTaskId) {
+          return hasTaskInGroup(habit.parentTaskId, group.id)
         }
         return false
       })
@@ -171,7 +169,8 @@ export async function GET(request: Request) {
         : 0
 
       const allLeafTasks = tasksInGroup.filter((task) => {
-        const hasChildrenInGroup = tasksInGroup.some((other) => other.parentId === task.id)
+        const children = taskGraph.childrenByParentId.get(task.id) || []
+        const hasChildrenInGroup = children.some((childId) => taskIdsInGroup.has(childId))
         return !hasChildrenInGroup
       })
 
@@ -197,9 +196,10 @@ export async function GET(request: Request) {
       }
     })
 
+    type GroupWithComputed = typeof groupsWithProgress[number]
     const sortedGroups = [...groupsWithProgress].sort((a, b) => {
-      const aCount = (a as any).incompleteCount || 0
-      const bCount = (b as any).incompleteCount || 0
+      const aCount = (a as GroupWithComputed).incompleteCount || 0
+      const bCount = (b as GroupWithComputed).incompleteCount || 0
       if (aCount !== bCount) return bCount - aCount
       const aProgress = typeof a.progress === "number" ? a.progress : 0
       const bProgress = typeof b.progress === "number" ? b.progress : 0

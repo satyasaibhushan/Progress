@@ -7,16 +7,24 @@ import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
 import { addHabitToTask } from "@/lib/progress-calculator"
 import { HabitType } from "@prisma/client"
-import { calculateIdealProgress, isPending } from "@/lib/date-helpers"
-import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
 import { getUserTimezone } from "@/lib/user-timezone"
 import { parseDateInputToUTCDate } from "@/lib/date-only"
 import {
   getInheritedLabelsFromHabit,
 } from "@/lib/inheritance-helpers"
 import { serializeHabit } from "@/lib/utils"
+import { normalizeCursorPagination, getPaginatedWindow } from "@/lib/server/pagination/cursor"
+import { createHabitComparator } from "@/lib/server/ranking/habit-ranking"
+import { attachPeriodMetrics, loadLogsByHabitIds } from "@/lib/server/habits/log-metrics"
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6] as const
+
+type HabitWithOptionalLogs = {
+  id: string
+  targetCount: number
+  currentCount: number | null
+  habitLogs?: Array<{ date: Date; count: number }>
+}
 
 function normalizeActiveDays(activeDays: number[] | null | undefined): number[] {
   const normalized = (activeDays || [])
@@ -38,33 +46,9 @@ export async function GET(request: Request) {
       return Math.min(100, Math.max(0, value))
     }
 
-    const getDateValue = (value: Date | string | null | undefined, fallback: number): number => {
-      if (!value) return fallback
-      const date = new Date(value)
-      const time = date.getTime()
-      return Number.isNaN(time) ? fallback : time
-    }
-
-    const getHabitProgress = (habit: any, currentCount: number): number => {
+    const getHabitProgress = (habit: HabitWithOptionalLogs, currentCount: number): number => {
       if (!habit.targetCount) return 0
       return clampProgress(Math.round((currentCount / habit.targetCount) * 100))
-    }
-
-    const getHabitScore = (habit: any, progress: number): number => {
-      const startDate = habit.startDate || habit.createdAt || null
-      const expectedProgress = calculateIdealProgress(startDate, habit.endDate) ?? 0
-      const progressGap = Math.max(0, expectedProgress - progress)
-      return progressGap * (habit.importance || 0)
-    }
-
-    const isHabitOverdue = (habit: any, progress: number): boolean => {
-      if (progress >= 100) return false
-      if (!habit.endDate) return false
-      const endDate = new Date(habit.endDate)
-      endDate.setHours(0, 0, 0, 0)
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      return endDate < today
     }
 
     // Optional filters
@@ -75,10 +59,10 @@ export async function GET(request: Request) {
     const status = searchParams.get("status")
     const paginate = searchParams.get("paginate") === "true"
     const highlightId = searchParams.get("highlightId")
-    const limitParam = Number.parseInt(searchParams.get("limit") || "20", 10)
-    const cursorParam = Number.parseInt(searchParams.get("cursor") || "0", 10)
-    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 20
-    const cursor = Number.isFinite(cursorParam) ? Math.max(cursorParam, 0) : 0
+    const { limit, cursor } = normalizeCursorPagination({
+      limitParam: searchParams.get("limit"),
+      cursorParam: searchParams.get("cursor"),
+    })
     const statusFilter = status === "active" || status === "future" || status === "completed"
       ? status
       : null
@@ -155,105 +139,30 @@ export async function GET(request: Request) {
         logsByHabitId.set(habit.id, logs)
       }
     } else if (habitIds.length > 0) {
-      const logs = await prisma.habitLog.findMany({
-        where: {
-          habitId: {
-            in: habitIds,
-          },
-        },
-        select: {
-          habitId: true,
-          date: true,
-          count: true,
-        },
-      })
-
-      for (const log of logs) {
-        const existing = logsByHabitId.get(log.habitId) || []
-        existing.push({ date: log.date, count: log.count })
-        logsByHabitId.set(log.habitId, existing)
+      const loadedLogs = await loadLogsByHabitIds(prisma, habitIds)
+      for (const [habitId, logs] of loadedLogs.entries()) {
+        logsByHabitId.set(habitId, logs)
       }
     }
 
-    // Calculate progress for each habit and serialize
+    attachPeriodMetrics(habits, logsByHabitId, userTimeZone)
+
+    // Calculate progress for each habit
     const habitsWithProgress = habits.map((habit) => {
       const currentCount = includeLogs && Array.isArray(habit.habitLogs)
-        ? habit.habitLogs.reduce((sum: number, log: any) => sum + (log.count || 0), 0)
+        ? habit.habitLogs.reduce((sum, log) => sum + (log.count || 0), 0)
         : (habit.currentCount || 0)
       const progress = getHabitProgress(habit, currentCount)
-      const periodMetrics = calculateHabitPeriodMetrics(
-        habit,
-        logsByHabitId.get(habit.id) || [],
-        { timeZone: userTimeZone }
-      )
-      return serializeHabit({
+      return {
         ...habit,
         progress,
         currentCount,
-        ...periodMetrics,
-      }) as { id: string; [key: string]: unknown }
+      }
     })
 
-    const habitMeta = new Map<string, {
-      rank: number
-      progress: number
-      overdue: boolean
-      score: number
-      startTime: number
-      endTime: number
-      updatedTime: number
-    }>()
-
-    const getMeta = (habit: any) => {
-      const cached = habitMeta.get(habit.id)
-      if (cached) return cached
-      const progress = typeof habit.progress === "number" ? habit.progress : 0
-      const completed = progress >= 100
-      const rank = completed ? 2 : (isPending(habit.startDate) ? 1 : 0)
-      const overdue = isHabitOverdue(habit, progress)
-      const score = getHabitScore(habit, progress)
-      const meta = {
-        rank,
-        progress,
-        overdue,
-        score,
-        startTime: getDateValue(habit.startDate, Number.POSITIVE_INFINITY),
-        endTime: getDateValue(habit.endDate, Number.POSITIVE_INFINITY),
-        updatedTime: getDateValue(habit.updatedAt, 0),
-      }
-      habitMeta.set(habit.id, meta)
-      return meta
-    }
-
-    const compareHabits = (a: any, b: any) => {
-      const metaA = getMeta(a)
-      const metaB = getMeta(b)
-      if (metaA.rank !== metaB.rank) return metaA.rank - metaB.rank
-
-      if (metaA.rank === 0) {
-        if (metaA.overdue !== metaB.overdue) return metaA.overdue ? -1 : 1
-        if (metaA.overdue && metaB.overdue) {
-          const endDiff = metaA.endTime - metaB.endTime
-          if (endDiff !== 0) return endDiff
-        }
-        const scoreDiff = metaB.score - metaA.score
-        if (scoreDiff !== 0) return scoreDiff
-        if (!metaA.overdue && !metaB.overdue) {
-          const endDiff = metaA.endTime - metaB.endTime
-          if (endDiff !== 0) return endDiff
-        }
-      } else if (metaA.rank === 1) {
-        const startDiff = metaA.startTime - metaB.startTime
-        if (startDiff !== 0) return startDiff
-      } else {
-        const updatedDiff = metaB.updatedTime - metaA.updatedTime
-        if (updatedDiff !== 0) return updatedDiff
-      }
-
-      return metaB.updatedTime - metaA.updatedTime
-    }
-
-    habitsWithProgress.sort(compareHabits)
+    type HabitWithProgress = typeof habitsWithProgress[number]
+    const { compare, getMeta } = createHabitComparator<HabitWithProgress>()
+    habitsWithProgress.sort(compare)
 
     if (paginate || statusFilter) {
       const statusCounts = {
@@ -279,40 +188,32 @@ export async function GET(request: Request) {
         : habitsWithProgress
 
       if (paginate) {
-        let effectiveCursor = cursor
-        let sliceStart = effectiveCursor
-        let sliceEnd = effectiveCursor + limit
+        let highlightIndex = -1
         if (highlightId) {
-          const highlightedIndex = filteredHabits.findIndex((habit) => habit.id === highlightId)
-          if (highlightedIndex >= 0) {
-            effectiveCursor = Math.floor(highlightedIndex / limit) * limit
-            sliceStart = 0
-            sliceEnd = effectiveCursor + limit
-          }
+          highlightIndex = filteredHabits.findIndex((habit) => habit.id === highlightId)
         }
 
-        const boundedSliceEnd = Math.min(sliceEnd, filteredHabits.length)
-        const pagedHabits = filteredHabits.slice(sliceStart, boundedSliceEnd)
-        const nextCursor = boundedSliceEnd < filteredHabits.length
-          ? String(boundedSliceEnd)
-          : null
+        const page = getPaginatedWindow(filteredHabits, limit, cursor, {
+          highlightIndex,
+        })
+
         return NextResponse.json({
-          data: pagedHabits,
+          data: page.pageItems.map((habit) => serializeHabit(habit)),
           pageInfo: {
-            nextCursor,
-            hasMore: nextCursor !== null,
+            nextCursor: page.nextCursor,
+            hasMore: page.nextCursor !== null,
           },
           statusCounts,
         })
       }
 
       return NextResponse.json({
-        data: filteredHabits,
+        data: filteredHabits.map((habit) => serializeHabit(habit)),
         statusCounts,
       })
     }
 
-    return NextResponse.json({ data: habitsWithProgress })
+    return NextResponse.json({ data: habitsWithProgress.map((habit) => serializeHabit(habit)) })
   } catch (error) {
     return handleApiError(error)
   }

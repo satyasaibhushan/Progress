@@ -7,13 +7,51 @@ import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueTaskTitle } from "@/lib/validations/uniqueness"
 import { addChildToTask } from "@/lib/progress-calculator"
 import { serializeTask, serializeTasks } from "@/lib/utils"
-import { calculateIdealProgress, isPending } from "@/lib/date-helpers"
-import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
 import { getUserTimezone } from "@/lib/user-timezone"
 import { parseDateInputToUTCDate } from "@/lib/date-only"
 import {
   getInheritedLabelsFromTask,
 } from "@/lib/inheritance-helpers"
+import { normalizeCursorPagination, getPaginatedWindow } from "@/lib/server/pagination/cursor"
+import { createTaskComparator } from "@/lib/server/ranking/task-ranking"
+import {
+  buildTaskTree,
+  groupTasksByParentId,
+  treeContainsTaskId,
+  type TreeNode,
+} from "@/lib/server/tree/task-tree"
+import { attachPeriodMetrics, loadLogsByHabitIds } from "@/lib/server/habits/log-metrics"
+
+type TaskItem = {
+  id: string
+  parentId: string | null
+  importance: number
+  progress: number | null
+  total_weight: bigint | null
+  weighted_progress: bigint | null
+  startDate: Date | null
+  deadline: Date | null
+  createdAt: Date
+  updatedAt: Date
+  habits?: HabitItem[]
+  _count?: {
+    children?: number
+    habits?: number
+  }
+}
+
+type HabitItem = {
+  id: string
+  importance: number
+  currentCount: number
+  targetCount: number
+  type: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY"
+  countPerPeriod?: number | null
+  maxCountPerDay?: number | null
+  activeDays?: number[] | null
+  startDate?: Date | null
+  endDate?: Date | null
+}
 
 // GET /api/tasks - Get all tasks for the authenticated user with optional filters
 export async function GET(request: Request) {
@@ -26,59 +64,6 @@ export async function GET(request: Request) {
       return Math.min(100, Math.max(0, value))
     }
 
-    const getDateValue = (value: Date | string | null | undefined, fallback: number): number => {
-      if (!value) return fallback
-      const date = new Date(value)
-      const time = date.getTime()
-      return Number.isNaN(time) ? fallback : time
-    }
-
-    const getTaskProgress = (task: any): number => {
-      const hasChildren = typeof task._count?.children === "number"
-        ? task._count.children > 0
-        : Array.isArray(task.children) && task.children.length > 0
-      const hasHabits = typeof task._count?.habits === "number"
-        ? task._count.habits > 0
-        : Array.isArray(task.habits) && task.habits.length > 0
-
-      if (!hasChildren && !hasHabits) {
-        return clampProgress(task.progress || 0)
-      }
-
-      if (task.total_weight !== null && task.total_weight !== undefined && task.weighted_progress !== null && task.weighted_progress !== undefined) {
-        const totalWeight = Number(task.total_weight)
-        const weightedProgress = Number(task.weighted_progress)
-        if (Number.isFinite(totalWeight) && totalWeight > 0) {
-          return clampProgress(weightedProgress / totalWeight)
-        }
-      }
-
-      return clampProgress(task.progress || 0)
-    }
-
-    const getTaskScore = (task: any, progress: number): number => {
-      const startDate = task.startDate || task.createdAt || null
-      const expectedProgress = calculateIdealProgress(startDate, task.deadline) ?? 0
-      const progressGap = Math.max(0, expectedProgress - progress)
-      return progressGap * (task.importance || 0)
-    }
-
-    const isTaskOverdue = (task: any, progress: number): boolean => {
-      if (progress >= 100) return false
-      if (!task.deadline) return false
-      const deadline = new Date(task.deadline)
-      deadline.setHours(0, 0, 0, 0)
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      return deadline < today
-    }
-
-    const treeContainsTaskId = (task: any, targetId: string): boolean => {
-      if (task.id === targetId) return true
-      if (!Array.isArray(task.children) || task.children.length === 0) return false
-      return task.children.some((child: any) => treeContainsTaskId(child, targetId))
-    }
-
     // Optional filters
     const parentId = searchParams.get("parentId")
     const groupId = searchParams.get("groupId")
@@ -88,10 +73,10 @@ export async function GET(request: Request) {
     const status = searchParams.get("status")
     const paginate = searchParams.get("paginate") === "true"
     const highlightId = searchParams.get("highlightId")
-    const limitParam = Number.parseInt(searchParams.get("limit") || "20", 10)
-    const cursorParam = Number.parseInt(searchParams.get("cursor") || "0", 10)
-    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 20
-    const cursor = Number.isFinite(cursorParam) ? Math.max(cursorParam, 0) : 0
+    const { limit, cursor } = normalizeCursorPagination({
+      limitParam: searchParams.get("limit"),
+      cursorParam: searchParams.get("cursor"),
+    })
     const statusFilter = status === "active" || status === "future" || status === "completed"
       ? status
       : null
@@ -178,50 +163,18 @@ export async function GET(request: Request) {
           },
         ],
       })
+      const taskChildrenByParentId = groupTasksByParentId(allTasks as TaskItem[])
 
       if (includeHabits) {
-        const childrenByParentId = new Map<string, typeof allTasks>()
-        for (const task of allTasks) {
-          if (!task.parentId) continue
-          const siblings = childrenByParentId.get(task.parentId) || []
-          siblings.push(task)
-          childrenByParentId.set(task.parentId, siblings)
-        }
-
-        const allHabits = allTasks.flatMap((task) => task.habits || [])
-        const logsByHabitId = new Map<string, { date: Date; count: number }[]>()
-
-        if (allHabits.length > 0) {
-          const habitIds = [...new Set(allHabits.map((habit) => habit.id))]
-          const logs = await prisma.habitLog.findMany({
-            where: {
-              habitId: {
-                in: habitIds,
-              },
-            },
-            select: {
-              habitId: true,
-              date: true,
-              count: true,
-            },
-          })
-
-          for (const log of logs) {
-            const existing = logsByHabitId.get(log.habitId) || []
-            existing.push({ date: log.date, count: log.count })
-            logsByHabitId.set(log.habitId, existing)
-          }
-        }
+        const allHabits = allTasks.flatMap((task) => (task as TaskItem).habits || [])
+        const logsByHabitId = await loadLogsByHabitIds(
+          prisma,
+          allHabits.map((habit) => habit.id)
+        )
+        attachPeriodMetrics(allHabits, logsByHabitId, userTimeZone)
 
         const habitProgressByHabitId = new Map<string, number>()
         for (const habit of allHabits) {
-          const periodMetrics = calculateHabitPeriodMetrics(
-            habit,
-            logsByHabitId.get(habit.id) || [],
-            { timeZone: userTimeZone }
-          )
-          Object.assign(habit, periodMetrics)
-
           if (habitProgressByHabitId.has(habit.id)) continue
           const totalCount = habit.currentCount || 0
           const targetCount = habit.targetCount || 0
@@ -240,11 +193,11 @@ export async function GET(request: Request) {
         }
 
         const contributionMemo = new Map<string, TaskContribution>()
-        const computeTaskContribution = (task: any): TaskContribution => {
+        const computeTaskContribution = (task: TaskItem): TaskContribution => {
           const cached = contributionMemo.get(task.id)
           if (cached) return cached
 
-          const directChildren = childrenByParentId.get(task.id) || []
+          const directChildren = (taskChildrenByParentId.get(task.id) || []) as TaskItem[]
           const linkedHabits = task.habits || []
 
           if (directChildren.length === 0 && linkedHabits.length === 0) {
@@ -289,94 +242,29 @@ export async function GET(request: Request) {
         }
 
         for (const task of allTasks) {
-          const directChildren = childrenByParentId.get(task.id) || []
-          const linkedHabits = task.habits || []
+          const directChildren = (taskChildrenByParentId.get(task.id) || []) as TaskItem[]
+          const linkedHabits = (task as TaskItem).habits || []
           if (directChildren.length === 0 && linkedHabits.length === 0) continue
 
-          const contribution = computeTaskContribution(task)
+          const contribution = computeTaskContribution(task as TaskItem)
           task.total_weight = BigInt(contribution.totalWeight)
           task.weighted_progress = BigInt(contribution.weightedProgress)
           task.progress = contribution.progress
         }
       }
 
-      const taskMeta = new Map<string, {
-        rank: number
-        progress: number
-        overdue: boolean
-        score: number
-        startTime: number
-        deadlineTime: number
-        updatedTime: number
-      }>()
+      const { compare, getMeta } = createTaskComparator<TaskItem>()
+      allTasks.sort((a, b) => compare(a as TaskItem, b as TaskItem))
 
-      const getMeta = (task: any) => {
-        const cached = taskMeta.get(task.id)
-        if (cached) return cached
-        const progress = getTaskProgress(task)
-        const completed = progress >= 100
-        const rank = completed ? 2 : (isPending(task.startDate) ? 1 : 0)
-        const overdue = isTaskOverdue(task, progress)
-        const score = getTaskScore(task, progress)
-        const meta = {
-          rank,
-          progress,
-          overdue,
-          score,
-          startTime: getDateValue(task.startDate, Number.POSITIVE_INFINITY),
-          deadlineTime: getDateValue(task.deadline, Number.POSITIVE_INFINITY),
-          updatedTime: getDateValue(task.updatedAt, 0),
-        }
-        taskMeta.set(task.id, meta)
-        return meta
+      const buildTree = (treeParentId: string | null): Array<TreeNode<TaskItem>> => {
+        return buildTaskTree(taskChildrenByParentId as Map<string | null, TaskItem[]>, treeParentId)
       }
 
-      const compareTasks = (a: any, b: any) => {
-        const metaA = getMeta(a)
-        const metaB = getMeta(b)
-        if (metaA.rank !== metaB.rank) return metaA.rank - metaB.rank
-
-        if (metaA.rank === 0) {
-          if (metaA.overdue !== metaB.overdue) return metaA.overdue ? -1 : 1
-          if (metaA.overdue && metaB.overdue) {
-            const deadlineDiff = metaA.deadlineTime - metaB.deadlineTime
-            if (deadlineDiff !== 0) return deadlineDiff
-          }
-          const scoreDiff = metaB.score - metaA.score
-          if (scoreDiff !== 0) return scoreDiff
-          if (!metaA.overdue && !metaB.overdue) {
-            const deadlineDiff = metaA.deadlineTime - metaB.deadlineTime
-            if (deadlineDiff !== 0) return deadlineDiff
-          }
-        } else if (metaA.rank === 1) {
-          const startDiff = metaA.startTime - metaB.startTime
-          if (startDiff !== 0) return startDiff
-        } else {
-          const updatedDiff = metaB.updatedTime - metaA.updatedTime
-          if (updatedDiff !== 0) return updatedDiff
-        }
-
-        return metaB.updatedTime - metaA.updatedTime
-      }
-
-      allTasks.sort(compareTasks)
-
-      // Build the tree structure recursively
-      const buildTaskTree = (parentId: string | null): typeof allTasks => {
-        return allTasks
-          .filter((task) => task.parentId === parentId)
-          .map((task) => ({
-            ...task,
-            children: buildTaskTree(task.id),
-          }))
-      }
-
-      // Filter root tasks based on parentId filter
-      const rootTasks = parentId === null 
-        ? buildTaskTree(null)
+      const rootTasks = parentId === null
+        ? buildTree(null)
         : parentId === "null"
-        ? buildTaskTree(null)
-        : buildTaskTree(parentId)
+          ? buildTree(null)
+          : buildTree(parentId)
 
       if (paginate || statusFilter) {
         const statusCounts = {
@@ -402,31 +290,22 @@ export async function GET(request: Request) {
           : rootTasks
 
         if (paginate) {
-          let effectiveCursor = cursor
-          let sliceStart = effectiveCursor
-          let sliceEnd = effectiveCursor + limit
+          let highlightIndex = -1
           if (highlightId) {
-            const highlightedIndex = filteredRootTasks.findIndex((rootTask) =>
+            highlightIndex = filteredRootTasks.findIndex((rootTask) =>
               treeContainsTaskId(rootTask, highlightId)
             )
-            if (highlightedIndex >= 0) {
-              effectiveCursor = Math.floor(highlightedIndex / limit) * limit
-              sliceStart = 0
-              sliceEnd = effectiveCursor + limit
-            }
           }
 
-          const boundedSliceEnd = Math.min(sliceEnd, filteredRootTasks.length)
-          const pagedRootTasks = filteredRootTasks.slice(sliceStart, boundedSliceEnd)
-          const nextCursor = boundedSliceEnd < filteredRootTasks.length
-            ? String(boundedSliceEnd)
-            : null
+          const page = getPaginatedWindow(filteredRootTasks, limit, cursor, {
+            highlightIndex,
+          })
 
           return NextResponse.json({
-            data: serializeTasks(pagedRootTasks),
+            data: serializeTasks(page.pageItems),
             pageInfo: {
-              nextCursor,
-              hasMore: nextCursor !== null,
+              nextCursor: page.nextCursor,
+              hasMore: page.nextCursor !== null,
             },
             statusCounts,
           })
@@ -494,101 +373,16 @@ export async function GET(request: Request) {
     })
 
     if (includeHabits) {
-      const allHabits = tasks.flatMap((task) => task.habits || [])
-      const logsByHabitId = new Map<string, { date: Date; count: number }[]>()
-
-      if (allHabits.length > 0) {
-        const habitIds = [...new Set(allHabits.map((habit) => habit.id))]
-        const logs = await prisma.habitLog.findMany({
-          where: {
-            habitId: {
-              in: habitIds,
-            },
-          },
-          select: {
-            habitId: true,
-            date: true,
-            count: true,
-          },
-        })
-
-        for (const log of logs) {
-          const existing = logsByHabitId.get(log.habitId) || []
-          existing.push({ date: log.date, count: log.count })
-          logsByHabitId.set(log.habitId, existing)
-        }
-      }
-
-      for (const habit of allHabits) {
-        const periodMetrics = calculateHabitPeriodMetrics(
-          habit,
-          logsByHabitId.get(habit.id) || [],
-          { timeZone: userTimeZone }
-        )
-        Object.assign(habit, periodMetrics)
-      }
+      const allHabits = tasks.flatMap((task) => (task as TaskItem).habits || [])
+      const logsByHabitId = await loadLogsByHabitIds(
+        prisma,
+        allHabits.map((habit) => habit.id)
+      )
+      attachPeriodMetrics(allHabits, logsByHabitId, userTimeZone)
     }
 
-    const taskMeta = new Map<string, {
-      rank: number
-      progress: number
-      overdue: boolean
-      score: number
-      startTime: number
-      deadlineTime: number
-      updatedTime: number
-    }>()
-
-    const getMeta = (task: any) => {
-      const cached = taskMeta.get(task.id)
-      if (cached) return cached
-      const progress = getTaskProgress(task)
-      const completed = progress >= 100
-      const rank = completed ? 2 : (isPending(task.startDate) ? 1 : 0)
-      const overdue = isTaskOverdue(task, progress)
-      const score = getTaskScore(task, progress)
-      const meta = {
-        rank,
-        progress,
-        overdue,
-        score,
-        startTime: getDateValue(task.startDate, Number.POSITIVE_INFINITY),
-        deadlineTime: getDateValue(task.deadline, Number.POSITIVE_INFINITY),
-        updatedTime: getDateValue(task.updatedAt, 0),
-      }
-      taskMeta.set(task.id, meta)
-      return meta
-    }
-
-    const compareTasks = (a: any, b: any) => {
-      const metaA = getMeta(a)
-      const metaB = getMeta(b)
-      if (metaA.rank !== metaB.rank) return metaA.rank - metaB.rank
-
-      if (metaA.rank === 0) {
-        if (metaA.overdue !== metaB.overdue) return metaA.overdue ? -1 : 1
-        if (metaA.overdue && metaB.overdue) {
-          const deadlineDiff = metaA.deadlineTime - metaB.deadlineTime
-          if (deadlineDiff !== 0) return deadlineDiff
-        }
-        const scoreDiff = metaB.score - metaA.score
-        if (scoreDiff !== 0) return scoreDiff
-        if (!metaA.overdue && !metaB.overdue) {
-          const deadlineDiff = metaA.deadlineTime - metaB.deadlineTime
-          if (deadlineDiff !== 0) return deadlineDiff
-        }
-      } else if (metaA.rank === 1) {
-        const startDiff = metaA.startTime - metaB.startTime
-        if (startDiff !== 0) return startDiff
-      } else {
-        const updatedDiff = metaB.updatedTime - metaA.updatedTime
-        if (updatedDiff !== 0) return updatedDiff
-      }
-
-      return metaB.updatedTime - metaA.updatedTime
-    }
-
-    tasks.sort(compareTasks)
+    const { compare, getMeta } = createTaskComparator<TaskItem>()
+    tasks.sort((a, b) => compare(a as TaskItem, b as TaskItem))
 
     if (paginate || statusFilter) {
       const statusCounts = {
@@ -614,28 +408,20 @@ export async function GET(request: Request) {
         : tasks
 
       if (paginate) {
-        let effectiveCursor = cursor
-        let sliceStart = effectiveCursor
-        let sliceEnd = effectiveCursor + limit
+        let highlightIndex = -1
         if (highlightId) {
-          const highlightedIndex = filteredTasks.findIndex((task) => task.id === highlightId)
-          if (highlightedIndex >= 0) {
-            effectiveCursor = Math.floor(highlightedIndex / limit) * limit
-            sliceStart = 0
-            sliceEnd = effectiveCursor + limit
-          }
+          highlightIndex = filteredTasks.findIndex((task) => task.id === highlightId)
         }
 
-        const boundedSliceEnd = Math.min(sliceEnd, filteredTasks.length)
-        const pagedTasks = filteredTasks.slice(sliceStart, boundedSliceEnd)
-        const nextCursor = boundedSliceEnd < filteredTasks.length
-          ? String(boundedSliceEnd)
-          : null
+        const page = getPaginatedWindow(filteredTasks, limit, cursor, {
+          highlightIndex,
+        })
+
         return NextResponse.json({
-          data: serializeTasks(pagedTasks),
+          data: serializeTasks(page.pageItems),
           pageInfo: {
-            nextCursor,
-            hasMore: nextCursor !== null,
+            nextCursor: page.nextCursor,
+            hasMore: page.nextCursor !== null,
           },
           statusCounts,
         })

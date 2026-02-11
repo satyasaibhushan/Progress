@@ -526,6 +526,9 @@ export async function DELETE(
     // Store parent task ID and importance before deletion
     const parentTaskId = existingHabit.parentTaskId
     const importance = existingHabit.importance
+    const progressBeforeDelete = parentTaskId
+      ? await calculateHabitCompletion(id)
+      : null
 
     // Delete will cascade to habit logs due to schema onDelete: Cascade
     await prisma.habit.delete({
@@ -536,7 +539,12 @@ export async function DELETE(
 
     // Remove from parent task's aggregates if this habit was linked to a task
     if (parentTaskId) {
-      await removeHabitFromTask(id, parentTaskId, importance)
+      await removeHabitFromTask(
+        id,
+        parentTaskId,
+        importance,
+        progressBeforeDelete ?? undefined
+      )
     }
 
     return NextResponse.json({ message: "Habit deleted successfully" })

@@ -1,4 +1,8 @@
 import { prisma } from "@/lib/prisma"
+import {
+  propagateGroupToTaskDescendants,
+  propagateLabelsToTaskDescendants,
+} from "@/lib/server/inheritance/propagation"
 
 /**
  * Get all labels from a task's parent chain (ancestors)
@@ -144,72 +148,7 @@ export async function propagateLabelsToChildren(
   labelIds: string[],
   userId: string
 ): Promise<void> {
-  // Get all direct children
-  const children = await prisma.task.findMany({
-    where: {
-      parentId: taskId,
-      userId,
-    },
-  })
-
-  // Get all linked habits
-  const habits = await prisma.habit.findMany({
-    where: {
-      parentTaskId: taskId,
-      userId,
-    },
-  })
-
-  // Add labels to all children
-  for (const child of children) {
-    for (const labelId of labelIds) {
-      // Check if label already exists
-      const existing = await prisma.taskLabel.findUnique({
-        where: {
-          taskId_labelId: {
-            taskId: child.id,
-            labelId,
-          },
-        },
-      })
-
-      if (!existing) {
-        await prisma.taskLabel.create({
-          data: {
-            taskId: child.id,
-            labelId,
-          },
-        })
-      }
-    }
-
-    // Recursively propagate to grandchildren
-    await propagateLabelsToChildren(child.id, labelIds, userId)
-  }
-
-  // Add labels to all linked habits
-  for (const habit of habits) {
-    for (const labelId of labelIds) {
-      // Check if label already exists
-      const existing = await prisma.habitLabel.findUnique({
-        where: {
-          habitId_labelId: {
-            habitId: habit.id,
-            labelId,
-          },
-        },
-      })
-
-      if (!existing) {
-        await prisma.habitLabel.create({
-          data: {
-            habitId: habit.id,
-            labelId,
-          },
-        })
-      }
-    }
-  }
+  await propagateLabelsToTaskDescendants(taskId, labelIds, userId)
 }
 
 /**
@@ -221,48 +160,7 @@ export async function propagateGroupToChildren(
   groupId: string | null,
   userId: string
 ): Promise<void> {
-  // Get all direct children
-  const children = await prisma.task.findMany({
-    where: {
-      parentId: taskId,
-      userId,
-    },
-  })
-
-  // Get all linked habits
-  const habits = await prisma.habit.findMany({
-    where: {
-      parentTaskId: taskId,
-      userId,
-    },
-  })
-
-  // Update group for all children
-  await prisma.task.updateMany({
-    where: {
-      parentId: taskId,
-      userId,
-    },
-    data: {
-      groupId,
-    },
-  })
-
-  // Update group for all linked habits
-  await prisma.habit.updateMany({
-    where: {
-      parentTaskId: taskId,
-      userId,
-    },
-    data: {
-      groupId,
-    },
-  })
-
-  // Recursively propagate to grandchildren
-  for (const child of children) {
-    await propagateGroupToChildren(child.id, groupId, userId)
-  }
+  await propagateGroupToTaskDescendants(taskId, groupId, userId)
 }
 
 /**

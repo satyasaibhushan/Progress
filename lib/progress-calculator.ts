@@ -486,9 +486,12 @@ export async function addHabitToTask(habitId: string): Promise<void> {
 export async function removeHabitFromTask(
   habitId: string,
   parentTaskId: string,
-  importance: number
+  importance: number,
+  habitProgressOverride?: number
 ): Promise<void> {
-  const habitProgress = await calculateHabitCompletion(habitId);
+  const habitProgress = typeof habitProgressOverride === "number"
+    ? habitProgressOverride
+    : await calculateHabitCompletion(habitId);
   const weight = BigInt(importance);
   const weightedProgress = BigInt(Math.round(habitProgress * importance));
 

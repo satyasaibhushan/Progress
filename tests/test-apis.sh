@@ -22,6 +22,17 @@ if [ "$HTTP_CODE" != "200" ]; then
 fi
 echo ""
 
+echo "1b. GET /api/groups?limit=bad (Validation)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -H "Cookie: ${COOKIE}" "${BASE_URL}/api/groups?limit=bad")
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+echo "Status: $HTTP_CODE"
+if [ "$HTTP_CODE" != "400" ]; then
+    echo "❌ ERROR: Expected 400, got $HTTP_CODE"
+    echo "Response: $BODY"
+fi
+echo ""
+
 echo "2. POST /api/groups (Create)"
 TIMESTAMP=$(date +%s)
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \

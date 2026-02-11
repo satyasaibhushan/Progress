@@ -4,6 +4,8 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { serializeTasks, serializeHabits } from "@/lib/utils"
+import { buildTaskGraph, hasLabelInTaskAncestry } from "@/lib/server/labels-groups/membership"
+import { buildTaskTree, groupTasksByParentId } from "@/lib/server/tree/task-tree"
 
 // GET /api/labels/[id]/items - Get all tasks and habits with this label (including inherited)
 export async function GET(
@@ -82,42 +84,31 @@ export async function GET(
         },
       ],
     })
+    const taskGraph = buildTaskGraph(allTasks)
+    const directLabelIdsByTaskId = new Map<string, Set<string>>(
+      allTasks.map((task) => [task.id, new Set(task.taskLabels.map((tl) => tl.labelId))])
+    )
+    const labelMembershipMemo = new Map<string, boolean>()
+    const taskHasLabel = (taskId: string): boolean => {
+      return hasLabelInTaskAncestry(
+        taskId,
+        id,
+        taskGraph.taskById,
+        directLabelIdsByTaskId,
+        labelMembershipMemo
+      )
+    }
 
     // Filter tasks that have this label (directly or through inheritance)
     // A task has a label if:
     // 1. It has the label directly, OR
     // 2. Any of its ancestors has the label
     const tasksWithLabel = allTasks.filter((task) => {
-      // Check if task itself has the label
-      if (task.taskLabels.some((tl) => tl.labelId === id)) {
-        return true
-      }
-      
-      // Check ancestors
-      let currentTask = task
-      while (currentTask.parent) {
-        const parentTask = allTasks.find((t) => t.id === currentTask.parentId)
-        if (!parentTask) break
-        if (parentTask.taskLabels.some((tl) => tl.labelId === id)) {
-          return true
-        }
-        currentTask = parentTask
-      }
-      
-      return false
+      return taskHasLabel(task.id)
     })
 
-    // Build task tree for tasks with this label
-    const buildTaskTree = (parentId: string | null): typeof tasksWithLabel => {
-      return tasksWithLabel
-        .filter((task) => task.parentId === parentId)
-        .map((task) => ({
-          ...task,
-          children: buildTaskTree(task.id),
-        }))
-    }
-
-    const rootTasks = buildTaskTree(null)
+    const tasksWithLabelChildrenByParentId = groupTasksByParentId(tasksWithLabel)
+    const rootTasks = buildTaskTree(tasksWithLabelChildrenByParentId, null)
 
     // Get all habits for this user
     const allHabits = await prisma.habit.findMany({
@@ -173,22 +164,11 @@ export async function GET(
       if (habit.habitLabels.some((hl) => hl.labelId === id)) {
         return true
       }
-      
-      // Check if parent task (or any ancestor) has the label
-      if (habit.parentTask) {
-        let currentTask = habit.parentTask
-        while (currentTask) {
-          const parentTask = allTasks.find((t) => t.id === currentTask.id)
-          if (parentTask && parentTask.taskLabels.some((tl) => tl.labelId === id)) {
-            return true
-          }
-          if (!currentTask.parent) break
-          const parentTaskData = allTasks.find((t) => t.id === currentTask.parentId)
-          if (!parentTaskData) break
-          currentTask = parentTaskData as any
-        }
+
+      if (habit.parentTaskId) {
+        return taskHasLabel(habit.parentTaskId)
       }
-      
+
       return false
     })
 
