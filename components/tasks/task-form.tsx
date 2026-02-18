@@ -24,8 +24,11 @@ import { DatePicker } from "@/components/shared/date-picker";
 import { LabelSelector } from "@/components/shared/label-selector";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { GroupOverrideWarningDialog } from "./form-sections/group-override-warning-dialog";
+import { DateBoundsWarningDialog } from "./form-sections/date-bounds-warning-dialog";
 import {
+  checkDateBoundsConflicts,
   checkGroupConflicts,
+  DateBoundsConflictInfo,
   flattenTasks,
   GroupConflictInfo,
   isDescendant,
@@ -100,8 +103,10 @@ export function TaskForm({
   const watchedLabelIds = watch("labelIds");
   const selectedLabelIds = React.useMemo(() => watchedLabelIds ?? [], [watchedLabelIds]);
   const [showGroupWarning, setShowGroupWarning] = useState(false);
+  const [showDateBoundsWarning, setShowDateBoundsWarning] = useState(false);
   const [pendingSubmitData, setPendingSubmitData] = useState<TaskFormData | null>(null);
   const [conflictInfo, setConflictInfo] = useState<GroupConflictInfo | null>(null);
+  const [dateBoundsConflictInfo, setDateBoundsConflictInfo] = useState<DateBoundsConflictInfo | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
 
   // Check if task is a leaf task (no children, no habits)
@@ -178,26 +183,58 @@ export function TaskForm({
     return !isDescendant(currentTaskNode, t.id);
   });
 
+  const checkAndHandleGroupConflicts = (data: TaskFormData): boolean => {
+    if (!task) return false;
+
+    const currentGroupId = task.groupId || undefined;
+    const newGroupId = data.groupId || undefined;
+    if (currentGroupId !== newGroupId) {
+      const conflicts = checkGroupConflicts(newGroupId, task, groups);
+      if (conflicts.hasConflict) {
+        setConflictInfo(conflicts);
+        setPendingSubmitData(data);
+        setShowGroupWarning(true);
+        return true;
+      }
+    }
+
+    return false;
+  };
+
   const handleFormSubmit = async (data: TaskFormData) => {
     // Clear any previous API errors
     setApiError(null);
-    
-    // Check for group conflicts only when editing and group is being changed
+
+    // Check for date-bound conflicts when editing and date bounds are changed.
     if (task) {
-      const currentGroupId = task.groupId || undefined;
-      const newGroupId = data.groupId || undefined;
-      if (currentGroupId !== newGroupId) {
-        const conflicts = checkGroupConflicts(newGroupId, task, groups);
-        if (conflicts.hasConflict) {
-          setConflictInfo(conflicts);
+      const currentStartDate = task.startDate || undefined;
+      const currentDeadline = task.deadline || undefined;
+      const newStartDate = data.startDate || undefined;
+      const newDeadline = data.deadline || undefined;
+
+      const startDateChanged = newStartDate !== currentStartDate;
+      const deadlineChanged = newDeadline !== currentDeadline;
+      const shouldCheckDateBounds =
+        (startDateChanged && !!newStartDate) ||
+        (deadlineChanged && !!newDeadline);
+
+      if (shouldCheckDateBounds) {
+        const dateConflicts = checkDateBoundsConflicts(newStartDate, newDeadline, task);
+        if (dateConflicts.hasConflict) {
+          setDateBoundsConflictInfo(dateConflicts);
           setPendingSubmitData(data);
-          setShowGroupWarning(true);
+          setShowDateBoundsWarning(true);
           return;
         }
       }
     }
 
-    // No conflicts, proceed with submission
+    // Check group conflicts only when editing and group is changed.
+    if (checkAndHandleGroupConflicts(data)) {
+      return;
+    }
+
+    // No warnings, proceed with submission.
     await proceedWithSubmit(data);
   };
 
@@ -213,8 +250,10 @@ export function TaskForm({
         await onSubmit(data);
       }
       setShowGroupWarning(false);
+      setShowDateBoundsWarning(false);
       setPendingSubmitData(null);
       setConflictInfo(null);
+      setDateBoundsConflictInfo(null);
     } catch (error) {
       // Extract error message
       const errorMessage = error instanceof Error ? error.message : "An error occurred. Please try again.";
@@ -228,6 +267,25 @@ export function TaskForm({
     if (pendingSubmitData) {
       await proceedWithSubmit(pendingSubmitData);
     }
+  };
+
+  const handleDateBoundsWarningConfirm = async () => {
+    if (!pendingSubmitData) return;
+
+    setShowDateBoundsWarning(false);
+    setDateBoundsConflictInfo(null);
+
+    if (checkAndHandleGroupConflicts(pendingSubmitData)) {
+      return;
+    }
+
+    await proceedWithSubmit(pendingSubmitData);
+  };
+
+  const handleDateBoundsWarningCancel = () => {
+    setShowDateBoundsWarning(false);
+    setPendingSubmitData(null);
+    setDateBoundsConflictInfo(null);
   };
 
   const handleWarningCancel = () => {
@@ -439,6 +497,14 @@ export function TaskForm({
         onOpenChange={setShowGroupWarning}
         onCancel={handleWarningCancel}
         onContinue={handleWarningConfirm}
+      />
+
+      <DateBoundsWarningDialog
+        open={showDateBoundsWarning}
+        conflictInfo={dateBoundsConflictInfo}
+        onOpenChange={setShowDateBoundsWarning}
+        onCancel={handleDateBoundsWarningCancel}
+        onContinue={handleDateBoundsWarningConfirm}
       />
     </form>
   );

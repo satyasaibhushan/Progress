@@ -7,6 +7,12 @@ export interface GroupConflictInfo {
   affectedGroups: string[];
 }
 
+export interface DateBoundsConflictInfo {
+  hasConflict: boolean;
+  childTasksCount: number;
+  habitsCount: number;
+}
+
 export function collectChildTasks(task: Task): Task[] {
   const children: Task[] = [];
   if (task.children && task.children.length > 0) {
@@ -16,6 +22,128 @@ export function collectChildTasks(task: Task): Task[] {
     });
   }
   return children;
+}
+
+export function collectLinkedHabits(task: Task): Habit[] {
+  const habits: Habit[] = [...(task.habits || [])];
+  if (task.children && task.children.length > 0) {
+    task.children.forEach((child) => {
+      habits.push(...collectLinkedHabits(child));
+    });
+  }
+  return habits;
+}
+
+function hasOutOfBoundsTaskDates(
+  task: Task,
+  newStartDate: string | undefined,
+  newDeadline: string | undefined
+): boolean {
+  let nextStartDate = task.startDate;
+  let nextDeadline = task.deadline;
+  const originalStartDate = task.startDate;
+  const originalDeadline = task.deadline;
+  let startDateClamped = false;
+  let deadlineClamped = false;
+
+  if (newStartDate && nextStartDate && nextStartDate < newStartDate) {
+    nextStartDate = newStartDate;
+    startDateClamped = true;
+  }
+
+  if (newDeadline && nextDeadline && nextDeadline > newDeadline) {
+    nextDeadline = newDeadline;
+    deadlineClamped = true;
+  }
+
+  if (nextStartDate && nextDeadline && nextStartDate > nextDeadline && (startDateClamped || deadlineClamped)) {
+    if (newDeadline && nextStartDate > newDeadline) {
+      nextStartDate = newDeadline;
+      nextDeadline = newDeadline;
+    } else {
+      nextDeadline = nextStartDate;
+    }
+  }
+
+  return nextStartDate !== originalStartDate || nextDeadline !== originalDeadline;
+}
+
+function hasOutOfBoundsHabitDates(
+  habit: Habit,
+  newStartDate: string | undefined,
+  newDeadline: string | undefined
+): boolean {
+  let nextStartDate = habit.startDate;
+  let nextEndDate = habit.endDate;
+  const originalStartDate = habit.startDate;
+  const originalEndDate = habit.endDate;
+  let startDateClamped = false;
+  let endDateClamped = false;
+
+  if (newStartDate && nextStartDate && nextStartDate < newStartDate) {
+    nextStartDate = newStartDate;
+    startDateClamped = true;
+  }
+
+  if (newDeadline && nextEndDate && nextEndDate > newDeadline) {
+    nextEndDate = newDeadline;
+    endDateClamped = true;
+  }
+
+  if (nextStartDate && nextEndDate && nextStartDate > nextEndDate && (startDateClamped || endDateClamped)) {
+    if (newDeadline && nextStartDate > newDeadline) {
+      nextStartDate = newDeadline;
+      nextEndDate = newDeadline;
+    } else {
+      nextEndDate = nextStartDate;
+    }
+  }
+
+  return nextStartDate !== originalStartDate || nextEndDate !== originalEndDate;
+}
+
+export function checkDateBoundsConflicts(
+  newStartDate: string | undefined,
+  newDeadline: string | undefined,
+  currentTask: Task
+): DateBoundsConflictInfo {
+  if (!newStartDate && !newDeadline) {
+    return {
+      hasConflict: false,
+      childTasksCount: 0,
+      habitsCount: 0,
+    };
+  }
+
+  const taskWithCount = currentTask as Task & { _count?: { children?: number; habits?: number } };
+  const loadedChildren = collectChildTasks(currentTask);
+  const loadedHabits = collectLinkedHabits(currentTask);
+
+  if (
+    loadedChildren.length === 0 &&
+    loadedHabits.length === 0 &&
+    ((taskWithCount._count?.children || 0) > 0 || (taskWithCount._count?.habits || 0) > 0)
+  ) {
+    return {
+      hasConflict: true,
+      childTasksCount: taskWithCount._count?.children || 0,
+      habitsCount: taskWithCount._count?.habits || 0,
+    };
+  }
+
+  const affectedChildTasks = loadedChildren.filter((task) =>
+    hasOutOfBoundsTaskDates(task, newStartDate, newDeadline)
+  ).length;
+
+  const affectedHabits = loadedHabits.filter((habit) =>
+    hasOutOfBoundsHabitDates(habit, newStartDate, newDeadline)
+  ).length;
+
+  return {
+    hasConflict: affectedChildTasks > 0 || affectedHabits > 0,
+    childTasksCount: affectedChildTasks,
+    habitsCount: affectedHabits,
+  };
 }
 
 export function checkGroupConflicts(

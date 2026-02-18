@@ -5,6 +5,54 @@ type TaskEdge = {
   parentId: string | null
 }
 
+function isSameDate(left: Date | null, right: Date | null): boolean {
+  if (!left && !right) return true
+  if (!left || !right) return false
+  return left.getTime() === right.getTime()
+}
+
+function clampToDateBounds(
+  currentStartDate: Date | null,
+  currentEndDate: Date | null,
+  minStartDate: Date | null,
+  maxEndDate: Date | null
+): { startDate: Date | null; endDate: Date | null; changed: boolean } {
+  let nextStartDate = currentStartDate
+  let nextEndDate = currentEndDate
+  let startDateClamped = false
+  let endDateClamped = false
+
+  if (minStartDate && nextStartDate && nextStartDate < minStartDate) {
+    nextStartDate = minStartDate
+    startDateClamped = true
+  }
+
+  if (maxEndDate && nextEndDate && nextEndDate > maxEndDate) {
+    nextEndDate = maxEndDate
+    endDateClamped = true
+  }
+
+  // Keep the item internally valid only if this update actually clamped a bound.
+  if (nextStartDate && nextEndDate && nextStartDate > nextEndDate && (startDateClamped || endDateClamped)) {
+    if (maxEndDate && nextStartDate > maxEndDate) {
+      nextStartDate = maxEndDate
+      nextEndDate = maxEndDate
+    } else {
+      nextEndDate = nextStartDate
+    }
+  }
+
+  const changed =
+    !isSameDate(currentStartDate, nextStartDate) ||
+    !isSameDate(currentEndDate, nextEndDate)
+
+  return {
+    startDate: nextStartDate,
+    endDate: nextEndDate,
+    changed,
+  }
+}
+
 function buildChildrenMap(tasks: TaskEdge[]): Map<string, string[]> {
   const childrenByParentId = new Map<string, string[]>()
 
@@ -43,6 +91,110 @@ async function getDescendantTaskIds(taskId: string, userId: string): Promise<str
   }
 
   return descendants
+}
+
+export async function propagateDateBoundsToTaskDescendants(
+  taskId: string,
+  bounds: {
+    startDate: Date | null
+    deadline: Date | null
+  },
+  userId: string
+): Promise<{
+  updatedTasks: number
+  updatedHabits: number
+}> {
+  const { startDate: parentStartDate, deadline: parentDeadline } = bounds
+
+  if (!parentStartDate && !parentDeadline) {
+    return { updatedTasks: 0, updatedHabits: 0 }
+  }
+
+  const descendantTaskIds = await getDescendantTaskIds(taskId, userId)
+  const taskIdsForLinkedHabits = [taskId, ...descendantTaskIds]
+
+  const descendantTasks = descendantTaskIds.length > 0
+    ? await prisma.task.findMany({
+        where: {
+          userId,
+          id: {
+            in: descendantTaskIds,
+          },
+        },
+        select: {
+          id: true,
+          startDate: true,
+          deadline: true,
+        },
+      })
+    : []
+
+  const linkedHabits = taskIdsForLinkedHabits.length > 0
+    ? await prisma.habit.findMany({
+        where: {
+          userId,
+          parentTaskId: {
+            in: taskIdsForLinkedHabits,
+          },
+        },
+        select: {
+          id: true,
+          startDate: true,
+          endDate: true,
+        },
+      })
+    : []
+
+  const taskUpdates = descendantTasks.flatMap((task) => {
+    const clamped = clampToDateBounds(
+      task.startDate,
+      task.deadline,
+      parentStartDate,
+      parentDeadline
+    )
+
+    if (!clamped.changed) return []
+
+    return [
+      prisma.task.update({
+        where: { id: task.id },
+        data: {
+          startDate: clamped.startDate,
+          deadline: clamped.endDate,
+        },
+      }),
+    ]
+  })
+
+  const habitUpdates = linkedHabits.flatMap((habit) => {
+    const clamped = clampToDateBounds(
+      habit.startDate,
+      habit.endDate,
+      parentStartDate,
+      parentDeadline
+    )
+
+    if (!clamped.changed) return []
+
+    return [
+      prisma.habit.update({
+        where: { id: habit.id },
+        data: {
+          startDate: clamped.startDate,
+          endDate: clamped.endDate,
+        },
+      }),
+    ]
+  })
+
+  if (taskUpdates.length > 0 || habitUpdates.length > 0) {
+    await prisma.$transaction([...taskUpdates, ...habitUpdates])
+  }
+
+  return {
+    updatedTasks: taskUpdates.length,
+    updatedHabits: habitUpdates.length,
+  }
 }
 
 export async function propagateLabelsToTaskDescendants(

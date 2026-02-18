@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma"
 import {
+  propagateDateBoundsToTaskDescendants,
   propagateGroupToTaskDescendants,
   propagateLabelsToTaskDescendants,
 } from "@/lib/server/inheritance/propagation"
@@ -161,6 +162,26 @@ export async function propagateGroupToChildren(
   userId: string
 ): Promise<void> {
   await propagateGroupToTaskDescendants(taskId, groupId, userId)
+}
+
+/**
+ * Propagate date bounds from a parent task to all descendants and linked habits.
+ * Only out-of-bound child dates are clamped.
+ */
+export async function propagateDateBoundsToChildren(
+  taskId: string,
+  startDate: Date | null,
+  deadline: Date | null,
+  userId: string
+): Promise<{
+  updatedTasks: number
+  updatedHabits: number
+}> {
+  return propagateDateBoundsToTaskDescendants(
+    taskId,
+    { startDate, deadline },
+    userId
+  )
 }
 
 /**

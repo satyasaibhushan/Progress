@@ -18,6 +18,7 @@ import {
   getInheritedLabelsFromTask,
   getInheritedGroupFromTask,
   canChangeTaskGroup,
+  propagateDateBoundsToChildren,
   propagateLabelsToChildren,
   propagateGroupToChildren,
 } from "@/lib/inheritance-helpers"
@@ -250,6 +251,22 @@ export async function PUT(
       }
     }
 
+    const finalStartDate = validatedData.startDate !== undefined
+      ? (validatedData.startDate ? parsedStartDate : null)
+      : existingTask.startDate
+
+    const finalDeadline = validatedData.deadline !== undefined
+      ? (validatedData.deadline ? parsedDeadline : null)
+      : existingTask.deadline
+
+    const startDateChanged = validatedData.startDate !== undefined &&
+      (existingTask.startDate?.getTime() ?? null) !== (finalStartDate?.getTime() ?? null)
+    const deadlineChanged = validatedData.deadline !== undefined &&
+      (existingTask.deadline?.getTime() ?? null) !== (finalDeadline?.getTime() ?? null)
+    const shouldPropagateDateBounds =
+      (startDateChanged && !!finalStartDate) ||
+      (deadlineChanged && !!finalDeadline)
+
     // Validate unique title at parent level (if title or parentId is being updated)
     const titleChanged = validatedData.title && validatedData.title !== existingTask.title
     const parentChanged = validatedData.parentId !== undefined && validatedData.parentId !== existingTask.parentId
@@ -476,6 +493,15 @@ export async function PUT(
     // If group changed, propagate to all children
     if (validatedData.groupId !== undefined) {
       await propagateGroupToChildren(task.id, task.groupId, userId)
+    }
+
+    if (shouldPropagateDateBounds) {
+      await propagateDateBoundsToChildren(
+        task.id,
+        finalStartDate,
+        finalDeadline,
+        userId
+      )
     }
 
     // Handle labelIds update if provided
