@@ -9,7 +9,7 @@ const dateInputSchema = z.string().refine((value) => {
 }, "Invalid date")
 
 export const createHabitSchema = z.object({
-  title: z.string().min(1, "Title is required").max(200, "Title too long"),
+  title: z.string().trim().min(1, "Title is required").max(200, "Title too long"),
   description: z.string().max(2000, "Description too long").optional(),
   type: z.nativeEnum(HabitType),
   targetCount: z
@@ -53,7 +53,7 @@ export const createHabitSchema = z.object({
 })
 
 export const updateHabitSchema = z.object({
-  title: z.string().min(1, "Title is required").max(200, "Title too long").optional(),
+  title: z.string().trim().min(1, "Title is required").max(200, "Title too long").optional(),
   description: z.string().max(2000, "Description too long").optional().nullable(),
   type: z.nativeEnum(HabitType).optional(),
   targetCount: z
@@ -91,7 +91,7 @@ export const updateHabitSchema = z.object({
 
 // Form schema that works for both create and edit (makes certain fields optional for editing)
 export const habitFormSchema = z.object({
-  title: z.string().min(1, "Title is required").max(200, "Title too long"),
+  title: z.string().trim().min(1, "Title is required").max(200, "Title too long"),
   description: z.string().max(2000, "Description too long").optional(),
   type: z.nativeEnum(HabitType),
   targetCount: z

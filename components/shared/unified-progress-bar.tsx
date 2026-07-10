@@ -15,6 +15,7 @@ interface UnifiedProgressBarProps {
   showPercentageOnHover?: boolean;
   isHighlighted?: boolean;
   interactive?: boolean;
+  onClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
 }
 
 export function UnifiedProgressBar({
@@ -28,6 +29,7 @@ export function UnifiedProgressBar({
   showPercentageOnHover = false,
   isHighlighted = false,
   interactive = false,
+  onClick,
 }: UnifiedProgressBarProps) {
   const [hoverValue, setHoverValue] = useState<number | null>(null);
   const [isHovered, setIsHovered] = useState(false);
@@ -171,7 +173,10 @@ export function UnifiedProgressBar({
         )}
         onMouseMove={interactive || showPercentageOnHover ? handleMouseMove : undefined}
         onMouseLeave={interactive || showPercentageOnHover ? handleMouseLeave : undefined}
-        onClick={interactive ? handleClick : undefined}
+        onClick={(event) => {
+          if (interactive) handleClick(event);
+          onClick?.(event);
+        }}
         onKeyDown={interactive ? handleKeyDown : undefined}
         role={interactive ? "slider" : undefined}
         tabIndex={interactive && !disabled ? 0 : undefined}

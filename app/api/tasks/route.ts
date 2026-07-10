@@ -5,13 +5,9 @@ import { prisma } from "@/lib/prisma"
 import { createTaskSchema } from "@/lib/validations/task"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueTaskTitle } from "@/lib/validations/uniqueness"
-import { addChildToTask } from "@/lib/progress-calculator"
 import { serializeTask, serializeTasks } from "@/lib/utils"
-import { getUserTimezone } from "@/lib/user-timezone"
+import { getDateKeyInTimeZone, getUserTimezone } from "@/lib/user-timezone"
 import { parseDateInputToUTCDate } from "@/lib/date-only"
-import {
-  getInheritedLabelsFromTask,
-} from "@/lib/inheritance-helpers"
 import { normalizeCursorPagination, getPaginatedWindow } from "@/lib/server/pagination/cursor"
 import { createTaskComparator } from "@/lib/server/ranking/task-ranking"
 import {
@@ -20,7 +16,16 @@ import {
   treeContainsTaskId,
   type TreeNode,
 } from "@/lib/server/tree/task-tree"
-import { attachPeriodMetrics, loadLogsByHabitIds } from "@/lib/server/habits/log-metrics"
+import {
+  attachHabitProgress,
+  attachPeriodMetrics,
+  loadLogsByHabitIds,
+} from "@/lib/server/habits/log-metrics"
+import { attachDerivedTaskProgress } from "@/lib/server/progress/apply"
+import { reconcileUserProgress } from "@/lib/server/progress/reconcile"
+import { reconcileUserLabelInheritance } from "@/lib/server/inheritance/labels"
+import { getEffectiveTaskBounds } from "@/lib/server/inheritance/bounds"
+import { reconcileUserGroupInheritance } from "@/lib/server/inheritance/groups"
 
 type TaskItem = {
   id: string
@@ -42,6 +47,7 @@ type TaskItem = {
 
 type HabitItem = {
   id: string
+  parentTaskId: string | null
   importance: number
   currentCount: number
   targetCount: number
@@ -58,11 +64,6 @@ export async function GET(request: Request) {
   try {
     const { userId } = await getAuthenticatedUser()
     const { searchParams } = new URL(request.url)
-
-    const clampProgress = (value: number): number => {
-      if (!Number.isFinite(value)) return 0
-      return Math.min(100, Math.max(0, value))
-    }
 
     // Optional filters
     const parentId = searchParams.get("parentId")
@@ -171,86 +172,9 @@ export async function GET(request: Request) {
           prisma,
           allHabits.map((habit) => habit.id)
         )
+        attachHabitProgress(allHabits, logsByHabitId)
         attachPeriodMetrics(allHabits, logsByHabitId, userTimeZone)
-
-        const habitProgressByHabitId = new Map<string, number>()
-        for (const habit of allHabits) {
-          if (habitProgressByHabitId.has(habit.id)) continue
-          const totalCount = habit.currentCount || 0
-          const targetCount = habit.targetCount || 0
-          const progress = targetCount > 0 ? (totalCount / targetCount) * 100 : 0
-          const clampedProgress = clampProgress(progress)
-          habitProgressByHabitId.set(habit.id, clampedProgress)
-          const habitWithDerivedData = habit as { currentCount?: number; progress?: number }
-          habitWithDerivedData.currentCount = totalCount
-          habitWithDerivedData.progress = clampedProgress
-        }
-
-        type TaskContribution = {
-          totalWeight: number
-          weightedProgress: number
-          progress: number
-        }
-
-        const contributionMemo = new Map<string, TaskContribution>()
-        const computeTaskContribution = (task: TaskItem): TaskContribution => {
-          const cached = contributionMemo.get(task.id)
-          if (cached) return cached
-
-          const directChildren = (taskChildrenByParentId.get(task.id) || []) as TaskItem[]
-          const linkedHabits = task.habits || []
-
-          if (directChildren.length === 0 && linkedHabits.length === 0) {
-            const leafProgress = clampProgress(task.progress || 0)
-            const leafWeight = Number(task.importance || 0)
-            const leafWeightedProgress = Math.round(leafProgress * leafWeight)
-            const leafContribution: TaskContribution = {
-              totalWeight: leafWeight,
-              weightedProgress: leafWeightedProgress,
-              progress: leafProgress,
-            }
-            contributionMemo.set(task.id, leafContribution)
-            return leafContribution
-          }
-
-          let totalWeight = 0
-          let weightedProgress = 0
-
-          for (const child of directChildren) {
-            const childContribution = computeTaskContribution(child)
-            totalWeight += childContribution.totalWeight
-            weightedProgress += childContribution.weightedProgress
-          }
-
-          for (const habit of linkedHabits) {
-            const habitWeight = Number(habit.importance || 0)
-            const habitProgress = habitProgressByHabitId.get(habit.id) || 0
-            totalWeight += habitWeight
-            weightedProgress += Math.round(habitProgress * habitWeight)
-          }
-
-          const progress = totalWeight > 0
-            ? clampProgress(Math.round((weightedProgress / totalWeight) * 100) / 100)
-            : 0
-          const contribution: TaskContribution = {
-            totalWeight,
-            weightedProgress,
-            progress,
-          }
-          contributionMemo.set(task.id, contribution)
-          return contribution
-        }
-
-        for (const task of allTasks) {
-          const directChildren = (taskChildrenByParentId.get(task.id) || []) as TaskItem[]
-          const linkedHabits = (task as TaskItem).habits || []
-          if (directChildren.length === 0 && linkedHabits.length === 0) continue
-
-          const contribution = computeTaskContribution(task as TaskItem)
-          task.total_weight = BigInt(contribution.totalWeight)
-          task.weighted_progress = BigInt(contribution.weightedProgress)
-          task.progress = contribution.progress
-        }
+        attachDerivedTaskProgress(allTasks, allHabits)
       }
 
       const { compare, getMeta } = createTaskComparator<TaskItem>()
@@ -378,6 +302,7 @@ export async function GET(request: Request) {
         prisma,
         allHabits.map((habit) => habit.id)
       )
+      attachHabitProgress(allHabits, logsByHabitId)
       attachPeriodMetrics(allHabits, logsByHabitId, userTimeZone)
     }
 
@@ -443,9 +368,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const { userId } = await getAuthenticatedUser()
+    const userTimeZone = await getUserTimezone(userId)
 
     const body = await request.json()
     const validatedData = createTaskSchema.parse(body)
+    const requestedGroupId = validatedData.groupId ?? null
+    const requestedGroupIdInput = validatedData.groupId
 
     // Validate that deadline is not in the past
     const parsedStartDate = parseDateInputToUTCDate(validatedData.startDate)
@@ -465,12 +393,16 @@ export async function POST(request: Request) {
       )
     }
 
-    if (parsedDeadline) {
-      const now = new Date()
-      const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
-      const deadline = new Date(parsedDeadline)
+    if (parsedStartDate && parsedDeadline && parsedStartDate > parsedDeadline) {
+      return NextResponse.json(
+        { error: "Task start date must be on or before its deadline" },
+        { status: 400 }
+      )
+    }
 
-      if (deadline < today) {
+    if (parsedDeadline) {
+      const deadlineKey = parsedDeadline.toISOString().slice(0, 10)
+      if (deadlineKey < getDateKeyInTimeZone(new Date(), userTimeZone)) {
         return NextResponse.json(
           { error: "Cannot create task with deadline in the past" },
           { status: 400 }
@@ -495,6 +427,7 @@ export async function POST(request: Request) {
         },
         select: {
           id: true,
+          startDate: true,
           deadline: true,
           groupId: true,
           parentId: true,
@@ -511,12 +444,18 @@ export async function POST(request: Request) {
         )
       }
 
-      // Validate: child deadline must not be after parent deadline (if both have deadlines)
-      if (parsedDeadline && parentTask.deadline) {
-        const childDeadline = new Date(parsedDeadline)
-        const parentDeadline = new Date(parentTask.deadline)
+      const parentBounds = await getEffectiveTaskBounds(parentTask.id, userId)
 
-        if (childDeadline > parentDeadline) {
+      if (parsedStartDate && parentBounds?.minStartDate && parsedStartDate < parentBounds.minStartDate) {
+        return NextResponse.json(
+          { error: "Child task start date must be on or after parent task start date" },
+          { status: 400 }
+        )
+      }
+
+      // Validate: child deadline must not be after parent deadline (if both have deadlines)
+      if (parsedDeadline && parentBounds?.maxEndDate) {
+        if (parsedDeadline > parentBounds.maxEndDate) {
           return NextResponse.json(
             { error: "Child task deadline must be on or before parent task deadline" },
             { status: 400 }
@@ -524,8 +463,39 @@ export async function POST(request: Request) {
         }
       }
 
-      // Inherit group from parent if not explicitly set
-      if (!validatedData.groupId && parentTask.groupId) {
+      if (parsedStartDate && parentBounds?.maxEndDate && parsedStartDate > parentBounds.maxEndDate) {
+        return NextResponse.json(
+          { error: "Child task start date must be on or before its ancestor deadline" },
+          { status: 400 }
+        )
+      }
+
+      if (parsedDeadline && parentBounds?.minStartDate && parsedDeadline < parentBounds.minStartDate) {
+        return NextResponse.json(
+          { error: "Child task deadline must be on or after its ancestor start date" },
+          { status: 400 }
+        )
+      }
+
+      // A child inherits its parent's effective group.  Reject an explicit
+      // conflicting group instead of silently replacing the user's input;
+      // this mirrors the update endpoint and makes create/update semantics
+      // consistent.
+      if (
+        parentTask.groupId !== null &&
+        requestedGroupIdInput !== undefined &&
+        requestedGroupIdInput !== parentTask.groupId
+      ) {
+        return NextResponse.json(
+          {
+            error: "Cannot change group. This task inherits its group from a parent task.",
+            inheritedGroupId: parentTask.groupId,
+          },
+          { status: 400 }
+        )
+      }
+
+      if (parentTask.groupId) {
         validatedData.groupId = parentTask.groupId
       }
     }
@@ -556,6 +526,7 @@ export async function POST(request: Request) {
       startDate: parsedStartDate,
       deadline: parsedDeadline,
       groupId: validatedData.groupId ?? null,
+      directGroupId: parentTask?.groupId ? null : requestedGroupId,
       parentId: validatedData.parentId ?? null,
       userId,
     }
@@ -592,7 +563,13 @@ export async function POST(request: Request) {
 
     // Add labels from labelIds if provided
     if (validatedData.labelIds && validatedData.labelIds.length > 0) {
-      for (const labelId of validatedData.labelIds) {
+      const inheritedLabelIds = new Set(
+        parentTask?.taskLabels.map((taskLabel) => taskLabel.labelId) || []
+      )
+      const directLabelIds = validatedData.labelIds.filter(
+        (labelId) => !inheritedLabelIds.has(labelId)
+      )
+      for (const labelId of directLabelIds) {
         // Verify label belongs to user
         const label = await prisma.label.findFirst({
           where: { id: labelId, userId },
@@ -610,44 +587,9 @@ export async function POST(request: Request) {
       }
     }
 
-    // If task has a parent, inherit labels from parent
-    if (task.parentId && parentTask && parentTask.taskLabels) {
-      // Get direct parent labels
-      const parentLabelIds = parentTask.taskLabels.map((tl) => tl.labelId)
-      
-      // Also get labels from parent's ancestors (if parent has a parent)
-      let ancestorLabels: string[] = []
-      if (parentTask.parentId) {
-        ancestorLabels = await getInheritedLabelsFromTask(parentTask.id, userId)
-      }
-      
-      const allInheritedLabels = [...new Set([...parentLabelIds, ...ancestorLabels])]
-      
-      // Add inherited labels to the new task
-      if (allInheritedLabels.length > 0) {
-        await Promise.all(
-          allInheritedLabels.map((labelId) =>
-            prisma.taskLabel.create({
-              data: {
-                taskId: task.id,
-                labelId,
-              },
-            }).catch(() => {
-              // Ignore if label already exists
-            })
-          )
-        )
-      }
-    }
-
-    // If this is a leaf task (no children, no habits) and has a parent, add it to parent's aggregates
-    const isLeaf = task._count.children === 0 && task._count.habits === 0
-    if (isLeaf && task.parentId) {
-      const taskProgress = (task as { progress?: number | null }).progress ?? 0
-      const weight = BigInt(task.importance)
-      const weightedProgress = BigInt(Math.round(taskProgress * task.importance))
-      await addChildToTask(task.parentId, weight, weightedProgress)
-    }
+    await reconcileUserGroupInheritance(userId)
+    await reconcileUserLabelInheritance(userId)
+    await reconcileUserProgress(userId)
 
     // Reload task with updated labels
     const updatedTask = await prisma.task.findUnique({

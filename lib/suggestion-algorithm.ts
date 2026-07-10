@@ -1,10 +1,11 @@
 import { prisma } from "./prisma"
-import { calculateHabitCompletion } from "./progress-calculator"
+import { calculateHabitProgress, sumHabitLogCounts } from "./progress-model"
 
 interface SuggestionItem {
   id: string
   type: "task" | "habit"
   title: string
+  description?: string | null
   progress: number
   expectedProgress: number
   progressGap: number
@@ -13,10 +14,15 @@ interface SuggestionItem {
   deadline?: Date | null
   endDate?: Date | null
   createdAt: Date
+  startDate?: Date | null
   // Additional context
   groupId?: string | null
   parentId?: string | null
   parentTaskId?: string | null
+}
+
+export function filterUnderAchievedItems<T extends { progressGap: number }>(items: T[]): T[] {
+  return items.filter((item) => Number.isFinite(item.progressGap) && item.progressGap > 0)
 }
 
 /**
@@ -72,10 +78,12 @@ async function getLeafTasks(userId: string): Promise<SuggestionItem[]> {
     select: {
       id: true,
       title: true,
+      description: true,
       progress: true,
       importance: true,
       deadline: true,
       createdAt: true,
+      startDate: true,
       groupId: true,
       parentId: true,
       _count: {
@@ -101,7 +109,7 @@ async function getLeafTasks(userId: string): Promise<SuggestionItem[]> {
   for (const task of leafTasks) {
     const currentProgress = task.progress || 0
     const expectedProgress = calculateExpectedProgress(
-      task.createdAt,
+      task.startDate || task.createdAt,
       task.deadline,
       now
     )
@@ -111,6 +119,7 @@ async function getLeafTasks(userId: string): Promise<SuggestionItem[]> {
       id: task.id,
       type: "task",
       title: task.title,
+      description: task.description,
       progress: currentProgress,
       expectedProgress,
       progressGap,
@@ -118,6 +127,7 @@ async function getLeafTasks(userId: string): Promise<SuggestionItem[]> {
       score: 0, // Will be calculated later
       deadline: task.deadline,
       createdAt: task.createdAt,
+      startDate: task.startDate,
       groupId: task.groupId,
       parentId: task.parentId,
     })
@@ -138,12 +148,19 @@ async function getLeafHabits(userId: string): Promise<SuggestionItem[]> {
     select: {
       id: true,
       title: true,
+      description: true,
       importance: true,
       endDate: true,
       createdAt: true,
+      startDate: true,
       targetCount: true,
       groupId: true,
       parentTaskId: true,
+      habitLogs: {
+        select: {
+          count: true,
+        },
+      },
     },
   })
 
@@ -151,7 +168,10 @@ async function getLeafHabits(userId: string): Promise<SuggestionItem[]> {
   const items: SuggestionItem[] = []
 
   for (const habit of habits) {
-    const currentProgress = await calculateHabitCompletion(habit.id)
+    const currentProgress = calculateHabitProgress(
+      sumHabitLogCounts(habit.habitLogs),
+      habit.targetCount
+    )
     
     // Exclude completed habits (progress >= 100%)
     if (currentProgress >= 100) {
@@ -159,7 +179,7 @@ async function getLeafHabits(userId: string): Promise<SuggestionItem[]> {
     }
     
     const expectedProgress = calculateExpectedProgress(
-      habit.createdAt,
+      habit.startDate || habit.createdAt,
       habit.endDate,
       now
     )
@@ -169,6 +189,7 @@ async function getLeafHabits(userId: string): Promise<SuggestionItem[]> {
       id: habit.id,
       type: "habit",
       title: habit.title,
+      description: habit.description,
       progress: currentProgress,
       expectedProgress,
       progressGap,
@@ -176,6 +197,7 @@ async function getLeafHabits(userId: string): Promise<SuggestionItem[]> {
       score: 0, // Will be calculated later
       endDate: habit.endDate,
       createdAt: habit.createdAt,
+      startDate: habit.startDate,
       groupId: habit.groupId,
       parentTaskId: habit.parentTaskId,
     })
@@ -199,7 +221,7 @@ export async function getSuggestion(
   ])
 
   // Combine and calculate scores
-  const allItems: SuggestionItem[] = [...leafTasks, ...leafHabits]
+  const allItems = filterUnderAchievedItems<SuggestionItem>([...leafTasks, ...leafHabits])
 
   if (allItems.length === 0) {
     return null
@@ -234,7 +256,7 @@ export async function getSuggestions(
     getLeafHabits(userId),
   ])
 
-  const allItems: SuggestionItem[] = [...leafTasks, ...leafHabits]
+  const allItems = filterUnderAchievedItems<SuggestionItem>([...leafTasks, ...leafHabits])
 
   if (allItems.length === 0) {
     return []

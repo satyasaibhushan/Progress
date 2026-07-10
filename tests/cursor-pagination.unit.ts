@@ -21,6 +21,13 @@ function runCursorPaginationTests(): void {
   assertEqual(fallbackPagination.limit, 20, "invalid limit falls back")
   assertEqual(fallbackPagination.cursor, 0, "invalid cursor falls back")
 
+  const partialPagination = normalizeCursorPagination({
+    limitParam: "12items",
+    cursorParam: "4.5",
+  })
+  assertEqual(partialPagination.limit, 20, "partially numeric limit falls back")
+  assertEqual(partialPagination.cursor, 0, "non-integer cursor falls back")
+
   const items = Array.from({ length: 95 }, (_, index) => ({ id: index }))
 
   const highlightedPage = getPaginatedWindow(items, 20, 0, {

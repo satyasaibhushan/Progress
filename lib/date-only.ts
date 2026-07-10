@@ -1,7 +1,13 @@
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/
 
 export function isDateOnlyString(value: string): boolean {
-  return DATE_ONLY_REGEX.test(value)
+  if (!DATE_ONLY_REGEX.test(value)) return false
+
+  const [year, month, day] = value.split("-").map(Number)
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  return parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
 }
 
 export function parseDateInputToUTCDate(value: string | null | undefined): Date | null {
@@ -10,7 +16,8 @@ export function parseDateInputToUTCDate(value: string | null | undefined): Date 
   const trimmed = value.trim()
   if (!trimmed) return null
 
-  if (isDateOnlyString(trimmed)) {
+  if (DATE_ONLY_REGEX.test(trimmed)) {
+    if (!isDateOnlyString(trimmed)) return null
     const [year, month, day] = trimmed.split("-").map(Number)
     return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
   }
@@ -37,4 +44,3 @@ export function toDateOnlyString(value: Date | string | null | undefined): strin
   if (Number.isNaN(parsed.getTime())) return null
   return `${parsed.getUTCFullYear()}-${String(parsed.getUTCMonth() + 1).padStart(2, "0")}-${String(parsed.getUTCDate()).padStart(2, "0")}`
 }
-

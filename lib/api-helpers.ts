@@ -21,27 +21,6 @@ export async function getAuthenticatedUser() {
 }
 
 /**
- * Development only: Get user ID without auth check
- * WARNING: Only use in development for API testing!
- */
-export async function getDevUser() {
-	if (process.env.NODE_ENV !== "development") {
-		throw new Error("DEV_ONLY");
-	}
-
-	const session = await auth();
-
-	if (!session?.user?.id) {
-		throw new UnauthorizedError("Please login first via browser");
-	}
-
-	return {
-		userId: session.user.id,
-		user: session.user,
-	};
-}
-
-/**
  * Handle API errors consistently
  */
 export function handleApiError(error: unknown) {

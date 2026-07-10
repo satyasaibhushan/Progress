@@ -1,8 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-BASE_URL="http://localhost:3000"
-SESSION_TOKEN="2653f9b0-85a0-443e-8aaf-605f79abc9b9"
-COOKIE="authjs.session-token=${SESSION_TOKEN}"
+BASE_URL="${BASE_URL:-http://localhost:3000}"
+: "${SESSION_COOKIE:?Set SESSION_COOKIE to the full auth cookie, for example authjs.session-token=...}"
+COOKIE="${SESSION_COOKIE}"
+
+if [ "${ALLOW_DESTRUCTIVE_CLEANUP:-}" != "true" ]; then
+    echo "Refusing to delete data. Set ALLOW_DESTRUCTIVE_CLEANUP=true for a disposable test account."
+    exit 1
+fi
 
 echo "========================================="
 echo "Cleaning Test Data"

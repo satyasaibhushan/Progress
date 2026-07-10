@@ -12,7 +12,7 @@ A full-stack productivity application built with Next.js for managing tasks, hab
 - 🔍 Global search across all tasks
 
 ### Habit Tracking
-- 📆 Daily, weekly, and monthly habit types
+- 📆 Daily, weekly, monthly, and yearly habit types
 - 🔥 Streak tracking
 - 📊 Visual calendar view with progress indicators
 - 🎯 Target count and current count tracking
@@ -34,7 +34,7 @@ A full-stack productivity application built with Next.js for managing tasks, hab
 ## 🛠️ Tech Stack
 
 ### Frontend
-- **Framework:** Next.js 16.1 (App Router)
+- **Framework:** Next.js 16.2 (App Router)
 - **Language:** TypeScript
 - **Styling:** Tailwind CSS 4.0
 - **UI Components:** Radix UI, Shadcn/ui
@@ -73,7 +73,7 @@ A full-stack productivity application built with Next.js for managing tasks, hab
 
 2. **Install dependencies**
    ```bash
-   npm install
+   npm ci
    ```
 
 3. **Set up environment variables**
@@ -93,14 +93,14 @@ A full-stack productivity application built with Next.js for managing tasks, hab
 4. **Set up database**
    ```bash
    # Using Docker (recommended for development)
-   docker-compose up -d
+   docker compose up -d
 
    # Or install PostgreSQL manually
    ```
 
 5. **Run migrations**
    ```bash
-   npx prisma migrate dev
+   npm run db:deploy
    ```
 
 6. **Start development server**
@@ -166,10 +166,15 @@ npm run dev          # Start development server
 npm run build        # Build for production
 npm run start        # Start production server
 npm run lint         # Run ESLint
+npm run typecheck    # Run TypeScript checks
+npm test             # Run unit tests
+npm run test:integration # Verify database invariants (requires DATABASE_URL)
+npm run verify       # Run tests, lint, and type checks
+npm run db:reconcile # Repair cached habit/task progress from source data
 
 # Database
-npx prisma migrate dev        # Run migrations (dev)
-npx prisma migrate deploy     # Run migrations (prod)
+npm run db:deploy             # Run committed migrations (prod)
+npx prisma migrate dev        # Create and run migrations (dev)
 npx prisma studio             # Open Prisma Studio
 npx prisma generate           # Generate Prisma Client
 
@@ -187,12 +192,33 @@ npx prisma generate           # Generate Prisma Client
 Key models:
 - **User:** User accounts (Google OAuth)
 - **Task:** Hierarchical task structure with progress tracking
-- **Habit:** Habits with daily/weekly/monthly tracking
+- **Habit:** Habits with daily/weekly/monthly/yearly tracking
 - **HabitLog:** Individual habit completion logs
 - **Group:** Organization groups for tasks and habits
 - **Label:** Color-coded labels for categorization
 
 See full schema: [prisma/schema.prisma](./prisma/schema.prisma)
 
----
+### Data consistency
 
+- Habit logs are the source of truth for habit counts and progress. A database trigger keeps the cached `currentCount` value synchronized.
+- A task's progress is derived from its descendant leaf tasks and directly linked habits. Parent caches are reconciled after every hierarchy, importance, progress, or habit-log change.
+- Labels and groups inherited through a task hierarchy retain provenance, so reparenting or detaching an item removes only inherited organization and preserves direct choices.
+- A task or habit cannot escape an ancestor's date bounds. Reconciliation repairs older rows after migrations.
+
+After upgrading an existing database, deploy migrations and run one reconciliation pass:
+
+```bash
+npm run db:deploy
+npm run db:reconcile
+```
+
+The API smoke-test scripts require an explicit authenticated cookie and never contain a reusable token:
+
+```bash
+SESSION_COOKIE='authjs.session-token=…' ./tests/test-apis.sh
+```
+
+The cleanup helper additionally requires `ALLOW_DESTRUCTIVE_CLEANUP=true`.
+
+---

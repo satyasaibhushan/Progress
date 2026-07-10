@@ -24,7 +24,7 @@ if [ "$HTTP_CODE" != "201" ]; then
     echo "Response: $BODY"
 else
     echo "✅ Created DAILY habit: $DAILY_HABIT_ID"
-    echo "Response: $BODY" | jq '.'
+    printf '%s\n' "$BODY" | jq '.'
 fi
 echo ""
 
@@ -45,13 +45,13 @@ if [ "$HTTP_CODE" != "201" ]; then
 else
     echo "✅ Created DAILY habit with maxCountPerDay=5: $N_PER_DAY_HABIT_ID"
     echo "   maxCountPerDay: $N_PER_DAY_MCPD, targetCount: $N_PER_DAY_TARGET"
-    echo "Response: $BODY" | jq '.'
+    printf '%s\n' "$BODY" | jq '.'
 fi
 echo ""
 
 # Test 2: targetCount is required (auto-calc removed)
 echo "Test 2: POST /api/habits (Missing targetCount should fail)"
-END_DATE=$(date -u -v+30d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "+30 days" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "2024-12-31T23:59:59Z")
+END_DATE=$(node -e 'console.log(new Date(Date.now() + 30 * 86400000).toISOString())')
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
     -d "{\"title\":\"Daily Reading ${TIMESTAMP}\",\"description\":\"Read 30 minutes daily\",\"type\":\"DAILY\",\"endDate\":\"${END_DATE}\",\"importance\":60}" \
     "${BASE_URL}/api/habits")
@@ -81,7 +81,7 @@ if [ "$HTTP_CODE" != "201" ]; then
 else
     echo "✅ Created WEEKLY habit: $WEEKLY_HABIT_ID"
     echo "Active days: $(echo "$BODY" | jq -r '.data.activeDays // []')"
-    echo "Response: $BODY" | jq '.'
+    printf '%s\n' "$BODY" | jq '.'
 fi
 echo ""
 
@@ -118,7 +118,7 @@ if [ "$HTTP_CODE" != "201" ]; then
 else
     echo "✅ Created WEEKLY habit with countPerPeriod=3: $N_PER_WEEK_HABIT_ID"
     echo "   countPerPeriod: $N_PER_WEEK_CPP, targetCount: $N_PER_WEEK_TARGET (should be ~12 for 4 weeks × 3)"
-    echo "Response: $BODY" | jq '.'
+    printf '%s\n' "$BODY" | jq '.'
 fi
 echo ""
 
@@ -136,7 +136,7 @@ if [ "$HTTP_CODE" != "201" ]; then
     echo "Response: $BODY"
 else
     echo "✅ Created MONTHLY habit: $MONTHLY_HABIT_ID"
-    echo "Response: $BODY" | jq '.'
+    printf '%s\n' "$BODY" | jq '.'
 fi
 echo ""
 
@@ -157,7 +157,7 @@ if [ "$HTTP_CODE" != "201" ]; then
 else
     echo "✅ Created MONTHLY habit with countPerPeriod=2: $N_PER_MONTH_HABIT_ID"
     echo "   countPerPeriod: $N_PER_MONTH_CPP, targetCount: $N_PER_MONTH_TARGET (should be ~6-8 for 3-4 months × 2)"
-    echo "Response: $BODY" | jq '.'
+    printf '%s\n' "$BODY" | jq '.'
 fi
 echo ""
 
@@ -295,7 +295,7 @@ fi
 # Test 11: Log WEEKLY habit on different days
 if [ -n "$WEEKLY_HABIT_ID" ]; then
     echo "Test 11: POST /api/habits/${WEEKLY_HABIT_ID}/log (Log WEEKLY habit - Monday)"
-    MONDAY_DATE=$(date -u +"%Y-%m-%dT00:00:00Z")
+    MONDAY_DATE=$(node -e 'console.log(new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10))')
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
         -d "{\"count\":1,\"date\":\"${MONDAY_DATE}\"}" \
         "${BASE_URL}/api/habits/${WEEKLY_HABIT_ID}/log")
@@ -311,7 +311,7 @@ if [ -n "$WEEKLY_HABIT_ID" ]; then
     echo ""
 
     echo "Test 12: POST /api/habits/${WEEKLY_HABIT_ID}/log (Log WEEKLY habit - Wednesday)"
-    WEDNESDAY_DATE=$(date -u -v+2d +"%Y-%m-%dT00:00:00Z" 2>/dev/null || date -u -d "+2 days" +"%Y-%m-%dT00:00:00Z" 2>/dev/null || echo "$MONDAY_DATE")
+    WEDNESDAY_DATE=$(node -e 'console.log(new Date(Date.now() - 86400000).toISOString().slice(0, 10))')
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
         -d "{\"count\":1,\"date\":\"${WEDNESDAY_DATE}\"}" \
         "${BASE_URL}/api/habits/${WEEKLY_HABIT_ID}/log")
@@ -334,7 +334,7 @@ if [ -n "$WEEKLY_HABIT_ID" ]; then
     echo "Status: $HTTP_CODE"
     if [ "$HTTP_CODE" == "200" ]; then
         echo "✅ Retrieved logs: $LOG_COUNT log(s) found"
-        echo "Logs: $BODY" | jq '.data'
+        printf '%s\n' "$BODY" | jq '.data'
     else
         echo "❌ ERROR: Expected 200, got $HTTP_CODE"
         echo "Response: $BODY"

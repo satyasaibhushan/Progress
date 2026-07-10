@@ -44,23 +44,33 @@ export function SearchBar() {
     }
 
     setIsSearching(true);
+    const controller = new AbortController();
 
     debounceTimerRef.current = setTimeout(async () => {
       try {
-        const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`Search failed with status ${response.status}`);
         const data = await response.json();
         setResults(data.data || []);
         setShowResults(true);
         setSelectedIndex(-1);
       } catch (error) {
+        if (controller.signal.aborted) return;
         console.error("Search error:", error);
         setResults([]);
       } finally {
-        setIsSearching(false);
+        // An aborted request belongs to an older query. Do not let its
+        // cleanup hide the loading indicator for the newer request.
+        if (!controller.signal.aborted) {
+          setIsSearching(false);
+        }
       }
     }, 300);
 
     return () => {
+      controller.abort();
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
@@ -96,7 +106,7 @@ export function SearchBar() {
         path = "/habits";
         break;
       case "group":
-        path = "/groups";
+        path = `/groups/${result.id}`;
         break;
       case "label":
         path = "/labels";
@@ -105,7 +115,7 @@ export function SearchBar() {
         return;
     }
 
-    router.push(`${path}?highlight=${result.id}`);
+    router.push(result.type === "group" ? path : `${path}?highlight=${result.id}`);
     setQuery("");
     setResults([]);
     setShowResults(false);

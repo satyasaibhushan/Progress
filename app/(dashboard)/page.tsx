@@ -8,11 +8,9 @@ import { getGroups } from "@/lib/api/groups";
 import { getLabels } from "@/lib/api/labels";
 import { Task, Habit, Group, Label } from "@/types";
 import { OverviewStats } from "@/components/analytics/overview-stats";
-import { ProgressChart } from "@/components/analytics/progress-chart";
 import { GroupBreakdown } from "@/components/analytics/group-breakdown";
 import { LabelStats } from "@/components/analytics/label-stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImportanceIndicator } from "@/components/shared/importance-indicator";
 import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 import { LazyList } from "@/components/shared/lazy-list";
@@ -21,52 +19,15 @@ import { parseISO } from "date-fns";
 import { useHeaderAction } from "./layout";
 import { isPending } from "@/lib/date-helpers";
 import { useDayRollover } from "@/lib/use-day-rollover";
+import { getAllLeafTasks, getHabitProgress } from "@/lib/item-metrics";
 
-type TimePeriod = "week" | "month" | "quarter" | "year";
-
-// Helper to get all leaf tasks
-function getAllLeafTasks(tasks: Task[]): Task[] {
-  const leafTasks: Task[] = [];
-  const traverse = (taskList: Task[]) => {
-    taskList.forEach((task) => {
-      if (task.children && task.children.length > 0) {
-        traverse(task.children);
-      } else {
-        leafTasks.push(task);
-      }
-    });
-  };
-  traverse(tasks);
-  return leafTasks;
-}
-
-function clampProgress(value: number | null | undefined): number {
-  if (typeof value !== "number" || Number.isNaN(value)) return 0;
-  return Math.min(100, Math.max(0, value));
-}
-
-function getHabitProgress(habit: Habit): number {
-  const totalCount = habit.habitLogs && habit.habitLogs.length > 0
-    ? habit.habitLogs.reduce((sum, log) => sum + log.count, 0)
-    : habit.currentCount || 0;
-  if (!habit.targetCount) return 0;
-  return clampProgress(Math.round((totalCount / habit.targetCount) * 100));
-}
-
-function getTrendLabel(period: TimePeriod, index: number): string {
-  if (period === "week") {
-    return ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][index % 7];
-  }
-  if (period === "month") {
-    return `Day ${index + 1}`;
-  }
-  return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][index % 12];
+function flattenTasks(tasks: Task[]): Task[] {
+  return tasks.flatMap((task) => [task, ...flattenTasks(task.children || [])]);
 }
 
 export default function DashboardPage() {
   const router = useRouter();
   const { setHeaderRightAction } = useHeaderAction();
-  const [timePeriod, setTimePeriod] = useState<TimePeriod>("week");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -101,26 +62,9 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Set time period selector in header
   useEffect(() => {
-    setHeaderRightAction(
-      <Select value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
-        <SelectTrigger className="w-[180px]">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="week">This Week</SelectItem>
-          <SelectItem value="month">This Month</SelectItem>
-          <SelectItem value="quarter">This Quarter</SelectItem>
-          <SelectItem value="year">This Year</SelectItem>
-        </SelectContent>
-      </Select>
-    );
-    
-    return () => {
-      setHeaderRightAction(null);
-    };
-  }, [timePeriod, setHeaderRightAction]);
+    setHeaderRightAction(null);
+  }, [setHeaderRightAction]);
 
   useEffect(() => {
     void loadDashboardData(true);
@@ -133,6 +77,7 @@ export default function DashboardPage() {
   }, [dayKey, loadDashboardData]);
 
   const allLeafTasks = useMemo(() => getAllLeafTasks(tasks), [tasks]);
+  const allTasks = useMemo(() => flattenTasks(tasks), [tasks]);
 
   // Calculate stats
   const totalTasks = allLeafTasks.length;
@@ -149,43 +94,28 @@ export default function DashboardPage() {
   // Tasks due this week
   const weekEnd = new Date();
   weekEnd.setDate(weekEnd.getDate() + 7);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   const tasksThisWeek = allLeafTasks.filter((task) => {
-    if (!task.deadline) return false;
+    if (!task.deadline || task.progress >= 100) return false;
     const deadline = parseISO(task.deadline);
     if (Number.isNaN(deadline.getTime())) return false;
-    return deadline <= weekEnd;
+    return deadline >= today && deadline <= weekEnd;
+  }).length;
+  const overdueTasks = allLeafTasks.filter((task) => {
+    if (!task.deadline || task.progress >= 100) return false;
+    const deadline = parseISO(task.deadline);
+    return !Number.isNaN(deadline.getTime()) && deadline < today;
   }).length;
 
   // Habits stats
-  const activeHabits = habits.length;
-  const habitsOnTrack = habits.filter((h) => {
-    if (!h.currentCount || !h.targetCount) return false;
-    const progress = (h.currentCount / h.targetCount) * 100;
-    return progress >= 50;
-  }).length;
+  const activeHabitItems = habits.filter((habit) => (
+    !isPending(habit.startDate) && getHabitProgress(habit) < 100
+  ));
+  const activeHabits = activeHabitItems.length;
+  const habitsOnTrack = activeHabitItems.filter((habit) => habit.currentPeriodComplete).length;
   const habitCompletionRate =
     activeHabits > 0 ? Math.round((habitsOnTrack / activeHabits) * 100) : 0;
-
-  const trendData = useMemo(() => {
-    const points = timePeriod === "week" ? 7 : timePeriod === "month" ? 30 : 12;
-    const taskBaseProgress = clampProgress(avgProgress);
-    const habitBaseProgress = clampProgress(
-      habits.length > 0
-        ? Math.round(
-            habits.reduce((sum, habit) => sum + getHabitProgress(habit), 0) / habits.length
-          )
-        : 0
-    );
-
-    return Array.from({ length: points }, (_, index) => {
-      const progression = (index + 1) / points;
-      return {
-        name: getTrendLabel(timePeriod, index),
-        tasks: Math.round(taskBaseProgress * progression),
-        habits: Math.round(habitBaseProgress * progression),
-      };
-    });
-  }, [timePeriod, avgProgress, habits]);
 
   useEffect(() => {
     if (!selectedLabel && labels.length > 0) {
@@ -239,7 +169,7 @@ export default function DashboardPage() {
       // Check if any ancestor has the label (inheritance)
       let currentTask = t;
       while (currentTask.parentId) {
-        const parentTask = tasks.find((task) => task.id === currentTask.parentId);
+        const parentTask = allTasks.find((task) => task.id === currentTask.parentId);
         if (!parentTask) break;
         if (parentTask.labels?.some((l) => l.id === selectedLabel.id)) return true;
         currentTask = parentTask;
@@ -253,19 +183,21 @@ export default function DashboardPage() {
       if (h.labels?.some((l) => l.id === selectedLabel.id)) return true;
       // Check if parent task (or ancestor) has the label
       if (h.parentTaskId) {
-        let currentTask: Task | undefined = tasks.find((t) => t.id === h.parentTaskId);
+        let currentTask: Task | undefined = allTasks.find((t) => t.id === h.parentTaskId);
         while (currentTask) {
           if (currentTask.labels?.some((l) => l.id === selectedLabel.id)) return true;
           if (!currentTask.parentId) break;
           const parentId = currentTask.parentId;
-          currentTask = parentId ? tasks.find((t) => t.id === parentId) : undefined;
+          currentTask = parentId ? allTasks.find((t) => t.id === parentId) : undefined;
         }
       }
       return false;
     });
 
     const totalItems = tasksWithLabel.length + habitsWithLabel.length;
-    const completedItems = tasksWithLabel.filter((t) => t.progress === 100).length;
+    const completedItems =
+      tasksWithLabel.filter((t) => t.progress >= 100).length +
+      habitsWithLabel.filter((habit) => getHabitProgress(habit) >= 100).length;
     const avgTaskProgress =
       tasksWithLabel.length > 0
         ? Math.round(
@@ -276,11 +208,8 @@ export default function DashboardPage() {
     const avgHabitProgress =
       habitsWithLabel.length > 0
         ? Math.round(
-            habitsWithLabel.reduce(
-              (acc, h) =>
-                acc + ((h.currentCount || 0) / (h.targetCount || 1)) * 100,
-              0
-            ) / habitsWithLabel.length
+            habitsWithLabel.reduce((acc, habit) => acc + getHabitProgress(habit), 0) /
+              habitsWithLabel.length
           )
         : 0;
 
@@ -292,7 +221,7 @@ export default function DashboardPage() {
       avgTaskProgress,
       avgHabitProgress,
     };
-  }, [selectedLabel, allLeafTasks, habits, tasks]);
+  }, [selectedLabel, allLeafTasks, habits, allTasks]);
 
   if (loading) {
     return (
@@ -311,13 +240,11 @@ export default function DashboardPage() {
         totalTasks={totalTasks}
         avgProgress={avgProgress}
         tasksThisWeek={tasksThisWeek}
+        overdueTasks={overdueTasks}
         habitCompletionRate={habitCompletionRate}
         habitsOnTrack={habitsOnTrack}
         activeHabits={activeHabits}
       />
-
-      {/* Progress Trend Chart */}
-      <ProgressChart data={trendData} />
 
       {/* Two Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

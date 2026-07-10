@@ -11,19 +11,25 @@ export type CursorPagination = {
   cursor: number
 }
 
+export function parseStrictIntegerParam(value: string | null): number | null {
+  if (value === null || !/^\d+$/.test(value)) return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) ? parsed : null
+}
+
 export function normalizeCursorPagination(input: CursorPaginationInput): CursorPagination {
   const minLimit = input.minLimit ?? 1
   const maxLimit = input.maxLimit ?? 100
   const defaultLimit = input.defaultLimit ?? 20
 
-  const parsedLimit = Number.parseInt(input.limitParam ?? String(defaultLimit), 10)
-  const parsedCursor = Number.parseInt(input.cursorParam ?? "0", 10)
+  const parsedLimit = parseStrictIntegerParam(input.limitParam ?? String(defaultLimit))
+  const parsedCursor = parseStrictIntegerParam(input.cursorParam ?? "0")
 
-  const limit = Number.isFinite(parsedLimit)
+  const limit = parsedLimit !== null
     ? Math.min(Math.max(parsedLimit, minLimit), maxLimit)
     : defaultLimit
 
-  const cursor = Number.isFinite(parsedCursor)
+  const cursor = parsedCursor !== null
     ? Math.max(parsedCursor, 0)
     : 0
 

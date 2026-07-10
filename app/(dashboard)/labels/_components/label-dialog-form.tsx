@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Tag } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -36,7 +36,7 @@ export function LabelDialogForm({
     handleSubmit,
     formState: { errors },
     setValue,
-    watch,
+    control,
     reset,
   } = useForm<LabelFormValues>({
     resolver: zodResolver(labelFormSchema),
@@ -56,8 +56,8 @@ export function LabelDialogForm({
     );
   }, [open, initialValues, reset]);
 
-  const selectedColor = watch("color");
-  const watchedName = watch("name");
+  const selectedColor = useWatch({ control, name: "color" });
+  const watchedName = useWatch({ control, name: "name" });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

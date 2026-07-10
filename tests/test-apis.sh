@@ -1,8 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-BASE_URL="http://localhost:3000"
-SESSION_TOKEN="2653f9b0-85a0-443e-8aaf-605f79abc9b9"
-COOKIE="authjs.session-token=${SESSION_TOKEN}"
+BASE_URL="${BASE_URL:-http://localhost:3000}"
+: "${SESSION_COOKIE:?Set SESSION_COOKIE to the full auth cookie, for example authjs.session-token=...}"
+COOKIE="${SESSION_COOKIE}"
 
 echo "========================================="
 echo "Testing Progress App APIs"
@@ -35,6 +36,7 @@ echo ""
 
 echo "2. POST /api/groups (Create)"
 TIMESTAMP=$(date +%s)
+FUTURE_DATE=$(node -e 'console.log(new Date(Date.now() + 30 * 86400000).toISOString())')
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
     -d "{\"name\":\"Work ${TIMESTAMP}\",\"description\":\"Work related tasks\",\"color\":\"#3b82f6\"}" \
     "${BASE_URL}/api/groups")
@@ -76,7 +78,7 @@ echo ""
 
 echo "5. POST /api/tasks (Create Root Task)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
-    -d "{\"title\":\"Test Goal ${TIMESTAMP}\",\"description\":\"Test goal description\",\"importance\":90,\"progress\":0,\"deadline\":\"2024-06-30T23:59:59Z\",\"groupId\":\"${GROUP_ID}\",\"parentId\":null}" \
+    -d "{\"title\":\"Test Goal ${TIMESTAMP}\",\"description\":\"Test goal description\",\"importance\":90,\"progress\":0,\"deadline\":\"${FUTURE_DATE}\",\"groupId\":\"${GROUP_ID}\",\"parentId\":null}" \
     "${BASE_URL}/api/tasks")
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
@@ -139,7 +141,7 @@ fi
 if [ -f "$(dirname "$0")/test-habits.sh" ]; then
     source "$(dirname "$0")/test-habits.sh"
     # Set HABIT_ID for label tests (use first created habit)
-    if [ -z "$HABIT_ID" ] && [ -n "$DAILY_HABIT_ID" ]; then
+    if [ -z "${HABIT_ID:-}" ] && [ -n "${DAILY_HABIT_ID:-}" ]; then
         HABIT_ID="$DAILY_HABIT_ID"
     fi
 else

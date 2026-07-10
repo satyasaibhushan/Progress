@@ -17,9 +17,10 @@ echo ""
 
 # Create a root task (goal) with deadline
 echo "Setup 1: POST /api/tasks (Create Root Task with deadline)"
-FUTURE_DATE=$(date -u -v+30d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "+30 days" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "2024-12-31T23:59:59Z")
+FUTURE_DATE=$(node -e 'console.log(new Date(Date.now() + 30 * 86400000).toISOString())')
+ROOT_START_DATE=$(node -e 'console.log(new Date(Date.now() - 20 * 86400000).toISOString())')
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
-    -d "{\"title\":\"Goal for Suggestions ${TIMESTAMP}\",\"description\":\"Test goal\",\"importance\":90,\"progress\":0,\"deadline\":\"${FUTURE_DATE}\",\"groupId\":\"${GROUP_ID}\",\"parentId\":null}" \
+    -d "{\"title\":\"Goal for Suggestions ${TIMESTAMP}\",\"description\":\"Test goal\",\"importance\":90,\"progress\":0,\"startDate\":\"${ROOT_START_DATE}\",\"deadline\":\"${FUTURE_DATE}\",\"groupId\":\"${GROUP_ID}\",\"parentId\":null}" \
     "${BASE_URL}/api/tasks")
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
@@ -39,9 +40,10 @@ fi
 
 # Create child task with deadline (under-achieved - low progress)
 echo "Setup 2: POST /api/tasks (Create under-achieved child task)"
-CHILD_DEADLINE=$(date -u -v+15d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "+15 days" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "2024-12-15T23:59:59Z")
+CHILD_DEADLINE=$(node -e 'console.log(new Date(Date.now() + 15 * 86400000).toISOString())')
+ITEM_START_DATE=$(node -e 'console.log(new Date(Date.now() - 10 * 86400000).toISOString())')
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
-    -d "{\"title\":\"Under-achieved Task ${TIMESTAMP}\",\"description\":\"Low progress task\",\"importance\":80,\"progress\":20,\"deadline\":\"${CHILD_DEADLINE}\",\"parentId\":\"${GOAL_TASK_ID}\"}" \
+    -d "{\"title\":\"Under-achieved Task ${TIMESTAMP}\",\"description\":\"Low progress task\",\"importance\":80,\"progress\":20,\"startDate\":\"${ITEM_START_DATE}\",\"deadline\":\"${CHILD_DEADLINE}\",\"parentId\":\"${GOAL_TASK_ID}\"}" \
     "${BASE_URL}/api/tasks")
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
@@ -57,7 +59,7 @@ echo ""
 # Create child task with deadline (well-achieved - high progress)
 echo "Setup 3: POST /api/tasks (Create well-achieved child task)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
-    -d "{\"title\":\"Well-achieved Task ${TIMESTAMP}\",\"description\":\"High progress task\",\"importance\":70,\"progress\":85,\"deadline\":\"${CHILD_DEADLINE}\",\"parentId\":\"${GOAL_TASK_ID}\"}" \
+    -d "{\"title\":\"Well-achieved Task ${TIMESTAMP}\",\"description\":\"High progress task\",\"importance\":70,\"progress\":85,\"startDate\":\"${ITEM_START_DATE}\",\"deadline\":\"${CHILD_DEADLINE}\",\"parentId\":\"${GOAL_TASK_ID}\"}" \
     "${BASE_URL}/api/tasks")
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
@@ -73,7 +75,7 @@ echo ""
 # Create completed task (should be excluded from suggestions)
 echo "Setup 4: POST /api/tasks (Create completed task - should be excluded)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
-    -d "{\"title\":\"Completed Task ${TIMESTAMP}\",\"description\":\"100% complete\",\"importance\":60,\"progress\":100,\"deadline\":\"${CHILD_DEADLINE}\",\"parentId\":\"${GOAL_TASK_ID}\"}" \
+    -d "{\"title\":\"Completed Task ${TIMESTAMP}\",\"description\":\"100% complete\",\"importance\":60,\"progress\":100,\"startDate\":\"${ITEM_START_DATE}\",\"deadline\":\"${CHILD_DEADLINE}\",\"parentId\":\"${GOAL_TASK_ID}\"}" \
     "${BASE_URL}/api/tasks")
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
@@ -88,9 +90,9 @@ echo ""
 
 # Create habit with endDate (under-achieved)
 echo "Setup 5: POST /api/habits (Create under-achieved habit)"
-HABIT_END_DATE=$(date -u -v+20d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "+20 days" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "2024-12-20T23:59:59Z")
+HABIT_END_DATE=$(node -e 'console.log(new Date(Date.now() + 20 * 86400000).toISOString())')
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
-    -d "{\"title\":\"Under-achieved Habit ${TIMESTAMP}\",\"description\":\"Low progress habit\",\"type\":\"DAILY\",\"targetCount\":20,\"importance\":75,\"endDate\":\"${HABIT_END_DATE}\"}" \
+    -d "{\"title\":\"Under-achieved Habit ${TIMESTAMP}\",\"description\":\"Low progress habit\",\"type\":\"DAILY\",\"targetCount\":20,\"importance\":75,\"startDate\":\"${ITEM_START_DATE}\",\"endDate\":\"${HABIT_END_DATE}\"}" \
     "${BASE_URL}/api/habits")
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
@@ -102,8 +104,9 @@ else
     echo "✅ Created under-achieved habit: $UNDER_HABIT_ID"
     # Log it a few times to create some progress but still under-achieved
     for i in {1..3}; do
+        LOG_DATE=$(node -e 'console.log(new Date(Date.now() - Number(process.argv[1]) * 86400000).toISOString().slice(0, 10))' "$i")
         curl -s -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
-            -d '{"count":1}' "${BASE_URL}/api/habits/${UNDER_HABIT_ID}/log" > /dev/null
+            -d "{\"date\":\"${LOG_DATE}\",\"count\":1}" "${BASE_URL}/api/habits/${UNDER_HABIT_ID}/log" > /dev/null
     done
     echo "   Logged 3 times to create progress"
 fi
@@ -112,7 +115,7 @@ echo ""
 # Create habit with endDate (well-achieved)
 echo "Setup 6: POST /api/habits (Create well-achieved habit)"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
-    -d "{\"title\":\"Well-achieved Habit ${TIMESTAMP}\",\"description\":\"High progress habit\",\"type\":\"DAILY\",\"targetCount\":10,\"importance\":65,\"endDate\":\"${HABIT_END_DATE}\"}" \
+    -d "{\"title\":\"Well-achieved Habit ${TIMESTAMP}\",\"description\":\"High progress habit\",\"type\":\"DAILY\",\"targetCount\":10,\"importance\":65,\"startDate\":\"${ITEM_START_DATE}\",\"endDate\":\"${HABIT_END_DATE}\"}" \
     "${BASE_URL}/api/habits")
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
@@ -124,8 +127,9 @@ else
     echo "✅ Created well-achieved habit: $WELL_HABIT_ID"
     # Log it many times to create high progress
     for i in {1..8}; do
+        LOG_DATE=$(node -e 'console.log(new Date(Date.now() - Number(process.argv[1]) * 86400000).toISOString().slice(0, 10))' "$i")
         curl -s -X POST -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
-            -d '{"count":1}' "${BASE_URL}/api/habits/${WELL_HABIT_ID}/log" > /dev/null
+            -d "{\"date\":\"${LOG_DATE}\",\"count\":1}" "${BASE_URL}/api/habits/${WELL_HABIT_ID}/log" > /dev/null
     done
     echo "   Logged 8 times to create high progress"
 fi
@@ -148,6 +152,17 @@ fi
 echo ""
 
 echo "=== SUGGESTION API TESTS ==="
+echo ""
+
+# Test 0: Reject malformed limits
+echo "Test 0: GET /api/suggestions?limit=bad (Validation)"
+RESPONSE=$(curl -s -w "\n%{http_code}" -H "Cookie: ${COOKIE}" "${BASE_URL}/api/suggestions?limit=bad")
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+if [ "$HTTP_CODE" != "400" ]; then
+    echo "❌ ERROR: Expected 400, got $HTTP_CODE"
+    exit 1
+fi
+echo "✅ Invalid limit correctly rejected"
 echo ""
 
 # Test 1: Get single suggestion (default)
@@ -330,7 +345,7 @@ for i in {1..5}; do
     SCORES="$SCORES $SCORE"
 done
 
-UNIQUE_SCORES=$(echo "$SCORES" | tr ' ' '\n' | sort -u | wc -l | tr -d ' ')
+UNIQUE_SCORES=$(echo "$SCORES" | tr ' ' '\n' | grep -v '^$' | sort -u | wc -l | tr -d ' ')
 if [ "$UNIQUE_SCORES" -gt 1 ]; then
     echo "✅ Randomization working: Got $UNIQUE_SCORES unique scores out of 5 calls"
     echo "   Scores: $SCORES"

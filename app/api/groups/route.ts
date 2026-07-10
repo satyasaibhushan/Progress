@@ -6,6 +6,8 @@ import { createGroupSchema } from "@/lib/validations/group"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueGroupName } from "@/lib/validations/uniqueness"
 import { buildTaskGraph, hasGroupInTaskAncestry } from "@/lib/server/labels-groups/membership"
+import { deriveProgressModel } from "@/lib/progress-model"
+import { parseStrictIntegerParam } from "@/lib/server/pagination/cursor"
 
 // GET /api/groups - Get all groups for the authenticated user with optional limit
 export async function GET(request: Request) {
@@ -15,19 +17,18 @@ export async function GET(request: Request) {
     const limitParam = searchParams.get("limit")
     let limit: number | undefined
     if (limitParam !== null) {
-      const parsedLimit = Number.parseInt(limitParam, 10)
-      if (!Number.isFinite(parsedLimit) || parsedLimit <= 0) {
+      const parsedLimit = parseStrictIntegerParam(limitParam)
+      if (parsedLimit === null || parsedLimit <= 0) {
         return NextResponse.json(
           { error: "Invalid limit. Expected a positive integer." },
           { status: 400 }
         )
       }
-      limit = parsedLimit
+      limit = Math.min(parsedLimit, 100)
     }
 
     const groups = await prisma.group.findMany({
       where: { userId },
-      take: limit,
       include: {
         _count: {
           select: {
@@ -79,6 +80,11 @@ export async function GET(request: Request) {
       prisma.habit.findMany({
         where: { userId },
         include: {
+          habitLogs: {
+            select: {
+              count: true,
+            },
+          },
           parentTask: {
             select: {
               id: true,
@@ -97,12 +103,10 @@ export async function GET(request: Request) {
     ])
 
     const taskGraph = buildTaskGraph(allTasks)
+    const progressModel = deriveProgressModel(allTasks, allHabits)
     const groupMembershipMemo = new Map<string, boolean>()
-    const getHabitProgress = (habit: { currentCount?: number | null; targetCount: number }) => {
-      const totalCount = habit.currentCount || 0
-      return habit.targetCount > 0
-        ? Math.min(100, Math.round((totalCount / habit.targetCount) * 100))
-        : 0
+    const getHabitProgress = (habit: { id: string }) => {
+      return progressModel.habits.get(habit.id)?.progress || 0
     }
 
     const hasTaskInGroup = (taskId: string, groupId: string): boolean => {
@@ -134,7 +138,9 @@ export async function GET(request: Request) {
         new Map([...habitsInGroup, ...linkedHabits].map((habit) => [habit.id, habit])).values()
       )
 
-      const rootTasks = tasksInGroup.filter((task) => !task.parentId)
+      const rootTasks = tasksInGroup.filter((task) => {
+        return !task.parentId || !taskIdsInGroup.has(task.parentId)
+      })
       const rootHabits = allHabitsInGroup.filter((habit) => {
         return !habit.parentTaskId || !taskIdsInGroup.has(habit.parentTaskId)
       })
@@ -143,18 +149,10 @@ export async function GET(request: Request) {
       let weightedProgress = 0
 
       for (const task of rootTasks) {
-        const isLeaf = task._count.children === 0 && task._count.habits === 0
-        if (isLeaf) {
-          const taskProgress = Math.min(100, Math.max(0, task.progress || 0))
-          totalWeight += task.importance
-          weightedProgress += taskProgress * task.importance
-        } else if (task.total_weight && task.weighted_progress) {
-          const taskWeight = Number(task.total_weight)
-          const taskWeightedProgress = Number(task.weighted_progress)
-          if (taskWeight > 0) {
-            totalWeight += taskWeight
-            weightedProgress += taskWeightedProgress
-          }
+        const derived = progressModel.tasks.get(task.id)
+        if (derived && derived.totalWeight > 0) {
+          totalWeight += derived.totalWeight
+          weightedProgress += derived.weightedProgress
         }
       }
 
@@ -171,11 +169,12 @@ export async function GET(request: Request) {
       const allLeafTasks = tasksInGroup.filter((task) => {
         const children = taskGraph.childrenByParentId.get(task.id) || []
         const hasChildrenInGroup = children.some((childId) => taskIdsInGroup.has(childId))
-        return !hasChildrenInGroup
+        const hasLinkedHabits = allHabitsInGroup.some((habit) => habit.parentTaskId === task.id)
+        return !hasChildrenInGroup && !hasLinkedHabits
       })
 
       const incompleteTaskCount = allLeafTasks.filter((task) => {
-        const taskProgress = Math.min(100, Math.max(0, task.progress || 0))
+        const taskProgress = progressModel.tasks.get(task.id)?.progress || 0
         return taskProgress < 100
       }).length
 
@@ -207,7 +206,11 @@ export async function GET(request: Request) {
       return a.name.localeCompare(b.name)
     })
 
-    return NextResponse.json({ data: sortedGroups })
+    // `progress` and incomplete counts are derived from all of the user's
+    // tasks/habits, so the database's createdAt order cannot be used to apply
+    // the requested limit.  Slice only after computing and sorting the
+    // derived values; otherwise `?limit=N` can omit the most relevant groups.
+    return NextResponse.json({ data: limit === undefined ? sortedGroups : sortedGroups.slice(0, limit) })
   } catch (error) {
     return handleApiError(error)
   }

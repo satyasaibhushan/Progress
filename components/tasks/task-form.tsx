@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import * as React from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { format, parseISO } from "date-fns";
@@ -67,7 +67,7 @@ export function TaskForm({
     handleSubmit,
     formState: { errors },
     setValue,
-    watch,
+    control,
   } = useForm<TaskFormInput, unknown, TaskFormData>({
     resolver: zodResolver(formSchema),
     defaultValues: task
@@ -97,10 +97,13 @@ export function TaskForm({
     }
   }, [initialParentId, task, setValue]);
 
-  const importance = watch("importance") ?? 50;
-  const selectedParentId = watch("parentId");
-  const selectedGroupId = watch("groupId") || undefined;
-  const watchedLabelIds = watch("labelIds");
+  const importance = useWatch({ control, name: "importance" }) ?? 50;
+  const selectedParentId = useWatch({ control, name: "parentId" });
+  const selectedGroupId = useWatch({ control, name: "groupId" }) || undefined;
+  const watchedLabelIds = useWatch({ control, name: "labelIds" });
+  const progress = useWatch({ control, name: "progress" }) || 0;
+  const startDate = useWatch({ control, name: "startDate" });
+  const deadline = useWatch({ control, name: "deadline" });
   const selectedLabelIds = React.useMemo(() => watchedLabelIds ?? [], [watchedLabelIds]);
   const [showGroupWarning, setShowGroupWarning] = useState(false);
   const [showDateBoundsWarning, setShowDateBoundsWarning] = useState(false);
@@ -333,7 +336,7 @@ export function TaskForm({
         <div>
           <FormLabel htmlFor="groupId">Group</FormLabel>
           <Select
-            value={watch("groupId") || "__none__"}
+            value={selectedGroupId || "__none__"}
             onValueChange={(value) =>
               setValue("groupId", value === "__none__" ? undefined : value)
             }
@@ -361,7 +364,7 @@ export function TaskForm({
         <div>
           <FormLabel htmlFor="parentId">Parent Task</FormLabel>
           <Select
-            value={watch("parentId") || "__none__"}
+            value={selectedParentId || "__none__"}
             onValueChange={(value) =>
               setValue("parentId", value === "__none__" ? undefined : value)
             }
@@ -413,7 +416,7 @@ export function TaskForm({
       {/* Progress */}
       <div>
         <FormLabel htmlFor="progress">
-          Progress: {watch("progress") || 0}%
+          Progress: {progress}%
           {isNonLeafTask && (
             <span className="text-xs text-muted-foreground ml-2">
               (Auto-calculated from children and linked habits)
@@ -421,7 +424,7 @@ export function TaskForm({
           )}
         </FormLabel>
         <Slider
-          value={[watch("progress") || 0]}
+          value={[progress]}
           onValueChange={([value]) => setValue("progress", value)}
           min={0}
           max={100}
@@ -441,7 +444,7 @@ export function TaskForm({
         <div>
           <FormLabel>Start Date</FormLabel>
           <DatePicker
-            date={watch("startDate") ? parseISO(watch("startDate")!) : undefined}
+            date={startDate ? parseISO(startDate) : undefined}
             onSelect={(date) =>
               setValue("startDate", date ? format(date, "yyyy-MM-dd") : undefined)
             }
@@ -452,7 +455,7 @@ export function TaskForm({
         <div>
           <FormLabel>Deadline</FormLabel>
           <DatePicker
-            date={watch("deadline") ? parseISO(watch("deadline")!) : undefined}
+            date={deadline ? parseISO(deadline) : undefined}
             onSelect={(date) =>
               setValue("deadline", date ? format(date, "yyyy-MM-dd") : undefined)
             }

@@ -6,10 +6,7 @@ import { updateHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
 import {
-  addHabitToTask,
-  removeHabitFromTask,
   calculateHabitCompletion,
-  updateHabitContribution,
 } from "@/lib/progress-calculator"
 import {
   getInheritedLabelsFromHabit,
@@ -20,6 +17,11 @@ import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
 import { getUserTimezone } from "@/lib/user-timezone"
 import { parseDateInputToUTCDate } from "@/lib/date-only"
 import { serializeHabit } from "@/lib/utils"
+import { sumHabitLogCounts } from "@/lib/progress-model"
+import { reconcileUserProgress } from "@/lib/server/progress/reconcile"
+import { reconcileUserLabelInheritance } from "@/lib/server/inheritance/labels"
+import { getEffectiveTaskBounds } from "@/lib/server/inheritance/bounds"
+import { reconcileUserGroupInheritance } from "@/lib/server/inheritance/groups"
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6] as const
 
@@ -98,10 +100,12 @@ export async function GET(
       },
     })
     const periodMetrics = calculateHabitPeriodMetrics(habit, metricLogs, { timeZone: userTimeZone })
+    const currentCount = sumHabitLogCounts(metricLogs)
 
     return NextResponse.json({
       data: serializeHabit({
         ...habit,
+        currentCount,
         progress,
         ...periodMetrics,
       }),
@@ -133,12 +137,9 @@ export async function PUT(
       return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
 
-    const oldHabitProgress = existingHabit.parentTaskId
-      ? await calculateHabitCompletion(id)
-      : null
-
     const body = await request.json()
     const validatedData = updateHabitSchema.parse(body)
+    const requestedGroupIdInput = validatedData.groupId
     const parsedStartDate = parseDateInputToUTCDate(validatedData.startDate)
     const parsedEndDate = parseDateInputToUTCDate(validatedData.endDate)
 
@@ -152,6 +153,20 @@ export async function PUT(
     if (validatedData.endDate !== undefined && validatedData.endDate !== null && !parsedEndDate) {
       return NextResponse.json(
         { error: "Invalid endDate" },
+        { status: 400 }
+      )
+    }
+
+    const finalStartDate = validatedData.startDate !== undefined
+      ? (validatedData.startDate ? parsedStartDate : null)
+      : existingHabit.startDate
+    const finalEndDate = validatedData.endDate !== undefined
+      ? (validatedData.endDate ? parsedEndDate : null)
+      : existingHabit.endDate
+
+    if (finalStartDate && finalEndDate && finalStartDate > finalEndDate) {
+      return NextResponse.json(
+        { error: "Habit start date must be on or before its end date" },
         { status: 400 }
       )
     }
@@ -184,14 +199,18 @@ export async function PUT(
       )
     }
 
-    // If parentTaskId is being updated, verify it exists and belongs to user
+    // Validate the final parent and apply inherited schedule/group constraints.
     let newParentTask = null
     const parentTaskChanged = updateFields.parentTaskId !== undefined && updateFields.parentTaskId !== existingHabit.parentTaskId
-    
-    if (updateFields.parentTaskId !== undefined && updateFields.parentTaskId !== null) {
+    const finalParentTaskId = updateFields.parentTaskId !== undefined
+      ? updateFields.parentTaskId
+      : existingHabit.parentTaskId
+    let finalParentGroupId: string | null = null
+
+    if (finalParentTaskId) {
       newParentTask = await prisma.task.findFirst({
         where: {
-          id: updateFields.parentTaskId,
+          id: finalParentTaskId,
           userId,
         },
         include: {
@@ -208,9 +227,53 @@ export async function PUT(
         )
       }
 
-      // Inherit group from parent if not explicitly set
-      if (!updateFields.groupId && newParentTask.groupId) {
-        updateFields.groupId = newParentTask.groupId
+      const parentBounds = await getEffectiveTaskBounds(newParentTask.id, userId)
+
+      if (finalStartDate && parentBounds?.minStartDate && finalStartDate < parentBounds.minStartDate) {
+        return NextResponse.json(
+          { error: "Habit start date must be on or after parent task start date" },
+          { status: 400 }
+        )
+      }
+
+      if (finalEndDate && parentBounds?.maxEndDate && finalEndDate > parentBounds.maxEndDate) {
+        return NextResponse.json(
+          { error: "Habit end date must be on or before parent task deadline" },
+          { status: 400 }
+        )
+      }
+
+
+      if (finalStartDate && parentBounds?.maxEndDate && finalStartDate > parentBounds.maxEndDate) {
+        return NextResponse.json(
+          { error: "Habit start date must be on or before its ancestor deadline" },
+          { status: 400 }
+        )
+      }
+
+      if (finalEndDate && parentBounds?.minStartDate && finalEndDate < parentBounds.minStartDate) {
+        return NextResponse.json(
+          { error: "Habit end date must be on or after its ancestor start date" },
+          { status: 400 }
+        )
+      }
+
+      finalParentGroupId = newParentTask.groupId
+      if (
+        finalParentGroupId !== null &&
+        requestedGroupIdInput !== undefined &&
+        requestedGroupIdInput !== finalParentGroupId
+      ) {
+        return NextResponse.json(
+          {
+            error: "Cannot change group. This habit inherits its group from a parent task. Unlink it from the parent task to change the group.",
+            inheritedGroupId: finalParentGroupId,
+          },
+          { status: 400 }
+        )
+      }
+      if (finalParentGroupId !== null) {
+        updateFields.groupId = finalParentGroupId
       }
     }
 
@@ -235,7 +298,7 @@ export async function PUT(
     // Only check if groupId is actually being changed (not just present in the request)
     const groupChanged = updateFields.groupId !== undefined && 
       updateFields.groupId !== existingHabit.groupId
-    if (groupChanged && !parentTaskChanged) {
+    if (groupChanged && !parentTaskChanged && !finalParentGroupId) {
       const canChange = await canChangeHabitGroup(id, userId)
       if (!canChange) {
         const inheritedGroup = await getInheritedGroupFromHabit(id, userId)
@@ -256,7 +319,14 @@ export async function PUT(
     if (updateFields.description !== undefined) updateData.description = updateFields.description ?? null
     if (updateFields.type !== undefined) updateData.type = updateFields.type
     if (updateFields.importance !== undefined) updateData.importance = updateFields.importance
-    if (updateFields.groupId !== undefined) updateData.groupId = updateFields.groupId ?? null
+    if (finalParentGroupId) {
+      updateData.groupId = finalParentGroupId
+    } else if (updateFields.groupId !== undefined) {
+      updateData.groupId = updateFields.groupId ?? null
+      updateData.directGroupId = updateFields.groupId ?? null
+    } else if (parentTaskChanged) {
+      updateData.groupId = existingHabit.directGroupId
+    }
     if (updateFields.parentTaskId !== undefined) updateData.parentTaskId = updateFields.parentTaskId ?? null
 
     if (finalCountPerPeriod !== existingHabit.countPerPeriod) {
@@ -332,7 +402,7 @@ export async function PUT(
     if (labelIds !== undefined) {
       // Get current labels
       const currentLabels = await prisma.habitLabel.findMany({
-        where: { habitId: id },
+        where: { habitId: id, inheritedFromTaskId: null },
         select: { labelId: true },
       })
       const currentLabelIds = currentLabels.map((hl) => hl.labelId)
@@ -340,19 +410,20 @@ export async function PUT(
       // Get inherited labels that cannot be removed
       const inheritedLabels = await getInheritedLabelsFromHabit(id, userId)
 
-      // Treat inherited labels as always selected. Some clients may omit them from payload.
-      const effectiveLabelIds = [...new Set([...labelIds, ...inheritedLabels])]
+      const directLabelIds = [...new Set(labelIds.filter(
+        (labelId) => !inheritedLabels.includes(labelId)
+      ))]
       const labelsChanged =
-        effectiveLabelIds.length !== currentLabelIds.length ||
-        effectiveLabelIds.some((lid) => !currentLabelIds.includes(lid))
+        directLabelIds.length !== currentLabelIds.length ||
+        directLabelIds.some((lid) => !currentLabelIds.includes(lid))
       if (labelsChanged) {
       
       // Labels to add (in labelIds but not in current)
-      const labelsToAdd = effectiveLabelIds.filter((lid) => !currentLabelIds.includes(lid))
+      const labelsToAdd = directLabelIds.filter((lid) => !currentLabelIds.includes(lid))
       
       // Labels to remove (in current but not in labelIds, and not inherited)
       const labelsToRemove = currentLabelIds.filter(
-        (lid) => !effectiveLabelIds.includes(lid) && !inheritedLabels.includes(lid)
+        (lid) => !directLabelIds.includes(lid)
       )
       
       // Add new labels
@@ -389,65 +460,9 @@ export async function PUT(
       }
     }
 
-    // If parent changed, inherit labels and group from new parent
-    if (parentTaskChanged && habit.parentTaskId && newParentTask) {
-      const parentLabelIds = newParentTask.taskLabels.map((tl) => tl.labelId)
-      const inheritedLabels = await getInheritedLabelsFromHabit(habit.id, userId)
-      const allInheritedLabels = [...new Set([...inheritedLabels, ...parentLabelIds])]
-      
-      // Add inherited labels to the habit
-      for (const labelId of allInheritedLabels) {
-        await prisma.habitLabel.create({
-          data: {
-            habitId: habit.id,
-            labelId,
-          },
-        }).catch(() => {
-          // Ignore if label already exists
-        })
-      }
-
-      // Inherit group from parent if not explicitly set
-      if (updateFields.groupId === undefined && newParentTask.groupId) {
-        await prisma.habit.update({
-          where: { id: habit.id },
-          data: { groupId: newParentTask.groupId },
-        })
-        habit.groupId = newParentTask.groupId
-      }
-    }
-
-    // Update aggregates if parentTaskId changed
-    if (parentTaskChanged) {
-      // Remove from old parent task (if existed)
-      if (existingHabit.parentTaskId) {
-        await removeHabitFromTask(
-          existingHabit.id,
-          existingHabit.parentTaskId,
-          existingHabit.importance
-        )
-      }
-      // Add to new parent task (if exists)
-      if (habit.parentTaskId) {
-        await addHabitToTask(habit.id)
-      }
-    } else if (habit.parentTaskId && oldHabitProgress !== null) {
-      // Same parent: contribution can still change when progress basis or importance changes.
-      const newHabitProgress = await calculateHabitCompletion(habit.id)
-      const contributionChanged =
-        newHabitProgress !== oldHabitProgress ||
-        habit.importance !== existingHabit.importance
-
-      if (contributionChanged) {
-        await updateHabitContribution(
-          habit.id,
-          oldHabitProgress,
-          newHabitProgress,
-          existingHabit.importance,
-          habit.importance
-        )
-      }
-    }
+    await reconcileUserGroupInheritance(userId)
+    await reconcileUserLabelInheritance(userId)
+    await reconcileUserProgress(userId)
 
     // Reload habit to get updated labels
     const updatedHabit = await prisma.habit.findUnique({
@@ -489,10 +504,12 @@ export async function PUT(
       },
     })
     const periodMetrics = calculateHabitPeriodMetrics(updatedHabit!, metricLogs, { timeZone: userTimeZone })
+    const currentCount = sumHabitLogCounts(metricLogs)
 
     return NextResponse.json({
       data: serializeHabit({
         ...updatedHabit!,
+        currentCount,
         progress,
         ...periodMetrics,
       }),
@@ -523,13 +540,6 @@ export async function DELETE(
       return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
 
-    // Store parent task ID and importance before deletion
-    const parentTaskId = existingHabit.parentTaskId
-    const importance = existingHabit.importance
-    const progressBeforeDelete = parentTaskId
-      ? await calculateHabitCompletion(id)
-      : null
-
     // Delete will cascade to habit logs due to schema onDelete: Cascade
     await prisma.habit.delete({
       where: {
@@ -537,15 +547,9 @@ export async function DELETE(
       },
     })
 
-    // Remove from parent task's aggregates if this habit was linked to a task
-    if (parentTaskId) {
-      await removeHabitFromTask(
-        id,
-        parentTaskId,
-        importance,
-        progressBeforeDelete ?? undefined
-      )
-    }
+    await reconcileUserGroupInheritance(userId)
+    await reconcileUserLabelInheritance(userId)
+    await reconcileUserProgress(userId)
 
     return NextResponse.json({ message: "Habit deleted successfully" })
   } catch (error) {

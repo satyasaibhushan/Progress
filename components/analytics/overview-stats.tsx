@@ -88,7 +88,6 @@ export function OverviewStats({
         value={`${avgProgress}%`}
         label="Avg Progress"
         subtitle="Across all tasks"
-        trend={{ value: "+5% from last period", isPositive: true }}
       />
       <StatTile
         icon={<Clock className="w-5 h-5 text-amber-600" />}

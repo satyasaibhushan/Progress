@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { getScrollParent } from "./scroll-parent";
 
 interface LazyListProps<T> {
   items: T[];
@@ -81,7 +82,7 @@ function LazyListContent<T>({
         if (!entry?.isIntersecting) return;
         setVisibleCount((prev) => Math.min(prev + pageSize, items.length));
       },
-      { rootMargin, threshold }
+      { root: getScrollParent(sentinelRef.current), rootMargin, threshold }
     );
 
     observer.observe(sentinelRef.current);

@@ -5,25 +5,30 @@ import { prisma } from "@/lib/prisma"
 import { updateTaskSchema } from "@/lib/validations/task"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueTaskTitle } from "@/lib/validations/uniqueness"
-import {
-  updateLeafTaskProgress,
-  updateLeafTaskWeight,
-  addChildToTask,
-  removeChildFromTask,
-} from "@/lib/progress-calculator"
 import { serializeTask } from "@/lib/utils"
-import { getUserTimezone } from "@/lib/user-timezone"
+import { getDateKeyInTimeZone, getUserTimezone } from "@/lib/user-timezone"
 import { parseDateInputToUTCDate } from "@/lib/date-only"
 import {
   getInheritedLabelsFromTask,
   getInheritedGroupFromTask,
   canChangeTaskGroup,
   propagateDateBoundsToChildren,
-  propagateLabelsToChildren,
-  propagateGroupToChildren,
 } from "@/lib/inheritance-helpers"
-import { attachPeriodMetrics, loadLogsByHabitIds } from "@/lib/server/habits/log-metrics"
+import {
+  attachHabitProgress,
+  attachPeriodMetrics,
+  loadLogsByHabitIds,
+} from "@/lib/server/habits/log-metrics"
 import { buildTaskTree, groupTasksByParentId } from "@/lib/server/tree/task-tree"
+import { attachDerivedTaskProgress } from "@/lib/server/progress/apply"
+import {
+  getUserProgressModel,
+  reconcileUserProgress,
+} from "@/lib/server/progress/reconcile"
+import { reconcileUserLabelInheritance } from "@/lib/server/inheritance/labels"
+import { getEffectiveTaskBounds } from "@/lib/server/inheritance/bounds"
+import { combineDateBounds, type EffectiveDateBounds } from "@/lib/hierarchy-bounds"
+import { reconcileUserGroupInheritance } from "@/lib/server/inheritance/groups"
 
 // GET /api/tasks/[id] - Get a specific task
 export async function GET(
@@ -99,8 +104,10 @@ export async function GET(
           prisma,
           allHabits.map((habit) => habit.id)
         )
+        attachHabitProgress(allHabits, logsByHabitId)
         attachPeriodMetrics(allHabits, logsByHabitId, userTimeZone)
       }
+      attachDerivedTaskProgress(allTasks, allHabits)
 
       // Find the requested task
       const task = allTasks.find((t) => t.id === id)
@@ -178,7 +185,18 @@ export async function GET(
         prisma,
         task.habits.map((habit) => habit.id)
       )
+      attachHabitProgress(task.habits, logsByHabitId)
       attachPeriodMetrics(task.habits, logsByHabitId, userTimeZone)
+    }
+
+    const progressModel = await getUserProgressModel(userId)
+    const derivedProgress = progressModel.tasks.get(task.id)
+    if (derivedProgress) {
+      task.progress = derivedProgress.progress
+      task.total_weight = derivedProgress.isLeaf ? null : BigInt(derivedProgress.totalWeight)
+      task.weighted_progress = derivedProgress.isLeaf
+        ? null
+        : BigInt(derivedProgress.weightedProgress)
     }
 
     return NextResponse.json({ data: serializeTask(task) })
@@ -194,6 +212,7 @@ export async function PUT(
 ) {
   try {
     const { userId } = await getAuthenticatedUser()
+    const userTimeZone = await getUserTimezone(userId)
     const { id } = await params
 
     // Check if task exists and belongs to user
@@ -216,10 +235,9 @@ export async function PUT(
       return NextResponse.json({ error: "Task not found" }, { status: 404 })
     }
 
-    const wasLeaf = existingTask._count.children === 0 && existingTask._count.habits === 0
-
     const body = await request.json()
     const validatedData = updateTaskSchema.parse(body)
+    const requestedGroupIdInput = validatedData.groupId
     const parsedStartDate = parseDateInputToUTCDate(validatedData.startDate)
     const parsedDeadline = parseDateInputToUTCDate(validatedData.deadline)
 
@@ -239,11 +257,8 @@ export async function PUT(
 
     // Validate that deadline is not in the past (if deadline is being updated)
     if (validatedData.deadline !== undefined && validatedData.deadline !== null && parsedDeadline) {
-      const deadline = new Date(parsedDeadline)
-      const now = new Date()
-      const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
-
-      if (deadline < today) {
+      const deadlineKey = parsedDeadline.toISOString().slice(0, 10)
+      if (deadlineKey < getDateKeyInTimeZone(new Date(), userTimeZone)) {
         return NextResponse.json(
           { error: "Cannot set task deadline to a past date" },
           { status: 400 }
@@ -258,6 +273,13 @@ export async function PUT(
     const finalDeadline = validatedData.deadline !== undefined
       ? (validatedData.deadline ? parsedDeadline : null)
       : existingTask.deadline
+
+    if (finalStartDate && finalDeadline && finalStartDate > finalDeadline) {
+      return NextResponse.json(
+        { error: "Task start date must be on or before its deadline" },
+        { status: 400 }
+      )
+    }
 
     const startDateChanged = validatedData.startDate !== undefined &&
       (existingTask.startDate?.getTime() ?? null) !== (finalStartDate?.getTime() ?? null)
@@ -296,7 +318,9 @@ export async function PUT(
         },
         select: {
           id: true,
+          startDate: true,
           deadline: true,
+          groupId: true,
         },
       })
 
@@ -317,33 +341,67 @@ export async function PUT(
       }
     }
 
-    // Validate deadline against parent (if parent exists or is being set)
+    // Validate schedule and inherited group against the final parent.
     const finalParentId = validatedData.parentId !== undefined 
       ? validatedData.parentId 
       : existingTask.parentId
+    let finalParentGroupId: string | null = null
+    let effectiveParentBounds: EffectiveDateBounds | null = null
 
     if (finalParentId) {
       const parentToCheck = newParentTask || await prisma.task.findFirst({
         where: { id: finalParentId, userId },
-        select: { id: true, deadline: true },
+        select: { id: true, startDate: true, deadline: true, groupId: true },
       })
 
       if (parentToCheck) {
-        const taskDeadline = validatedData.deadline !== undefined
-          ? parsedDeadline
-          : existingTask.deadline
+        effectiveParentBounds = await getEffectiveTaskBounds(parentToCheck.id, userId)
+        finalParentGroupId = parentToCheck.groupId
+        if (
+          finalParentGroupId !== null &&
+          requestedGroupIdInput !== undefined &&
+          requestedGroupIdInput !== finalParentGroupId
+        ) {
+          return NextResponse.json(
+            {
+              error: "Cannot change group. This task inherits its group from a parent task. Unlink it from the parent task to change the group.",
+              inheritedGroupId: finalParentGroupId,
+            },
+            { status: 400 }
+          )
+        }
+        if (finalStartDate && effectiveParentBounds?.minStartDate && finalStartDate < effectiveParentBounds.minStartDate) {
+          return NextResponse.json(
+            { error: "Child task start date must be on or after parent task start date" },
+            { status: 400 }
+          )
+        }
 
-        // If both task and parent have deadlines, child must not be after parent
-        if (taskDeadline && parentToCheck.deadline) {
-          const childDeadline = new Date(taskDeadline)
-          const parentDeadline = new Date(parentToCheck.deadline)
-
-          if (childDeadline > parentDeadline) {
+        if (finalDeadline && effectiveParentBounds?.maxEndDate) {
+          if (finalDeadline > effectiveParentBounds.maxEndDate) {
             return NextResponse.json(
               { error: "Child task deadline must be on or before parent task deadline" },
               { status: 400 }
             )
           }
+        }
+
+        if (finalStartDate && effectiveParentBounds?.maxEndDate && finalStartDate > effectiveParentBounds.maxEndDate) {
+          return NextResponse.json(
+            { error: "Child task start date must be on or before its ancestor deadline" },
+            { status: 400 }
+          )
+        }
+
+        if (finalDeadline && effectiveParentBounds?.minStartDate && finalDeadline < effectiveParentBounds.minStartDate) {
+          return NextResponse.json(
+            { error: "Child task deadline must be on or after its ancestor start date" },
+            { status: 400 }
+          )
+        }
+
+        if (finalParentGroupId !== null) {
+          validatedData.groupId = finalParentGroupId
         }
       }
     }
@@ -369,7 +427,7 @@ export async function PUT(
     // Only check when group is actually changed (not just included in payload).
     const groupChanged = validatedData.groupId !== undefined &&
       validatedData.groupId !== existingTask.groupId
-    if (groupChanged && !parentChanged) {
+    if (groupChanged && !parentChanged && !finalParentGroupId) {
       const canChange = await canChangeTaskGroup(id, userId)
       if (!canChange) {
         const inheritedGroup = await getInheritedGroupFromTask(id, userId)
@@ -397,7 +455,13 @@ export async function PUT(
     }
 
     // Convert startDate and deadline strings to Date if provided
-    const { startDate: startDateStr, deadline: deadlineStr, labelIds, ...rest } = validatedData
+    const {
+      startDate: startDateStr,
+      deadline: deadlineStr,
+      groupId: requestedGroupId,
+      labelIds,
+      ...rest
+    } = validatedData
     const updateData: {
       title?: string
       description?: string | null
@@ -406,6 +470,7 @@ export async function PUT(
       startDate?: Date | null
       deadline?: Date | null
       groupId?: string | null
+      directGroupId?: string | null
       parentId?: string | null
     } = {
       ...rest,
@@ -415,6 +480,13 @@ export async function PUT(
       ...(deadlineStr !== undefined && {
         deadline: deadlineStr ? parsedDeadline : null,
       }),
+      ...(finalParentGroupId
+        ? { groupId: finalParentGroupId }
+        : requestedGroupId !== undefined
+          ? { groupId: requestedGroupId, directGroupId: requestedGroupId }
+          : parentChanged
+            ? { groupId: existingTask.directGroupId }
+            : {}),
     }
 
     const task = await prisma.task.update({
@@ -450,56 +522,18 @@ export async function PUT(
       },
     })
 
-    // If parent changed, inherit labels and group from new parent
-    if (parentChanged && task.parentId) {
-      const inheritedLabels = await getInheritedLabelsFromTask(task.id, userId)
-      // Get direct parent labels
-      const newParent = await prisma.task.findFirst({
-        where: { id: task.parentId, userId },
-        include: {
-          taskLabels: {
-            select: { labelId: true },
-          },
-        },
-      })
-      
-      if (newParent) {
-        const parentLabelIds = newParent.taskLabels.map((tl) => tl.labelId)
-        const allInheritedLabels = [...new Set([...inheritedLabels, ...parentLabelIds])]
-        
-        // Add inherited labels to the task
-        for (const labelId of allInheritedLabels) {
-          await prisma.taskLabel.create({
-            data: {
-              taskId: task.id,
-              labelId,
-            },
-          }).catch(() => {
-            // Ignore if label already exists
-          })
-        }
+    await reconcileUserGroupInheritance(userId)
 
-        // Inherit group from parent if not explicitly set
-        if (!validatedData.groupId && newParent.groupId) {
-          await prisma.task.update({
-            where: { id: task.id },
-            data: { groupId: newParent.groupId },
-          })
-          task.groupId = newParent.groupId
-        }
-      }
-    }
-
-    // If group changed, propagate to all children
-    if (validatedData.groupId !== undefined) {
-      await propagateGroupToChildren(task.id, task.groupId, userId)
-    }
-
-    if (shouldPropagateDateBounds) {
+    if (shouldPropagateDateBounds || parentChanged) {
+      const effectiveBounds = combineDateBounds(
+        effectiveParentBounds || { minStartDate: null, maxEndDate: null },
+        finalStartDate,
+        finalDeadline
+      )
       await propagateDateBoundsToChildren(
         task.id,
-        finalStartDate,
-        finalDeadline,
+        effectiveBounds.minStartDate,
+        effectiveBounds.maxEndDate,
         userId
       )
     }
@@ -508,7 +542,7 @@ export async function PUT(
     if (labelIds !== undefined) {
       // Get current labels
       const currentLabels = await prisma.taskLabel.findMany({
-        where: { taskId: id },
+        where: { taskId: id, inheritedFromTaskId: null },
         select: { labelId: true },
       })
       const currentLabelIds = currentLabels.map((tl) => tl.labelId)
@@ -516,19 +550,20 @@ export async function PUT(
       // Get inherited labels that cannot be removed
       const inheritedLabels = await getInheritedLabelsFromTask(id, userId)
 
-      // Treat inherited labels as always selected. Some clients may omit them from payload.
-      const effectiveLabelIds = [...new Set([...labelIds, ...inheritedLabels])]
+      const directLabelIds = [...new Set(labelIds.filter(
+        (labelId) => !inheritedLabels.includes(labelId)
+      ))]
       const labelsChanged =
-        effectiveLabelIds.length !== currentLabelIds.length ||
-        effectiveLabelIds.some((lid) => !currentLabelIds.includes(lid))
+        directLabelIds.length !== currentLabelIds.length ||
+        directLabelIds.some((lid) => !currentLabelIds.includes(lid))
       if (labelsChanged) {
       
       // Labels to add (in labelIds but not in current)
-      const labelsToAdd = effectiveLabelIds.filter((lid) => !currentLabelIds.includes(lid))
+      const labelsToAdd = directLabelIds.filter((lid) => !currentLabelIds.includes(lid))
       
       // Labels to remove (in current but not in labelIds, and not inherited)
       const labelsToRemove = currentLabelIds.filter(
-        (lid) => !effectiveLabelIds.includes(lid) && !inheritedLabels.includes(lid)
+        (lid) => !directLabelIds.includes(lid)
       )
       
       // Add new labels
@@ -563,12 +598,11 @@ export async function PUT(
         })
       }
       
-      // Propagate newly added labels to children
-      if (labelsToAdd.length > 0) {
-        await propagateLabelsToChildren(id, labelsToAdd, userId)
-      }
       }
     }
+
+    await reconcileUserLabelInheritance(userId)
+    await reconcileUserProgress(userId)
 
     // Reload task to get updated labels, children, and habits
     // Fetch all tasks to build the tree recursively with all habits
@@ -640,48 +674,6 @@ export async function PUT(
       children: buildTaskTree(childrenByParentId, updatedTask.id),
     }
 
-    const isLeaf = task._count.children === 0 && task._count.habits === 0
-    const existingProgress = (existingTask as { progress?: number | null }).progress ?? 0
-    const newProgress = (task as { progress?: number | null }).progress ?? 0
-    const progressChanged = validatedData.progress !== undefined && validatedData.progress !== existingProgress
-    const importanceChanged = validatedData.importance !== undefined && validatedData.importance !== existingTask.importance
-
-    // Handle aggregate updates for leaf tasks
-    if (isLeaf) {
-      if (parentChanged) {
-        // Remove from old parent if it existed
-        if (existingTask.parentId && wasLeaf) {
-          const oldWeight = BigInt(existingTask.importance)
-          const oldWeightedProgress = BigInt(Math.round(existingProgress * existingTask.importance))
-          await removeChildFromTask(existingTask.parentId, oldWeight, oldWeightedProgress)
-        }
-        // Add to new parent if it exists
-        if (task.parentId) {
-          const newWeight = BigInt(task.importance)
-          const newWeightedProgress = BigInt(Math.round(newProgress * task.importance))
-          await addChildToTask(task.parentId, newWeight, newWeightedProgress)
-        }
-      } else if (task.parentId) {
-        // Parent didn't change, but progress or importance might have
-        if (progressChanged) {
-          await updateLeafTaskProgress(
-            id,
-            existingProgress,
-            newProgress,
-            task.importance
-          )
-        }
-        if (importanceChanged) {
-          await updateLeafTaskWeight(
-            id,
-            existingTask.importance,
-            task.importance,
-            newProgress
-          )
-        }
-      }
-    }
-
     return NextResponse.json({ data: serializeTask(taskWithChildren) })
   } catch (error) {
     return handleApiError(error)
@@ -717,11 +709,6 @@ export async function DELETE(
       return NextResponse.json({ error: "Task not found" }, { status: 404 })
     }
 
-    // Store parent ID and check if this is a leaf before deletion
-    const parentId = existingTask.parentId
-    const wasLeaf = existingTask._count.children === 0 && existingTask._count.habits === 0
-    const existingProgress = (existingTask as { progress?: number | null }).progress ?? 0
-
     // Delete will cascade to children due to schema onDelete: Cascade
     await prisma.task.delete({
       where: {
@@ -729,12 +716,9 @@ export async function DELETE(
       },
     })
 
-    // Remove from parent's aggregates if this was a leaf task
-    if (parentId && wasLeaf) {
-      const weight = BigInt(existingTask.importance)
-      const weightedProgress = BigInt(Math.round(existingProgress * existingTask.importance))
-      await removeChildFromTask(parentId, weight, weightedProgress)
-    }
+    await reconcileUserGroupInheritance(userId)
+    await reconcileUserLabelInheritance(userId)
+    await reconcileUserProgress(userId)
 
     return NextResponse.json({ message: "Task deleted successfully" })
   } catch (error) {

@@ -28,8 +28,8 @@ export async function GET(request: Request) {
 
     const searchTerm = query.trim().toLowerCase();
 
-    // Search tasks (including subtasks)
-    const tasks = await prisma.task.findMany({
+    const [tasks, habits, groups, labels] = await Promise.all([
+      prisma.task.findMany({
       where: {
         userId,
         OR: [
@@ -55,10 +55,8 @@ export async function GET(request: Request) {
       orderBy: {
         updatedAt: "desc",
       },
-    });
-
-    // Search habits
-    const habits = await prisma.habit.findMany({
+      }),
+      prisma.habit.findMany({
       where: {
         userId,
         OR: [
@@ -84,10 +82,8 @@ export async function GET(request: Request) {
       orderBy: {
         updatedAt: "desc",
       },
-    });
-
-    // Search groups
-    const groups = await prisma.group.findMany({
+      }),
+      prisma.group.findMany({
       where: {
         userId,
         name: {
@@ -107,10 +103,8 @@ export async function GET(request: Request) {
       orderBy: {
         updatedAt: "desc",
       },
-    });
-
-    // Search labels
-    const labels = await prisma.label.findMany({
+      }),
+      prisma.label.findMany({
       where: {
         userId,
         name: {
@@ -130,7 +124,8 @@ export async function GET(request: Request) {
       orderBy: {
         updatedAt: "desc",
       },
-    });
+      }),
+    ]);
 
     // Format results
     const taskResults: SearchResult[] = tasks.map((task) => ({

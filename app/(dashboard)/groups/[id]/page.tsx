@@ -22,21 +22,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-
-function getAllLeafTasks(tasks: Task[]): Task[] {
-  const leafTasks: Task[] = [];
-  const traverse = (taskList: Task[]) => {
-    taskList.forEach((task) => {
-      if (task.children && task.children.length > 0) {
-        traverse(task.children);
-      } else {
-        leafTasks.push(task);
-      }
-    });
-  };
-  traverse(tasks);
-  return leafTasks;
-}
+import { getAllLeafTasks, getHabitProgress } from "@/lib/item-metrics";
 
 function GroupDetailPageContent() {
   const router = useRouter();
@@ -53,6 +39,7 @@ function GroupDetailPageContent() {
   const highlightedHabitId = searchParams.get("highlightHabit");
 
   useEffect(() => {
+    let cancelled = false;
     async function loadData() {
       try {
         const [groupData, itemsData, groupsData] = await Promise.all([
@@ -60,19 +47,25 @@ function GroupDetailPageContent() {
           getGroupItems(groupId),
           getGroups(),
         ]);
+        if (cancelled) return;
         setGroup(groupData);
         setTasks(itemsData.tasks);
         setHabits(itemsData.habits);
         setGroups(groupsData);
       } catch (error) {
+        if (cancelled) return;
         console.error("Error loading group:", error);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
     if (groupId) {
-      loadData();
+      setLoading(true);
+      void loadData();
     }
+    return () => {
+      cancelled = true;
+    };
   }, [groupId]);
 
   const handleDelete = async () => {
@@ -101,19 +94,6 @@ function GroupDetailPageContent() {
   }
 
   const allLeafTasks = getAllLeafTasks(tasks);
-  
-  // Helper function to calculate habit progress
-  const getHabitProgress = (habit: Habit): number => {
-    if (habit.habitLogs && habit.habitLogs.length > 0) {
-      const totalCount = habit.habitLogs.reduce((sum, log) => sum + log.count, 0);
-      if (habit.targetCount > 0) {
-        return Math.min(100, Math.round((totalCount / habit.targetCount) * 100));
-      }
-    } else if (habit.currentCount !== undefined && habit.targetCount) {
-      return Math.min(100, Math.round((habit.currentCount / habit.targetCount) * 100));
-    }
-    return 0;
-  };
   
   // Calculate task progress (weighted average of leaf tasks)
   let taskTotalWeight = 0;

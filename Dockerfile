@@ -10,7 +10,10 @@ RUN apk add --no-cache libc6-compat openssl
 
 # Copy package files
 COPY package.json package-lock.json* ./
-RUN npm ci --legacy-peer-deps
+# Prisma's package postinstall needs both the config and schema during `npm ci`.
+COPY prisma.config.ts ./
+COPY prisma/schema.prisma ./prisma/schema.prisma
+RUN npm ci
 
 # Stage 2: Builder
 FROM node:20-alpine AS builder
@@ -42,14 +45,11 @@ RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
 # Copy necessary files from builder
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-
-# Set ownership to nextjs user
-RUN chown -R nextjs:nodejs /app
+COPY --chown=nextjs:nodejs --from=deps /app/node_modules ./node_modules
+COPY --chown=nextjs:nodejs --from=builder /app/public ./public
+COPY --chown=nextjs:nodejs --from=builder /app/.next/standalone ./
+COPY --chown=nextjs:nodejs --from=builder /app/.next/static ./.next/static
+COPY --chown=nextjs:nodejs --from=builder /app/prisma ./prisma
 
 # Switch to non-root user
 USER nextjs

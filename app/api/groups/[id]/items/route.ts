@@ -6,6 +6,7 @@ import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { serializeTasks, serializeHabits } from "@/lib/utils"
 import { buildTaskGraph, hasGroupInTaskAncestry } from "@/lib/server/labels-groups/membership"
 import { buildTaskTree, groupTasksByParentId } from "@/lib/server/tree/task-tree"
+import { deriveProgressModel } from "@/lib/progress-model"
 
 // GET /api/groups/[id]/items - Get all tasks and habits for a group (including inherited)
 export async function GET(
@@ -196,6 +197,24 @@ export async function GET(
     const allHabitsInGroup = Array.from(
       new Map([...habitsInGroup, ...linkedHabits].map((h) => [h.id, h])).values()
     )
+
+    const progressModel = deriveProgressModel(allTasks, allHabits)
+    const applyTaskProgress = (task: (typeof rootTasks)[number]): void => {
+      const derived = progressModel.tasks.get(task.id)
+      if (derived) {
+        task.progress = derived.progress
+        task.total_weight = derived.isLeaf ? null : BigInt(derived.totalWeight)
+        task.weighted_progress = derived.isLeaf ? null : BigInt(derived.weightedProgress)
+      }
+      task.children.forEach(applyTaskProgress)
+    }
+    rootTasks.forEach(applyTaskProgress)
+
+    for (const habit of allHabitsInGroup) {
+      const derived = progressModel.habits.get(habit.id)
+      if (!derived) continue
+      Object.assign(habit, derived)
+    }
 
     return NextResponse.json({
       data: {

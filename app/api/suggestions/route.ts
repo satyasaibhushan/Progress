@@ -4,11 +4,14 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { getSuggestion, getSuggestions } from "@/lib/suggestion-algorithm"
 import { prisma } from "@/lib/prisma"
+import { parseStrictIntegerParam } from "@/lib/server/pagination/cursor"
+import { resolveRootGoal, type AncestorTask } from "@/lib/suggestion-context"
 
 type SuggestionBase = {
   id: string
   type: "task" | "habit"
   title: string
+  description?: string | null
   progress: number
   expectedProgress: number
   progressGap: number
@@ -25,6 +28,7 @@ type EnrichedSuggestion = {
   id: string
   type: string
   title: string
+  description?: string | null
   progress: number
   expectedProgress: number
   progressGap: number
@@ -38,40 +42,20 @@ type EnrichedSuggestion = {
   labels?: Array<{ id: string; name: string; color: string | null }>
 }
 
-type AncestorTask = {
-  id: string
-  title: string
-  parentId: string | null
-}
-
-function resolveRootGoal(
-  startingTaskId: string,
-  ancestorTaskById: Map<string, AncestorTask>
-): { id: string; title: string } | null {
-  let current = ancestorTaskById.get(startingTaskId)
-  let latest: { id: string; title: string } | null = current
-    ? { id: current.id, title: current.title }
-    : null
-
-  const visited = new Set<string>()
-  while (current && current.parentId && !visited.has(current.id)) {
-    visited.add(current.id)
-    const parent = ancestorTaskById.get(current.parentId)
-    if (!parent) break
-    latest = { id: parent.id, title: parent.title }
-    current = parent
-  }
-
-  return latest
-}
-
 // GET /api/suggestions - Get suggestion(s) for the authenticated user
 export async function GET(request: Request) {
   try {
     const { userId } = await getAuthenticatedUser()
     const { searchParams } = new URL(request.url)
 
-    const limit = Number.parseInt(searchParams.get("limit") || "1", 10)
+    const requestedLimit = parseStrictIntegerParam(searchParams.get("limit") ?? "1")
+    if (requestedLimit === null || requestedLimit <= 0) {
+      return NextResponse.json(
+        { error: "Invalid limit. Expected a positive integer." },
+        { status: 400 }
+      )
+    }
+    const limit = Math.min(20, requestedLimit)
     const randomize = searchParams.get("randomize") !== "false" // Default: true
 
     const items = limit === 1
@@ -79,10 +63,7 @@ export async function GET(request: Request) {
       : await getSuggestions(userId, limit, randomize)
 
     if (items.length === 0) {
-      return NextResponse.json(
-        { error: "No suggestions available. All items are completed or don't have deadlines." },
-        { status: 404 }
-      )
+      return NextResponse.json({ data: limit === 1 ? null : [] })
     }
 
     const typedItems = items as SuggestionBase[]
@@ -117,6 +98,7 @@ export async function GET(request: Request) {
                   id: true,
                   title: true,
                   progress: true,
+                  parentId: true,
                 },
               },
             },
@@ -138,6 +120,7 @@ export async function GET(request: Request) {
                 select: {
                   id: true,
                   title: true,
+                  parentId: true,
                 },
               },
             },
@@ -160,7 +143,7 @@ export async function GET(request: Request) {
         ancestorTaskById.set(task.parent.id, {
           id: task.parent.id,
           title: task.parent.title,
-          parentId: null,
+          parentId: task.parent.parentId,
         })
       }
     }
@@ -170,17 +153,16 @@ export async function GET(request: Request) {
         ancestorTaskById.set(habit.parentTask.id, {
           id: habit.parentTask.id,
           title: habit.parentTask.title,
-          parentId: null,
+          parentId: habit.parentTask.parentId,
         })
       }
     }
 
     const pendingAncestorIds = new Set<string>()
-    for (const task of taskDetails) {
-      if (task.parentId) pendingAncestorIds.add(task.parentId)
-    }
-    for (const habit of habitDetails) {
-      if (habit.parentTaskId) pendingAncestorIds.add(habit.parentTaskId)
+    for (const ancestor of ancestorTaskById.values()) {
+      if (ancestor.parentId && !ancestorTaskById.has(ancestor.parentId)) {
+        pendingAncestorIds.add(ancestor.parentId)
+      }
     }
 
     while (pendingAncestorIds.size > 0) {
@@ -213,6 +195,7 @@ export async function GET(request: Request) {
         id: item.id,
         type: item.type,
         title: item.title,
+        description: item.description,
         progress: item.progress,
         expectedProgress: item.expectedProgress,
         progressGap: item.progressGap,
