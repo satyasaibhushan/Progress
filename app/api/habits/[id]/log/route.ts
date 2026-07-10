@@ -7,51 +7,22 @@ import { logHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { calculateHabitProgressFromCount } from "@/lib/progress-calculator"
 import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
-import { getUserTimezone } from "@/lib/user-timezone"
+import {
+  getDateKeyFromInput,
+  getDateKeyInTimeZone,
+  getUserTimezone,
+} from "@/lib/user-timezone"
 import { parseDateInputToUTCDate } from "@/lib/date-only"
-
-type HabitForLogMutation = {
-  id: string
-  type: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY"
-  targetCount: number
-  countPerPeriod: number
-  maxCountPerDay: number
-  activeDays: number[]
-  startDate: Date | null
-  endDate: Date | null
-  currentCount: number
-  parentTaskId: string | null
-  importance: number
-}
+import { sumHabitLogCounts } from "@/lib/progress-model"
+import { reconcileUserProgress } from "@/lib/server/progress/reconcile"
 
 function toDateKey(year: number, month: number, day: number): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
 }
 
-function getDateKeyForTimezoneOffset(timezoneOffsetMinutes?: number): string {
-  const now = new Date()
-  if (typeof timezoneOffsetMinutes === "number" && Number.isFinite(timezoneOffsetMinutes)) {
-    const localNow = new Date(now.getTime() - timezoneOffsetMinutes * 60 * 1000)
-    return toDateKey(localNow.getUTCFullYear(), localNow.getUTCMonth() + 1, localNow.getUTCDate())
-  }
-  return toDateKey(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate())
-}
-
-function getUtcDateFromInput(dateInput?: string, timezoneOffsetMinutes?: number): Date {
-  if (!dateInput) {
-    const dateKey = getDateKeyForTimezoneOffset(timezoneOffsetMinutes)
-    const [year, month, day] = dateKey.split("-").map(Number)
-    return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
-  }
-
-  if (dateInput) {
-    const dateStr = dateInput.split("T")[0]
-    const [year, month, day] = dateStr.split("-").map(Number)
-    return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
-  }
-
-  const now = new Date()
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+function getUtcDateFromDateKey(dateKey: string): Date {
+  const [year, month, day] = dateKey.split("-").map(Number)
+  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
 }
 
 function toUtcDateKey(date: Date | null | undefined): string | null {
@@ -59,48 +30,29 @@ function toUtcDateKey(date: Date | null | undefined): string | null {
   return toDateKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate())
 }
 
-async function propagateTaskAggregatesTx(
-  tx: Prisma.TransactionClient,
-  taskId: string,
-  weightDelta: bigint,
-  weightedProgressDelta: bigint
-): Promise<void> {
-  if (weightDelta === BigInt(0) && weightedProgressDelta === BigInt(0)) {
-    return
+/**
+ * Log mutations read the existing day's count before writing it.  A
+ * serializable transaction prevents two simultaneous clicks from both
+ * passing the per-day limit check. PostgreSQL may abort one transaction with
+ * a serialization-conflict error; retry a few times so that normal concurrent
+ * requests remain successful instead of returning a transient 500.
+ */
+async function runSerializableTransaction<T>(
+  callback: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(callback, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      })
+    } catch (error) {
+      if ((error as { code?: string })?.code !== "P2034" || attempt === 2) {
+        throw error
+      }
+    }
   }
 
-  const task = await tx.task.findUnique({
-    where: { id: taskId },
-    select: { parentId: true, total_weight: true, weighted_progress: true },
-  })
-
-  if (!task) return
-
-  await tx.task.update({
-    where: { id: taskId },
-    data: {
-      total_weight: (task.total_weight || BigInt(0)) + weightDelta,
-      weighted_progress: (task.weighted_progress || BigInt(0)) + weightedProgressDelta,
-    },
-  })
-
-  if (task.parentId) {
-    await propagateTaskAggregatesTx(tx, task.parentId, weightDelta, weightedProgressDelta)
-  }
-}
-
-async function applyHabitProgressDeltaToParentTx(
-  tx: Prisma.TransactionClient,
-  habit: HabitForLogMutation,
-  oldProgress: number,
-  newProgress: number
-): Promise<void> {
-  if (!habit.parentTaskId) return
-
-  const weightedProgressDelta = BigInt(Math.round((newProgress - oldProgress) * habit.importance))
-  if (weightedProgressDelta === BigInt(0)) return
-
-  await propagateTaskAggregatesTx(tx, habit.parentTaskId, BigInt(0), weightedProgressDelta)
+  throw new Error("Transaction failed")
 }
 
 // POST /api/habits/[id]/log - Log a habit completion
@@ -115,11 +67,14 @@ export async function POST(
     const body = await request.json()
     const validatedData = logHabitSchema.parse(body)
     const incrementBy = validatedData.count || 1
-    const logDate = getUtcDateFromInput(validatedData.date, validatedData.timezoneOffsetMinutes)
-    const logDateKey = validatedData.date
-      ? validatedData.date.split("T")[0]
-      : toDateKey(logDate.getUTCFullYear(), logDate.getUTCMonth() + 1, logDate.getUTCDate())
-    const todayDateKey = getDateKeyForTimezoneOffset(validatedData.timezoneOffsetMinutes)
+    const todayDateKey = getDateKeyInTimeZone(new Date(), userTimeZone)
+    const logDateKey = validatedData.date === undefined
+      ? todayDateKey
+      : getDateKeyFromInput(validatedData.date, userTimeZone)
+    if (!logDateKey) {
+      return NextResponse.json({ error: "Invalid date" }, { status: 400 })
+    }
+    const logDate = getUtcDateFromDateKey(logDateKey)
 
     if (logDateKey > todayDateKey) {
       return NextResponse.json(
@@ -128,7 +83,7 @@ export async function POST(
       )
     }
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await runSerializableTransaction(async (tx) => {
       const habit = await tx.habit.findFirst({
         where: { id, userId },
         select: {
@@ -166,7 +121,11 @@ export async function POST(
         }
       }
 
-      const oldCurrentCount = habit.currentCount || 0
+      const oldCountAggregate = await tx.habitLog.aggregate({
+        where: { habitId: id },
+        _sum: { count: true },
+      })
+      const oldCurrentCount = oldCountAggregate._sum.count || 0
       const oldProgress = calculateHabitProgressFromCount(oldCurrentCount, habit.targetCount || 0)
 
       const existingLog = await tx.habitLog.findUnique({
@@ -205,14 +164,6 @@ export async function POST(
         },
       })
 
-      const newCurrentCount = oldCurrentCount + incrementBy
-      await tx.habit.update({
-        where: { id },
-        data: { currentCount: newCurrentCount },
-      })
-
-      const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
-      await applyHabitProgressDeltaToParentTx(tx, habit, oldProgress, newProgress)
       const metricLogs = await tx.habitLog.findMany({
         where: { habitId: id },
         select: {
@@ -220,6 +171,8 @@ export async function POST(
           count: true,
         },
       })
+      const newCurrentCount = sumHabitLogCounts(metricLogs)
+      const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
       const periodMetrics = calculateHabitPeriodMetrics(habit, metricLogs, { timeZone: userTimeZone })
 
       return {
@@ -258,6 +211,8 @@ export async function POST(
         { status: 400 }
       )
     }
+
+    await reconcileUserProgress(userId)
 
     return NextResponse.json(
       {
@@ -351,7 +306,7 @@ export async function DELETE(
       )
     }
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await runSerializableTransaction(async (tx) => {
       const habit = await tx.habit.findFirst({
         where: { id, userId },
         select: {
@@ -381,23 +336,17 @@ export async function DELETE(
         return { kind: "log_not_found" as const }
       }
 
-      const oldCurrentCount = habit.currentCount || 0
+      const oldCountAggregate = await tx.habitLog.aggregate({
+        where: { habitId: id },
+        _sum: { count: true },
+      })
+      const oldCurrentCount = oldCountAggregate._sum.count || 0
       const oldProgress = calculateHabitProgressFromCount(oldCurrentCount, habit.targetCount || 0)
-      const newCurrentCount = Math.max(0, oldCurrentCount - log.count)
 
       await tx.habitLog.delete({
         where: { id: log.id },
       })
 
-      if (newCurrentCount !== oldCurrentCount) {
-        await tx.habit.update({
-          where: { id },
-          data: { currentCount: newCurrentCount },
-        })
-      }
-
-      const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
-      await applyHabitProgressDeltaToParentTx(tx, habit, oldProgress, newProgress)
       const metricLogs = await tx.habitLog.findMany({
         where: { habitId: id },
         select: {
@@ -405,6 +354,8 @@ export async function DELETE(
           count: true,
         },
       })
+      const newCurrentCount = sumHabitLogCounts(metricLogs)
+      const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
       const periodMetrics = calculateHabitPeriodMetrics(habit, metricLogs, { timeZone: userTimeZone })
 
       return {
@@ -424,6 +375,8 @@ export async function DELETE(
     if (result.kind === "log_not_found") {
       return NextResponse.json({ error: "Log not found" }, { status: 404 })
     }
+
+    await reconcileUserProgress(userId)
 
     return NextResponse.json({
       message: "Log deleted successfully",
@@ -462,7 +415,7 @@ export async function PATCH(
       )
     }
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await runSerializableTransaction(async (tx) => {
       const habit = await tx.habit.findFirst({
         where: { id, userId },
         select: {
@@ -492,14 +445,16 @@ export async function PATCH(
         return { kind: "log_not_found" as const }
       }
 
-      const oldCurrentCount = habit.currentCount || 0
+      const oldCountAggregate = await tx.habitLog.aggregate({
+        where: { habitId: id },
+        _sum: { count: true },
+      })
+      const oldCurrentCount = oldCountAggregate._sum.count || 0
       const oldProgress = calculateHabitProgressFromCount(oldCurrentCount, habit.targetCount || 0)
 
-      let newCurrentCount = oldCurrentCount
       let updatedLog = null
 
       if (count <= 0) {
-        newCurrentCount = Math.max(0, oldCurrentCount - existingLog.count)
         await tx.habitLog.delete({
           where: { id: existingLog.id },
         })
@@ -511,23 +466,12 @@ export async function PATCH(
             maxCountPerDay: dayMaxCount,
           }
         }
-        const deltaCount = count - existingLog.count
-        newCurrentCount = Math.max(0, oldCurrentCount + deltaCount)
         updatedLog = await tx.habitLog.update({
           where: { id: existingLog.id },
           data: { count },
         })
       }
 
-      if (newCurrentCount !== oldCurrentCount) {
-        await tx.habit.update({
-          where: { id },
-          data: { currentCount: newCurrentCount },
-        })
-      }
-
-      const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
-      await applyHabitProgressDeltaToParentTx(tx, habit, oldProgress, newProgress)
       const metricLogs = await tx.habitLog.findMany({
         where: { habitId: id },
         select: {
@@ -535,6 +479,8 @@ export async function PATCH(
           count: true,
         },
       })
+      const newCurrentCount = sumHabitLogCounts(metricLogs)
+      const newProgress = calculateHabitProgressFromCount(newCurrentCount, habit.targetCount || 0)
       const periodMetrics = calculateHabitPeriodMetrics(habit, metricLogs, { timeZone: userTimeZone })
 
       return {
@@ -562,6 +508,8 @@ export async function PATCH(
         { status: 400 }
       )
     }
+
+    await reconcileUserProgress(userId)
 
     return NextResponse.json({
       message: "Log updated successfully",

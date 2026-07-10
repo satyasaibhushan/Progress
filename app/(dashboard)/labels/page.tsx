@@ -44,6 +44,7 @@ function LabelsPageContent() {
   const [creatingLabel, setCreatingLabel] = useState(false);
   const [saving, setSaving] = useState(false);
   const processedHighlightRef = useRef<string | null>(null);
+  const labelItemsRequestRef = useRef(0);
   const highlightedLabelId = searchParams.get("highlight");
   const forceShowAll = !!highlightedLabelId;
 
@@ -57,16 +58,14 @@ function LabelsPageContent() {
         setLabels(labelsData);
         setGroups(groupsData);
 
-        if (highlightedLabelId) {
-          const label = labelsData.find((item) => item.id === highlightedLabelId);
-          if (label) {
-            setSelectedLabel(label);
-          } else if (labelsData.length > 0) {
-            setSelectedLabel(labelsData[0]);
-          }
-        } else if (labelsData.length > 0) {
-          setSelectedLabel(labelsData[0]);
-        }
+        setSelectedLabel((current) => {
+          const highlighted = highlightedLabelId
+            ? labelsData.find((item) => item.id === highlightedLabelId)
+            : undefined;
+          if (highlighted) return highlighted;
+          if (current && labelsData.some((item) => item.id === current.id)) return current;
+          return labelsData[0] ?? null;
+        });
       } catch (error) {
         console.error("Error loading labels:", error);
       } finally {
@@ -93,14 +92,23 @@ function LabelsPageContent() {
   }, [setHeaderSubtitle, setHeaderRightAction, labels.length]);
 
   useEffect(() => {
+    const requestId = ++labelItemsRequestRef.current;
     async function loadLabelItems() {
-      if (!selectedLabel) return;
+      if (!selectedLabel) {
+        setLabelTasks([]);
+        setLabelHabits([]);
+        return;
+      }
       try {
         const items = await getLabelItems(selectedLabel.id);
+        if (requestId !== labelItemsRequestRef.current) return;
         setLabelTasks(items.tasks || []);
         setLabelHabits(items.habits || []);
       } catch (error) {
+        if (requestId !== labelItemsRequestRef.current) return;
         console.error("Error loading label items:", error);
+        setLabelTasks([]);
+        setLabelHabits([]);
       }
     }
 
@@ -145,9 +153,14 @@ function LabelsPageContent() {
         name: data.name,
         color: data.color,
       };
-      await createLabel(input);
+      const createdLabel = await createLabel(input);
       const updatedLabels = await getLabels();
       setLabels(updatedLabels);
+      // When creating the first label there is no selected item yet. Select
+      // the newly created label so the details panel is populated immediately.
+      setSelectedLabel((current) =>
+        current ?? updatedLabels.find((label) => label.id === createdLabel.id) ?? updatedLabels[0] ?? null
+      );
       setCreatingLabel(false);
     } catch (error) {
       console.error("Error creating label:", error);

@@ -11,6 +11,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   trustHost: true,
   callbacks: {
+    ...authConfig.callbacks,
     async session({ session, user }) {
       if (session.user) {
         session.user.id = user.id

@@ -18,7 +18,7 @@ echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━�
 
 # Docker Compose Status
 echo -e "${YELLOW}📦 Container Status:${NC}"
-docker-compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml ps
 echo ""
 
 # System Resources
@@ -56,7 +56,7 @@ echo ""
 
 # Recent Logs
 echo -e "${YELLOW}📝 Recent Application Logs (last 10 lines):${NC}"
-docker-compose -f docker-compose.prod.yml logs --tail=10 app
+docker compose -f docker-compose.prod.yml logs --tail=10 app
 echo ""
 
 # Nginx Status (if running)
@@ -94,5 +94,5 @@ echo ""
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}Monitoring complete!${NC}"
-echo -e "For live logs: ${YELLOW}docker-compose -f docker-compose.prod.yml logs -f${NC}"
+echo -e "For live logs: ${YELLOW}docker compose -f docker-compose.prod.yml logs -f${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

@@ -20,7 +20,6 @@ function toDateOnlyString(value: unknown): string | null {
  * Parse a date string flexibly - accepts any text and tries to parse it as a date
  * Supports formats: dd/mm/yy, dd-mm-yy, dd-mm-yyyy, and standard date formats
  * Returns ISO datetime string if valid, null if invalid or empty
- * Rejects dates more than 2 years in the future
  */
 export function parseDateString(dateStr: string | null | undefined): string | null {
   if (!dateStr || typeof dateStr !== 'string') return null
@@ -68,15 +67,6 @@ export function parseDateString(dateStr: string | null | undefined): string | nu
     }
   }
   
-  // Check if date is more than 2 years in the future
-  const twoYearsFromNow = new Date()
-  twoYearsFromNow.setFullYear(twoYearsFromNow.getFullYear() + 2)
-  twoYearsFromNow.setHours(23, 59, 59, 999) // End of day
-  
-  if (date > twoYearsFromNow) {
-    return null
-  }
-  
   // Return ISO string
   return date.toISOString()
 }
@@ -100,6 +90,9 @@ export function serializeTask(task: unknown): unknown {
   if (!task || typeof task !== "object") return task
 
   const serialized: SerializableObject = { ...(task as SerializableObject) }
+
+  // directGroupId is reconciliation metadata, not part of the public API contract.
+  delete serialized.directGroupId
 
   // Convert BigInt fields to strings
   if (serialized.total_weight !== null && serialized.total_weight !== undefined && typeof serialized.total_weight === 'bigint') {
@@ -154,6 +147,9 @@ export function serializeHabit(habit: unknown): unknown {
   if (!habit || typeof habit !== "object") return habit
 
   const serialized: SerializableObject = { ...(habit as SerializableObject) }
+
+  // directGroupId is reconciliation metadata, not part of the public API contract.
+  delete serialized.directGroupId
 
   // Transform habitLabels to labels array
   if (Array.isArray(serialized.habitLabels)) {

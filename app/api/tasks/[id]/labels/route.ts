@@ -9,6 +9,7 @@ import {
   canRemoveLabelFromTask,
   propagateLabelsToChildren,
 } from "@/lib/inheritance-helpers"
+import { reconcileUserLabelInheritance } from "@/lib/server/inheritance/labels"
 
 const addLabelSchema = z.object({
   labelId: z.string().min(1, "Label ID is required"),
@@ -65,21 +66,25 @@ export async function POST(
     })
 
     if (existing) {
-      return NextResponse.json(
-        { error: "Label already associated with this task" },
-        { status: 400 }
-      )
+      if (existing.inheritedFromTaskId === null) {
+        return NextResponse.json(
+          { error: "Label already associated with this task" },
+          { status: 400 }
+        )
+      }
+      await prisma.taskLabel.update({
+        where: { taskId_labelId: { taskId: id, labelId } },
+        data: { inheritedFromTaskId: null },
+      })
+    } else {
+      await prisma.taskLabel.create({
+        data: {
+          taskId: id,
+          labelId,
+        },
+      })
     }
 
-    // Create association
-    await prisma.taskLabel.create({
-      data: {
-        taskId: id,
-        labelId,
-      },
-    })
-
-    // Propagate label to all children (sub-tasks and linked habits)
     await propagateLabelsToChildren(id, [labelId], userId)
 
     // Return updated task with labels
@@ -140,8 +145,14 @@ export async function DELETE(
       return NextResponse.json({ error: "Task not found" }, { status: 404 })
     }
 
-    const body = await request.json()
-    const { labelId } = removeLabelSchema.parse(body)
+    const body = await request.json().catch(() => ({}))
+    const queryLabelId = new URL(request.url).searchParams.get("labelId")
+    const { labelId } = removeLabelSchema.parse({
+      ...(body && typeof body === "object" ? body : {}),
+      labelId: (body && typeof body === "object" && "labelId" in body
+        ? (body as { labelId?: unknown }).labelId
+        : undefined) ?? queryLabelId ?? undefined,
+    })
 
     // Check if association exists
     const existing = await prisma.taskLabel.findUnique({
@@ -180,6 +191,7 @@ export async function DELETE(
         },
       },
     })
+    await reconcileUserLabelInheritance(userId)
 
     // Return updated task with labels
     const updatedTask = await prisma.task.findUnique({

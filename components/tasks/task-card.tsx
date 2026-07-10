@@ -127,7 +127,13 @@ export function TaskCard({
         {/* Checkbox for leaf tasks */}
         {isLeaf && onProgressUpdate ? (
           <button
-            onClick={() => handleCheckboxChange(!isCompleted)}
+            onClick={(event) => {
+              // TaskTree may make the whole card clickable (e.g. labels and
+              // group detail views). Toggling progress must not also navigate
+              // to the task detail page.
+              event.stopPropagation();
+              void handleCheckboxChange(!isCompleted);
+            }}
             className="flex-shrink-0 mt-1"
             disabled={isUpdating}
             title={isCompleted ? "Mark as incomplete" : "Mark as complete"}
@@ -164,7 +170,11 @@ export function TaskCard({
             {(onEdit || onDelete || onAddTask || onAddHabit) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="p-1 hover:bg-slate-100 rounded" aria-label={`Task actions for ${task.title}`}>
+                  <button
+                    className="p-1 hover:bg-slate-100 rounded"
+                    aria-label={`Task actions for ${task.title}`}
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     <MoreVertical className="w-4 h-4 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
@@ -282,6 +292,7 @@ export function TaskCard({
                 interactive={isLeaf && !!onProgressUpdate}
                 showPercentageOnHover={true}
                 ariaLabel={`Update progress for ${task.title}`}
+                onClick={(event) => event.stopPropagation()}
               />
             </div>
           </div>

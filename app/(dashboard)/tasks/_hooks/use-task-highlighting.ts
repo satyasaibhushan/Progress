@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { getTask, TaskStatus } from "@/lib/api/tasks";
 import { getHabit } from "@/lib/api/habits";
@@ -21,6 +21,43 @@ interface UseTaskHighlightingProps {
   setExpandedTasks: Dispatch<SetStateAction<Set<string>>>;
 }
 
+function findTaskById(taskList: Task[], targetId: string): Task | null {
+  for (const task of taskList) {
+    if (task.id === targetId) return task;
+    if (task.children && task.children.length > 0) {
+      const found = findTaskById(task.children, targetId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function findTaskByHabitId(taskList: Task[], habitId: string): Task | null {
+  for (const task of taskList) {
+    if (task.habits?.some((habit) => habit.id === habitId)) return task;
+    if (task.children && task.children.length > 0) {
+      const found = findTaskByHabitId(task.children, habitId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function getAllParentIds(
+  taskList: Task[],
+  targetId: string,
+  currentPath: string[] = []
+): string[] {
+  for (const task of taskList) {
+    if (task.id === targetId) return currentPath;
+    if (task.children && task.children.length > 0) {
+      const found = getAllParentIds(task.children, targetId, [...currentPath, task.id]);
+      if (found.length > 0) return found;
+    }
+  }
+  return [];
+}
+
 export function useTaskHighlighting({
   pathname,
   highlightTaskId,
@@ -37,41 +74,6 @@ export function useTaskHighlighting({
   const processedHighlightRef = useRef<string | null>(null);
   const processedHabitHighlightRef = useRef<string | null>(null);
   const suppressAutoActiveTabRef = useRef(false);
-
-  const findTaskById = useCallback((taskList: Task[], targetId: string): Task | null => {
-    for (const task of taskList) {
-      if (task.id === targetId) return task;
-      if (task.children && task.children.length > 0) {
-        const found = findTaskById(task.children, targetId);
-        if (found) return found;
-      }
-    }
-    return null;
-  }, []);
-
-  const findTaskByHabitId = useCallback((taskList: Task[], habitId: string): Task | null => {
-    for (const task of taskList) {
-      if (task.habits?.some((habit) => habit.id === habitId)) {
-        return task;
-      }
-      if (task.children && task.children.length > 0) {
-        const found = findTaskByHabitId(task.children, habitId);
-        if (found) return found;
-      }
-    }
-    return null;
-  }, []);
-
-  const getAllParentIds = useCallback((taskList: Task[], targetId: string, currentPath: string[] = []): string[] => {
-    for (const task of taskList) {
-      if (task.id === targetId) return currentPath;
-      if (task.children && task.children.length > 0) {
-        const found = getAllParentIds(task.children, targetId, [...currentPath, task.id]);
-        if (found.length > 0) return found;
-      }
-    }
-    return [];
-  }, []);
 
   useEffect(() => {
     if (!highlightTaskId || processedHighlightRef.current === highlightTaskId) {
@@ -215,7 +217,7 @@ export function useTaskHighlighting({
     return () => {
       cancelled = true;
     };
-  }, [highlightTaskId, activeTab, loadTaskPage, findTaskById, getAllParentIds, setActiveTab, setExpandedTasks, taskPagesRef]);
+  }, [highlightTaskId, activeTab, loadTaskPage, setActiveTab, setExpandedTasks, taskPagesRef]);
 
   useEffect(() => {
     if (!highlightedHabitId || processedHabitHighlightRef.current === highlightedHabitId) {
@@ -336,7 +338,7 @@ export function useTaskHighlighting({
     return () => {
       cancelled = true;
     };
-  }, [highlightedHabitId, activeTab, loadTaskPage, findTaskById, findTaskByHabitId, getAllParentIds, setActiveTab, setExpandedTasks, taskPagesRef]);
+  }, [highlightedHabitId, activeTab, loadTaskPage, setActiveTab, setExpandedTasks, taskPagesRef]);
 
   useEffect(() => {
     if (pathname !== "/tasks") return;
@@ -375,14 +377,23 @@ export function useTaskHighlighting({
     if (!allExpanded) return;
 
     const scrollDelay = allTasksToExpand.length > 0 ? 300 : 200;
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const timer = setTimeout(callback, delay);
+      timers.push(timer);
+      return timer;
+    };
 
     const scrollToElement = () => {
+      if (cancelled) return false;
       const element = taskRefs.current[highlightTaskId];
       if (element && element.offsetParent !== null) {
         element.scrollIntoView({ behavior: "smooth", block: "center" });
         element.classList.add("bg-indigo-50");
 
-        setTimeout(() => {
+        schedule(() => {
+          if (cancelled) return;
           if (element) {
             element.classList.remove("bg-indigo-50");
           }
@@ -402,12 +413,18 @@ export function useTaskHighlighting({
       return false;
     };
 
-    setTimeout(() => {
+    schedule(() => {
+      if (cancelled) return;
       if (!scrollToElement()) {
-        setTimeout(scrollToElement, 500);
+        schedule(scrollToElement, 500);
       }
     }, scrollDelay);
-  }, [highlightTaskId, expandedTasks, activeTab, taskPages, findTaskById, getAllParentIds, taskRefs]);
+
+    return () => {
+      cancelled = true;
+      timers.forEach((timer) => clearTimeout(timer));
+    };
+  }, [highlightTaskId, expandedTasks, activeTab, taskPages, taskRefs]);
 
   useEffect(() => {
     if (!highlightedHabitId || processedHabitHighlightRef.current !== highlightedHabitId) {
@@ -432,13 +449,23 @@ export function useTaskHighlighting({
     const allExpanded = allTasksToExpand.length === 0 || allTasksToExpand.every((id) => expandedTasks.has(id));
     if (!allExpanded) return;
 
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const timer = setTimeout(callback, delay);
+      timers.push(timer);
+      return timer;
+    };
+
     const scrollToHabit = () => {
+      if (cancelled) return false;
       const element = document.querySelector<HTMLElement>(`[data-habit-card-id="${highlightedHabitId}"]`);
       if (element && element.offsetParent !== null) {
         element.scrollIntoView({ behavior: "smooth", block: "center" });
         element.classList.add("ring-2", "ring-indigo-300");
 
-        setTimeout(() => {
+        schedule(() => {
+          if (cancelled) return;
           element.classList.remove("ring-2", "ring-indigo-300");
           const params = new URLSearchParams(window.location.search);
           if (params.has("highlightHabit")) {
@@ -454,10 +481,16 @@ export function useTaskHighlighting({
       return false;
     };
 
-    setTimeout(() => {
+    schedule(() => {
+      if (cancelled) return;
       if (!scrollToHabit()) {
-        setTimeout(scrollToHabit, 500);
+        schedule(scrollToHabit, 500);
       }
     }, 300);
-  }, [highlightedHabitId, expandedTasks, activeTab, taskPages, findTaskById, findTaskByHabitId, getAllParentIds]);
+
+    return () => {
+      cancelled = true;
+      timers.forEach((timer) => clearTimeout(timer));
+    };
+  }, [highlightedHabitId, expandedTasks, activeTab, taskPages]);
 }

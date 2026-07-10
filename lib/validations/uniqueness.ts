@@ -8,7 +8,7 @@ export async function validateUniqueGroupName(userId: string, name: string, excl
 	const existing = await prisma.group.findFirst({
 		where: {
 			userId,
-			name,
+			name: { equals: name, mode: "insensitive" },
 			...(excludeId && { id: { not: excludeId } }),
 		},
 	});
@@ -25,7 +25,7 @@ export async function validateUniqueHabitTitle(userId: string, title: string, ex
 	const existing = await prisma.habit.findFirst({
 		where: {
 			userId,
-			title,
+			title: { equals: title, mode: "insensitive" },
 			...(excludeId && { id: { not: excludeId } }),
 		},
 	});
@@ -47,7 +47,7 @@ export async function validateUniqueTaskTitle(
 	const existing = await prisma.task.findFirst({
 		where: {
 			userId,
-			title,
+			title: { equals: title, mode: "insensitive" },
 			parentId,
 			...(excludeId && { id: { not: excludeId } }),
 		},

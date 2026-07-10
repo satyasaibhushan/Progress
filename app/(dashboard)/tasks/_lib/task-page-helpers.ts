@@ -1,6 +1,7 @@
 import { isPending } from "@/lib/date-helpers";
 import { Task } from "@/types";
 import { TaskStatus } from "@/lib/api/tasks";
+import { getAllLeafTasks } from "@/lib/item-metrics";
 
 export interface TaskPageState {
   items: Task[];
@@ -13,20 +14,7 @@ export interface TaskPageState {
 export const TASKS_PAGE_SIZE = 8;
 export const TASK_STATUSES: TaskStatus[] = ["active", "future", "completed"];
 
-export function getAllLeafTasks(tasks: Task[]): Task[] {
-  const leafTasks: Task[] = [];
-  const traverse = (taskList: Task[]) => {
-    taskList.forEach((task) => {
-      if (task.children && task.children.length > 0) {
-        traverse(task.children);
-      } else {
-        leafTasks.push(task);
-      }
-    });
-  };
-  traverse(tasks);
-  return leafTasks;
-}
+export { getAllLeafTasks };
 
 export function isTaskCompleted(task: Task): boolean {
   const leafTasks = getAllLeafTasks([task]);

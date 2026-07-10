@@ -24,6 +24,7 @@ import { SelectedHabitPanel } from "./selected-habit-panel";
 import { HabitDialogs } from "./habit-dialogs";
 import {
   getHabitProgressValue,
+  getProgressFromCounts,
   getStreakLabel,
   HABIT_STATUSES,
 } from "../_lib/habit-page-helpers";
@@ -221,6 +222,24 @@ export function HabitsPageContent() {
         const logsData = await getHabitLogs(habitId);
         if (cancelled || selectedHabitLogsRequestRef.current !== requestId) return;
         setSelectedHabitLogs(logsData);
+        // Keep the detail header/progress canonical with the log list. The
+        // selected item can come from a paginated list that was fetched just
+        // before a concurrent log mutation, which otherwise leaves counts
+        // (and the percentage) disagreeing with the calendar.
+        const currentCount = logsData.reduce((sum, log) => sum + log.count, 0);
+        const currentProgress = getProgressFromCounts(currentCount, selectedHabit?.targetCount ?? 0);
+        setSelectedHabit((previous) => {
+          if (!previous || previous.id !== habitId) return previous;
+          return {
+            ...previous,
+            currentCount,
+            progress: getProgressFromCounts(currentCount, previous.targetCount),
+          };
+        });
+        applyHabitPatchToLoadedPages(habitId, {
+          currentCount,
+          progress: currentProgress,
+        });
       } catch (error) {
         if (cancelled || selectedHabitLogsRequestRef.current !== requestId) return;
         console.error("Error loading selected habit logs:", error);
@@ -233,7 +252,7 @@ export function HabitsPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [selectedHabitId]);
+  }, [selectedHabitId, selectedHabit?.targetCount, applyHabitPatchToLoadedPages]);
 
   const selectedHabitProgress = selectedHabit ? getHabitProgressValue(selectedHabit) : 0;
   const selectedHabitStreak = selectedHabit?.streak || 0;
@@ -308,8 +327,8 @@ export function HabitsPageContent() {
           }}
         />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0 overflow-hidden">
-          <div className="lg:col-span-1 flex flex-col overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 min-h-0 min-w-0 overflow-hidden">
+          <div className="lg:col-span-1 flex flex-col min-w-0 overflow-hidden">
             <HabitListPanel
               activeTab={activeTab}
               onTabChange={setActiveTab}

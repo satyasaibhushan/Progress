@@ -87,18 +87,20 @@ export function Sidebar({ onSuggestionsClick, onClose, isMobile }: SidebarProps)
             ? pathname === item.href
             : pathname === item.href || pathname?.startsWith(item.href + "/");
           return (
-            <Link key={item.name} href={item.href} onClick={onClose}>
-              <Button
-                variant={isActive ? "secondary" : "ghost"}
-                className={cn(
-                  "w-full justify-start gap-3",
-                  isActive && "bg-indigo-50 text-indigo-600 hover:bg-indigo-50"
-                )}
-              >
+            <Button
+              key={item.name}
+              asChild
+              variant={isActive ? "secondary" : "ghost"}
+              className={cn(
+                "w-full justify-start gap-3",
+                isActive && "bg-indigo-50 text-indigo-600 hover:bg-indigo-50"
+              )}
+            >
+              <Link href={item.href} onClick={onClose}>
                 <Icon className="w-5 h-5" />
                 <span>{item.name}</span>
-              </Button>
-            </Link>
+              </Link>
+            </Button>
           );
         })}
       </nav>

@@ -34,8 +34,8 @@ export function SelectedHabitPanel({
     <div className="lg:col-span-1 flex flex-col h-full min-h-0">
       <Card className="flex flex-col h-full flex-1 min-h-0 !py-3 !gap-0">
         <CardHeader className="flex-shrink-0 !px-4 !pb-1 !pt-0">
-          <div className="flex items-start justify-between">
-            <div className="flex-1">
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
               <CardTitle className="text-xl">{selectedHabit.title}</CardTitle>
               {selectedHabit.description && (
                 <p className="text-sm text-muted-foreground mt-0.5">{selectedHabit.description}</p>
@@ -50,7 +50,7 @@ export function SelectedHabitPanel({
                 </button>
               ) : null}
             </div>
-            <div className="flex items-center gap-4 ml-4">
+            <div className="flex min-w-0 shrink flex-wrap items-center justify-end gap-x-4 gap-y-1 ml-4">
               {selectedHabit.type === "DAILY" ? (
                 <div className="flex items-center gap-1">
                   <span className="text-sm text-muted-foreground">Max/day:</span>

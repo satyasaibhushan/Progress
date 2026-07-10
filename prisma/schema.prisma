@@ -67,16 +67,18 @@ model VerificationToken {
 
 // Application models
 model Group {
-  id          String   @id @default(cuid())
-  name        String
-  description String?
-  color       String?
-  userId      String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  habits      Habit[]
-  tasks       Task[]
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  color        String?
+  userId       String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  habits       Habit[]
+  tasks        Task[]
+  directHabits Habit[]  @relation("HabitDirectGroup")
+  directTasks  Task[]   @relation("TaskDirectGroup")
 
   @@index([userId])
   @@map("groups")
@@ -108,6 +110,7 @@ model Task {
   startDate         DateTime?   @db.Date
   deadline          DateTime?   @db.Date
   groupId           String?
+  directGroupId     String?
   parentId          String?
   userId            String
   createdAt         DateTime    @default(now())
@@ -115,6 +118,7 @@ model Task {
   habits            Habit[]
   taskLabels        TaskLabel[]
   group             Group?      @relation(fields: [groupId], references: [id])
+  directGroup       Group?      @relation("TaskDirectGroup", fields: [directGroupId], references: [id])
   parent            Task?       @relation("TaskToTask", fields: [parentId], references: [id], onDelete: Cascade)
   children          Task[]      @relation("TaskToTask")
   user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -126,18 +130,21 @@ model Task {
   @@index([userId, deadline])
   @@index([userId, updatedAt])
   @@index([groupId])
+  @@index([directGroupId])
   @@index([parentId])
   @@index([userId])
   @@map("tasks")
 }
 
 model TaskLabel {
-  taskId  String
-  labelId String
-  task    Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  label   Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
+  taskId              String
+  labelId             String
+  inheritedFromTaskId String?
+  task                Task    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  label               Label   @relation(fields: [labelId], references: [id], onDelete: Cascade)
 
   @@id([taskId, labelId])
+  @@index([inheritedFromTaskId])
   @@map("task_labels")
 }
 
@@ -151,10 +158,11 @@ model Habit {
   countPerPeriod Int          @default(1)
   maxCountPerDay Int          @default(1)
   importance     Int          @default(50)
-  startDate      DateTime?     @db.Date
-  endDate        DateTime?     @db.Date
+  startDate      DateTime?    @db.Date
+  endDate        DateTime?    @db.Date
   userId         String
   groupId        String?
+  directGroupId  String?
   parentTaskId   String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -162,6 +170,7 @@ model Habit {
   habitLabels    HabitLabel[]
   habitLogs      HabitLog[]
   group          Group?       @relation(fields: [groupId], references: [id])
+  directGroup    Group?       @relation("HabitDirectGroup", fields: [directGroupId], references: [id])
   parentTask     Task?        @relation(fields: [parentTaskId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -172,18 +181,21 @@ model Habit {
   @@index([userId, endDate])
   @@index([userId, updatedAt])
   @@index([groupId])
+  @@index([directGroupId])
   @@index([parentTaskId])
   @@index([userId])
   @@map("habits")
 }
 
 model HabitLabel {
-  habitId String
-  labelId String
-  habit   Habit  @relation(fields: [habitId], references: [id], onDelete: Cascade)
-  label   Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
+  habitId             String
+  labelId             String
+  inheritedFromTaskId String?
+  habit               Habit   @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  label               Label   @relation(fields: [labelId], references: [id], onDelete: Cascade)
 
   @@id([habitId, labelId])
+  @@index([inheritedFromTaskId])
   @@map("habit_labels")
 }
 

@@ -1,4 +1,8 @@
 import { calculateHabitPeriodMetrics } from "@/lib/habit-period-metrics"
+import {
+  calculateHabitProgress,
+  sumHabitLogCounts,
+} from "@/lib/progress-model"
 
 type HabitLogRow = {
   habitId: string
@@ -31,6 +35,13 @@ export type HabitLogMetricInput = {
   activeDays?: number[] | null
   startDate?: Date | string | null
   endDate?: Date | string | null
+}
+
+export type HabitProgressInput = {
+  id: string
+  targetCount: number
+  currentCount?: number | null
+  progress?: number | null
 }
 
 export function mapLogsByHabitId(logs: HabitLogRow[]): Map<string, { date: Date; count: number }[]> {
@@ -78,5 +89,18 @@ export function attachPeriodMetrics<T extends HabitLogMetricInput>(
       timeZone,
     })
     Object.assign(habit, periodMetrics)
+  }
+}
+
+export function attachHabitProgress<T extends HabitProgressInput>(
+  habits: T[],
+  logsByHabitId: Map<string, { date: Date; count: number }[]>
+): void {
+  for (const habit of habits) {
+    const currentCount = sumHabitLogCounts(logsByHabitId.get(habit.id) || [])
+    Object.assign(habit, {
+      currentCount,
+      progress: calculateHabitProgress(currentCount, habit.targetCount),
+    })
   }
 }

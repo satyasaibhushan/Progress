@@ -52,8 +52,11 @@ export function useHabitCrud({
         parentTaskId: data.parentTaskId || undefined,
         labelIds: data.labelIds,
       };
-      await createHabit(createData);
+      const createdHabit = await createHabit(createData);
       await refreshInitializedHabitPages();
+      // Keep the details pane useful after creating the first habit (or when
+      // the user starts from an existing selection) by selecting the new item.
+      setSelectedHabit(createdHabit);
       setCreatingHabit(false);
     } catch (error) {
       console.error("Error creating habit:", error);
@@ -61,7 +64,7 @@ export function useHabitCrud({
     } finally {
       setSaving(false);
     }
-  }, [refreshInitializedHabitPages, setCreatingHabit]);
+  }, [refreshInitializedHabitPages, setCreatingHabit, setSelectedHabit]);
 
   const handleEdit = useCallback(async (data: HabitFormPayload) => {
     if (!editingHabit) return;
@@ -79,11 +82,13 @@ export function useHabitCrud({
         maxCountPerDay: data.maxCountPerDay,
         importance: data.importance,
         description: data.description,
-        startDate: data.startDate || undefined,
-        endDate: data.endDate || undefined,
+        // The API distinguishes null (clear the field) from undefined (do
+        // not modify it). Preserve that distinction for edits.
+        startDate: data.startDate ?? null,
+        endDate: data.endDate ?? null,
         activeDays: data.activeDays ?? undefined,
-        groupId: data.groupId || undefined,
-        parentTaskId: data.parentTaskId || undefined,
+        groupId: data.groupId ?? null,
+        parentTaskId: data.parentTaskId ?? null,
         labelIds: data.labelIds,
       };
       await updateHabit(updateData);

@@ -16,9 +16,11 @@ export interface CreateHabitInput {
   labelIds?: string[];
 }
 
-export interface UpdateHabitInput extends Partial<CreateHabitInput> {
+export type UpdateHabitInput = {
   id: string;
-}
+} & Partial<{
+  [K in keyof CreateHabitInput]: CreateHabitInput[K] | null
+}>;
 
 export interface HabitFilters {
   type?: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
@@ -266,8 +268,10 @@ export async function addHabitLabel(habitId: string, labelId: string): Promise<v
 }
 
 export async function removeHabitLabel(habitId: string, labelId: string): Promise<void> {
-  const response = await fetch(`/api/habits/${habitId}/labels?labelId=${labelId}`, {
+  const response = await fetch(`/api/habits/${habitId}/labels`, {
     method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ labelId }),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: "Unknown error" }));

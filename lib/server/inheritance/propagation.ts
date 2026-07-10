@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma"
+import { reconcileUserLabelInheritance } from "@/lib/server/inheritance/labels"
+import { reconcileUserGroupInheritance } from "@/lib/server/inheritance/groups"
 
 type TaskEdge = {
   id: string
@@ -198,84 +200,17 @@ export async function propagateDateBoundsToTaskDescendants(
 }
 
 export async function propagateLabelsToTaskDescendants(
-  taskId: string,
-  labelIds: string[],
+  _taskId: string,
+  _labelIds: string[],
   userId: string
 ): Promise<void> {
-  const uniqueLabelIds = [...new Set(labelIds)]
-  if (uniqueLabelIds.length === 0) return
-
-  const descendantTaskIds = await getDescendantTaskIds(taskId, userId)
-
-  if (descendantTaskIds.length > 0) {
-    await prisma.taskLabel.createMany({
-      data: descendantTaskIds.flatMap((childTaskId) =>
-        uniqueLabelIds.map((labelId) => ({
-          taskId: childTaskId,
-          labelId,
-        }))
-      ),
-      skipDuplicates: true,
-    })
-  }
-
-  const taskIdsForLinkedHabits = [taskId, ...descendantTaskIds]
-  const habits = await prisma.habit.findMany({
-    where: {
-      userId,
-      parentTaskId: {
-        in: taskIdsForLinkedHabits,
-      },
-    },
-    select: {
-      id: true,
-    },
-  })
-
-  if (habits.length > 0) {
-    await prisma.habitLabel.createMany({
-      data: habits.flatMap((habit) =>
-        uniqueLabelIds.map((labelId) => ({
-          habitId: habit.id,
-          labelId,
-        }))
-      ),
-      skipDuplicates: true,
-    })
-  }
+  await reconcileUserLabelInheritance(userId)
 }
 
 export async function propagateGroupToTaskDescendants(
-  taskId: string,
-  groupId: string | null,
+  _taskId: string,
+  _groupId: string | null,
   userId: string
 ): Promise<void> {
-  const descendantTaskIds = await getDescendantTaskIds(taskId, userId)
-
-  if (descendantTaskIds.length > 0) {
-    await prisma.task.updateMany({
-      where: {
-        id: {
-          in: descendantTaskIds,
-        },
-        userId,
-      },
-      data: {
-        groupId,
-      },
-    })
-  }
-
-  const taskIdsForLinkedHabits = [taskId, ...descendantTaskIds]
-  await prisma.habit.updateMany({
-    where: {
-      userId,
-      parentTaskId: {
-        in: taskIdsForLinkedHabits,
-      },
-    },
-    data: {
-      groupId,
-    },
-  })
+  await reconcileUserGroupInheritance(userId)
 }

@@ -5,17 +5,21 @@ import { prisma } from "@/lib/prisma"
 import { createHabitSchema } from "@/lib/validations/habit"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
 import { validateUniqueHabitTitle } from "@/lib/validations/uniqueness"
-import { addHabitToTask } from "@/lib/progress-calculator"
 import { HabitType } from "@prisma/client"
 import { getUserTimezone } from "@/lib/user-timezone"
 import { parseDateInputToUTCDate } from "@/lib/date-only"
-import {
-  getInheritedLabelsFromHabit,
-} from "@/lib/inheritance-helpers"
 import { serializeHabit } from "@/lib/utils"
 import { normalizeCursorPagination, getPaginatedWindow } from "@/lib/server/pagination/cursor"
 import { createHabitComparator } from "@/lib/server/ranking/habit-ranking"
-import { attachPeriodMetrics, loadLogsByHabitIds } from "@/lib/server/habits/log-metrics"
+import {
+  attachHabitProgress,
+  attachPeriodMetrics,
+  loadLogsByHabitIds,
+} from "@/lib/server/habits/log-metrics"
+import { reconcileUserProgress } from "@/lib/server/progress/reconcile"
+import { reconcileUserLabelInheritance } from "@/lib/server/inheritance/labels"
+import { getEffectiveTaskBounds } from "@/lib/server/inheritance/bounds"
+import { reconcileUserGroupInheritance } from "@/lib/server/inheritance/groups"
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6] as const
 
@@ -66,6 +70,13 @@ export async function GET(request: Request) {
     const statusFilter = status === "active" || status === "future" || status === "completed"
       ? status
       : null
+
+    if (type && !Object.values(HabitType).includes(type as HabitType)) {
+      return NextResponse.json(
+        { error: "Invalid type. Expected DAILY, WEEKLY, MONTHLY, or YEARLY." },
+        { status: 400 }
+      )
+    }
 
     // Build where clause
     const where: {
@@ -145,13 +156,12 @@ export async function GET(request: Request) {
       }
     }
 
+    attachHabitProgress(habits, logsByHabitId)
     attachPeriodMetrics(habits, logsByHabitId, userTimeZone)
 
     // Calculate progress for each habit
     const habitsWithProgress = habits.map((habit) => {
-      const currentCount = includeLogs && Array.isArray(habit.habitLogs)
-        ? habit.habitLogs.reduce((sum, log) => sum + (log.count || 0), 0)
-        : (habit.currentCount || 0)
+      const currentCount = habit.currentCount || 0
       const progress = getHabitProgress(habit, currentCount)
       return {
         ...habit,
@@ -226,6 +236,8 @@ export async function POST(request: Request) {
 
     const body = await request.json()
     const validatedData = createHabitSchema.parse(body)
+    const requestedGroupId = validatedData.groupId ?? null
+    const requestedGroupIdInput = validatedData.groupId
     const parsedStartDate = parseDateInputToUTCDate(validatedData.startDate)
     const parsedEndDate = parseDateInputToUTCDate(validatedData.endDate)
 
@@ -239,6 +251,13 @@ export async function POST(request: Request) {
     if (validatedData.endDate && !parsedEndDate) {
       return NextResponse.json(
         { error: "Invalid endDate" },
+        { status: 400 }
+      )
+    }
+
+    if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+      return NextResponse.json(
+        { error: "Habit start date must be on or before its end date" },
         { status: 400 }
       )
     }
@@ -278,8 +297,55 @@ export async function POST(request: Request) {
         )
       }
 
-      // Inherit group from parent if not explicitly set
-      if (!validatedData.groupId && parentTask.groupId) {
+      const parentBounds = await getEffectiveTaskBounds(parentTask.id, userId)
+
+      if (parsedStartDate && parentBounds?.minStartDate && parsedStartDate < parentBounds.minStartDate) {
+        return NextResponse.json(
+          { error: "Habit start date must be on or after parent task start date" },
+          { status: 400 }
+        )
+      }
+
+      if (parsedEndDate && parentBounds?.maxEndDate && parsedEndDate > parentBounds.maxEndDate) {
+        return NextResponse.json(
+          { error: "Habit end date must be on or before parent task deadline" },
+          { status: 400 }
+        )
+      }
+
+
+      if (parsedStartDate && parentBounds?.maxEndDate && parsedStartDate > parentBounds.maxEndDate) {
+        return NextResponse.json(
+          { error: "Habit start date must be on or before its ancestor deadline" },
+          { status: 400 }
+        )
+      }
+
+      if (parsedEndDate && parentBounds?.minStartDate && parsedEndDate < parentBounds.minStartDate) {
+        return NextResponse.json(
+          { error: "Habit end date must be on or after its ancestor start date" },
+          { status: 400 }
+        )
+      }
+
+      // A linked habit inherits its parent's effective group.  Reject an
+      // explicit conflicting group instead of silently replacing the input;
+      // this matches the update endpoint's behavior.
+      if (
+        parentTask.groupId !== null &&
+        requestedGroupIdInput !== undefined &&
+        requestedGroupIdInput !== parentTask.groupId
+      ) {
+        return NextResponse.json(
+          {
+            error: "Cannot change group. This habit inherits its group from a parent task.",
+            inheritedGroupId: parentTask.groupId,
+          },
+          { status: 400 }
+        )
+      }
+
+      if (parentTask.groupId) {
         validatedData.groupId = parentTask.groupId
       }
     }
@@ -312,6 +378,7 @@ export async function POST(request: Request) {
       importance: validatedData.importance,
       userId,
       groupId: validatedData.groupId ?? null,
+      directGroupId: parentTask?.groupId ? null : requestedGroupId,
       parentTaskId: validatedData.parentTaskId ?? null,
       startDate: parsedStartDate,
       endDate: parsedEndDate,
@@ -349,7 +416,13 @@ export async function POST(request: Request) {
 
     // Add labels from labelIds if provided
     if (validatedData.labelIds && validatedData.labelIds.length > 0) {
-      for (const labelId of validatedData.labelIds) {
+      const inheritedLabelIds = new Set(
+        parentTask?.taskLabels.map((taskLabel) => taskLabel.labelId) || []
+      )
+      const directLabelIds = validatedData.labelIds.filter(
+        (labelId) => !inheritedLabelIds.has(labelId)
+      )
+      for (const labelId of directLabelIds) {
         // Verify label belongs to user
         const label = await prisma.label.findFirst({
           where: { id: labelId, userId },
@@ -367,30 +440,9 @@ export async function POST(request: Request) {
       }
     }
 
-    // If habit has a parent task, inherit labels from parent
-    if (habit.parentTaskId && parentTask) {
-      const parentLabelIds = parentTask.taskLabels.map((tl) => tl.labelId)
-      // Also get inherited labels from parent's ancestors
-      const inheritedLabels = await getInheritedLabelsFromHabit(habit.id, userId)
-      const allInheritedLabels = [...new Set([...inheritedLabels, ...parentLabelIds])]
-      
-      // Add inherited labels to the new habit (avoid duplicates)
-      for (const labelId of allInheritedLabels) {
-        await prisma.habitLabel.create({
-          data: {
-            habitId: habit.id,
-            labelId,
-          },
-        }).catch(() => {
-          // Ignore if label already exists
-        })
-      }
-    }
-
-    // Add habit to parent task's aggregates if linked to a task
-    if (habit.parentTaskId) {
-      await addHabitToTask(habit.id)
-    }
+    await reconcileUserGroupInheritance(userId)
+    await reconcileUserLabelInheritance(userId)
+    await reconcileUserProgress(userId)
 
     // Reload habit with updated labels
     const updatedHabit = await prisma.habit.findUnique({

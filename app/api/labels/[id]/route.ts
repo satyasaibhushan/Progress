@@ -108,7 +108,7 @@ export async function PUT(
       const duplicate = await prisma.label.findFirst({
         where: {
           userId,
-          name: validatedData.name,
+          name: { equals: validatedData.name, mode: "insensitive" },
           id: {
             not: id,
           },

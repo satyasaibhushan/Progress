@@ -8,7 +8,7 @@ const dateInputSchema = z.string().refine((value) => {
 }, "Invalid date")
 
 export const createTaskSchema = z.object({
-  title: z.string().min(1, "Title is required").max(200, "Title too long"),
+  title: z.string().trim().min(1, "Title is required").max(200, "Title too long"),
   description: z.string().max(2000, "Description too long").optional(),
   importance: z
     .number()
@@ -30,7 +30,7 @@ export const createTaskSchema = z.object({
 })
 
 export const updateTaskSchema = z.object({
-  title: z.string().min(1, "Title is required").max(200, "Title too long").optional(),
+  title: z.string().trim().min(1, "Title is required").max(200, "Title too long").optional(),
   description: z.string().max(2000, "Description too long").optional().nullable(),
   importance: z
     .number()

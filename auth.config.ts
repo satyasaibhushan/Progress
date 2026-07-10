@@ -1,7 +1,7 @@
 import type { NextAuthConfig } from "next-auth"
 import GoogleProvider from "next-auth/providers/google"
 
-// Auth config without Prisma (for middleware - Edge Runtime compatible)
+// Shared provider and authorization callbacks; database session handling lives in lib/auth.ts.
 export const authConfig = {
   providers: [
     GoogleProvider({

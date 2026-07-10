@@ -3,7 +3,11 @@ import { HabitStatus } from "@/lib/api/habits";
 import { Habit } from "@/types";
 
 export function getHabitProgressValue(habit: Habit): number {
-  const progress = typeof habit.progress === "number" ? habit.progress : 0;
+  const progress = typeof habit.progress === "number"
+    ? habit.progress
+    : habit.targetCount > 0
+      ? ((habit.currentCount ?? 0) / habit.targetCount) * 100
+      : 0;
   return Math.min(100, Math.max(0, Math.round(progress)));
 }
 

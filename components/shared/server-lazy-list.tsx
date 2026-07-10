@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { getScrollParent } from "./scroll-parent";
 
 interface ServerLazyListProps<T> {
   items: T[];
@@ -39,7 +40,7 @@ export function ServerLazyList<T>({
         if (!entry?.isIntersecting) return;
         onLoadMore();
       },
-      { rootMargin, threshold }
+      { root: getScrollParent(sentinelRef.current), rootMargin, threshold }
     );
 
     observer.observe(sentinelRef.current);

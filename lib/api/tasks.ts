@@ -12,9 +12,11 @@ export interface CreateTaskInput {
   labelIds?: string[];
 }
 
-export interface UpdateTaskInput extends Partial<CreateTaskInput> {
+export type UpdateTaskInput = {
   id: string;
-}
+} & Partial<{
+  [K in keyof CreateTaskInput]: CreateTaskInput[K] | null
+}>;
 
 export interface TaskFilters {
   parentId?: string | null;
@@ -159,8 +161,10 @@ export async function addTaskLabel(taskId: string, labelId: string): Promise<voi
 }
 
 export async function removeTaskLabel(taskId: string, labelId: string): Promise<void> {
-  const response = await fetch(`/api/tasks/${taskId}/labels?labelId=${labelId}`, {
+  const response = await fetch(`/api/tasks/${taskId}/labels`, {
     method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ labelId }),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: "Unknown error" }));

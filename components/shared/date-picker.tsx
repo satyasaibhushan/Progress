@@ -47,10 +47,6 @@ export function DatePicker({
   }, [date]);
 
   const getDisabledDates = () => {
-    const twoYearsFromNow = new Date();
-    twoYearsFromNow.setFullYear(twoYearsFromNow.getFullYear() + 2);
-    twoYearsFromNow.setHours(23, 59, 59, 999);
-    
     const matchers: Array<{ before: Date } | { after: Date }> = [];
     
     if (disablePast) {
@@ -59,16 +55,10 @@ export function DatePicker({
       matchers.push({ before: today });
     }
     
-    // Always disable dates more than 2 years in the future
-    // If disableFuture is true, also disable dates after today (whichever is earlier)
     if (disableFuture) {
       const today = new Date();
       today.setHours(23, 59, 59, 999);
-      // Use the earlier of today or 2 years from now
-      const limit = today < twoYearsFromNow ? today : twoYearsFromNow;
-      matchers.push({ after: limit });
-    } else {
-      matchers.push({ after: twoYearsFromNow });
+      matchers.push({ after: today });
     }
     
     // Return array of matchers
@@ -87,10 +77,18 @@ export function DatePicker({
 
   const handleTextBlur = () => {
     // On blur, format the date if valid, otherwise reset
+    // Date-only ISO input (YYYY-MM-DD) must be interpreted in local time.
+    // `new Date("YYYY-MM-DD")` is UTC and shifts to the previous day for
+    // users west of UTC when the value is formatted back into the field.
+    const isoDateOnly = textInput.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
     const parsed = parseDateString(textInput);
-    if (parsed) {
-      const parsedDate = new Date(parsed);
-      // Validate date constraints (parseDateString already checks 2-year limit)
+    const parsedDate = isoDateOnly
+      ? new Date(Number(isoDateOnly[1]), Number(isoDateOnly[2]) - 1, Number(isoDateOnly[3]))
+      : parsed
+        ? new Date(parsed)
+        : null;
+    if (parsedDate && !Number.isNaN(parsedDate.getTime())) {
+      // Validate date constraints.
       let isValid = true;
       if (disablePast) {
         const today = new Date();

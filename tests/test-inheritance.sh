@@ -128,7 +128,7 @@ if [ "$HABIT_HTTP" != "201" ]; then
 fi
 
 # Check if habit has inherited label
-HABIT_LABELS=$(echo "$HABIT_BODY" | jq -r '.data.habitLabels[]?.label.id // empty')
+HABIT_LABELS=$(echo "$HABIT_BODY" | jq -r '.data.labels[]?.id // empty')
 HAS_INHERITED_LABEL_HABIT=false
 for label in $HABIT_LABELS; do
     if [ "$label" = "$LABEL_ID" ]; then
@@ -233,16 +233,14 @@ UNLINK_HTTP=$(echo "$UNLINK_RESPONSE" | tail -n1)
 if [ "$UNLINK_HTTP" = "200" ]; then
     echo "✅ Successfully unlinked child task from parent"
     
-    # Now try to remove the previously inherited label
-    REMOVE_AFTER_UNLINK_RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE -H "Cookie: ${COOKIE}" -H "Content-Type: application/json" \
-        -d "{\"labelId\":\"${LABEL_ID}\"}" \
-        "${BASE_URL}/api/tasks/${CHILD_TASK_ID}/labels")
-    REMOVE_AFTER_UNLINK_HTTP=$(echo "$REMOVE_AFTER_UNLINK_RESPONSE" | tail -n1)
-    
-    if [ "$REMOVE_AFTER_UNLINK_HTTP" = "200" ]; then
-        echo "✅ Successfully removed label after unlinking from parent"
+    # The inherited association should disappear automatically after unlinking.
+    UNLINKED_CHILD_BODY=$(echo "$UNLINK_RESPONSE" | sed '$d')
+    INHERITED_AFTER_UNLINK=$(echo "$UNLINKED_CHILD_BODY" | jq -r ".data.labels[]? | select(.id == \"${LABEL_ID}\") | .id")
+    if [ -z "$INHERITED_AFTER_UNLINK" ]; then
+        echo "✅ Inherited label disappeared after unlinking from parent"
     else
-        echo "❌ ERROR: Should be able to remove label after unlinking"
+        echo "❌ ERROR: Inherited label remained after unlinking"
+        exit 1
     fi
     
     # Try to change group
@@ -309,7 +307,7 @@ if [ "$ADD_TO_PARENT_HTTP" = "200" ]; then
     
     # Check if habit has the label
     HABIT_CHECK_RESPONSE=$(curl -s -H "Cookie: ${COOKIE}" "${BASE_URL}/api/habits/${HABIT_ID}")
-    HABIT_LABELS_CHECK=$(echo "$HABIT_CHECK_RESPONSE" | jq -r '.data.habitLabels[]?.label.id // empty')
+    HABIT_LABELS_CHECK=$(echo "$HABIT_CHECK_RESPONSE" | jq -r '.data.labels[]?.id // empty')
     HAS_PROPAGATED_LABEL_HABIT=false
     for label in $HABIT_LABELS_CHECK; do
         if [ "$label" = "$PROPAGATE_LABEL_ID" ]; then

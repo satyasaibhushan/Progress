@@ -12,7 +12,9 @@ NC='\033[0m'
 
 # Load environment variables
 if [ -f .env.production ]; then
-    export $(cat .env.production | grep -v '^#' | xargs)
+    set -a
+    . ./.env.production
+    set +a
 else
     echo -e "${RED}Error: .env.production file not found!${NC}"
     exit 1
@@ -52,9 +54,9 @@ echo -e "${YELLOW}📦 Restoring database from backup...${NC}"
 
 # Decompress if gzipped
 if [[ ${BACKUP_FILE} == *.gz ]]; then
-    gunzip -c ${BACKUP_FILE} | docker exec -i ${CONTAINER_NAME} psql -U ${DB_USER:-progress} -d ${DB_NAME:-progress_db}
+    gunzip -c "${BACKUP_FILE}" | docker exec -i "${CONTAINER_NAME}" psql -U "${DB_USER:-progress}" -d "${DB_NAME:-progress_db}"
 else
-    docker exec -i ${CONTAINER_NAME} psql -U ${DB_USER:-progress} -d ${DB_NAME:-progress_db} < ${BACKUP_FILE}
+    docker exec -i "${CONTAINER_NAME}" psql -U "${DB_USER:-progress}" -d "${DB_NAME:-progress_db}" < "${BACKUP_FILE}"
 fi
 
 if [ $? -eq 0 ]; then
@@ -66,6 +68,6 @@ fi
 
 # Restart the app
 echo -e "${YELLOW}🔄 Restarting application...${NC}"
-docker-compose -f docker-compose.prod.yml restart app
+docker compose -f docker-compose.prod.yml restart app
 
 echo -e "${GREEN}✨ Restore complete!${NC}"

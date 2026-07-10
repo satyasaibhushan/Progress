@@ -291,10 +291,13 @@ export function TasksPageContent() {
         importance: data.importance,
         description: data.description,
         progress: data.progress,
-        startDate: data.startDate || undefined,
-        deadline: data.deadline || undefined,
-        groupId: data.groupId || undefined,
-        parentId: data.parentId || undefined,
+        // PUT treats `null` as an explicit clear and `undefined` as "leave
+        // unchanged". Empty form values therefore need to be sent as null
+        // when editing, otherwise a user cannot unlink or clear a field.
+        startDate: data.startDate ?? null,
+        deadline: data.deadline ?? null,
+        groupId: data.groupId ?? null,
+        parentId: data.parentId ?? null,
         labelIds: data.labelIds,
       });
       await refreshInitializedTaskPages();
@@ -324,6 +327,11 @@ export function TasksPageContent() {
   const handleProgressUpdate = async (taskId: string, newProgress: number) => {
     try {
       await updateTask({ id: taskId, progress: newProgress });
+      // Progress updates can move a task between the active/future/completed
+      // tabs and also change the aggregate progress of its ancestors. Refresh
+      // every page that has already been loaded so the list and tab counters
+      // stay in sync with the server response.
+      await refreshInitializedTaskPages();
     } catch (error) {
       console.error("Error updating task progress:", error);
       throw error;

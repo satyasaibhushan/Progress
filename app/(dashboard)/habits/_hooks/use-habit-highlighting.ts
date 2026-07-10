@@ -50,6 +50,12 @@ export function useHabitHighlighting({
     }
 
     let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const schedule = (callback: () => void, delay: number) => {
+      const timer = setTimeout(callback, delay);
+      timers.push(timer);
+      return timer;
+    };
 
     const ensureHighlightedHabitLoaded = async () => {
       const focusHighlightedHabit = (status: HabitStatus, habit: Habit) => {
@@ -60,12 +66,14 @@ export function useHabitHighlighting({
         }
 
         const scrollToHabit = () => {
+          if (cancelled) return false;
           const element = habitRefs.current[highlightHabitId];
           if (element && element.offsetParent !== null) {
             element.scrollIntoView({ behavior: "smooth", block: "center" });
             element.classList.add("bg-indigo-50");
 
-            setTimeout(() => {
+            schedule(() => {
+              if (cancelled) return;
               element.classList.remove("bg-indigo-50");
               const params = new URLSearchParams(window.location.search);
               if (params.has("highlight")) {
@@ -81,12 +89,15 @@ export function useHabitHighlighting({
           return false;
         };
 
-        setTimeout(() => {
+        schedule(() => {
+          if (cancelled) return;
           setSelectedHabit(habit);
           if (!scrollToHabit()) {
-            setTimeout(() => {
+            schedule(() => {
+              if (cancelled) return;
               if (!scrollToHabit()) {
-                setTimeout(() => {
+                schedule(() => {
+                  if (cancelled) return;
                   scrollToHabit();
                 }, 500);
               }
@@ -182,6 +193,7 @@ export function useHabitHighlighting({
 
     return () => {
       cancelled = true;
+      timers.forEach((timer) => clearTimeout(timer));
     };
   }, [highlightHabitId, activeTab, loadHabitPage, habitPagesRef, habitRefs, setActiveTab, setSelectedHabit]);
 }

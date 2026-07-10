@@ -2,8 +2,10 @@
 
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { SuggestionsCarousel } from "@/components/suggestions/suggestions-carousel";
-import { useState, createContext, useContext } from "react";
+import { useState, createContext, useContext, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { TimezoneSync } from "@/components/providers/timezone-sync";
+import { LoadingSkeleton } from "@/components/shared/loading-skeleton";
 
 // Context for header actions
 const HeaderActionContext = createContext<{
@@ -20,7 +22,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [headerRightAction, setHeaderRightAction] = useState<React.ReactNode>(null);
   const [headerSubtitle, setHeaderSubtitle] = useState<string | null>(null);
+  const [timezoneReady, setTimezoneReady] = useState(false);
   const router = useRouter();
+  const handleTimezoneReady = useCallback(() => setTimezoneReady(true), []);
 
   const handleNavigate = (type: "task" | "habit", id: string) => {
     if (type === "task") {
@@ -33,12 +37,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <HeaderActionContext.Provider value={{ setHeaderRightAction, setHeaderSubtitle }}>
+      <TimezoneSync onReady={handleTimezoneReady} />
       <DashboardLayout 
         onSuggestionsClick={() => setShowSuggestions(true)}
         headerRightAction={headerRightAction}
         headerSubtitle={headerSubtitle || undefined}
       >
-        {children}
+        {timezoneReady ? children : <LoadingSkeleton count={10} />}
       </DashboardLayout>
       {showSuggestions && (
         <SuggestionsCarousel

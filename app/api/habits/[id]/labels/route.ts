@@ -8,6 +8,7 @@ import {
   canRemoveLabelFromHabit,
 } from "@/lib/inheritance-helpers"
 import { serializeHabit } from "@/lib/utils"
+import { reconcileUserLabelInheritance } from "@/lib/server/inheritance/labels"
 
 const addLabelSchema = z.object({
   labelId: z.string().min(1, "Label ID is required"),
@@ -64,19 +65,26 @@ export async function POST(
     })
 
     if (existing) {
-      return NextResponse.json(
-        { error: "Label already associated with this habit" },
-        { status: 400 }
-      )
+      if (existing.inheritedFromTaskId === null) {
+        return NextResponse.json(
+          { error: "Label already associated with this habit" },
+          { status: 400 }
+        )
+      }
+      await prisma.habitLabel.update({
+        where: { habitId_labelId: { habitId: id, labelId } },
+        data: { inheritedFromTaskId: null },
+      })
+    } else {
+      await prisma.habitLabel.create({
+        data: {
+          habitId: id,
+          labelId,
+        },
+      })
     }
 
-    // Create association
-    await prisma.habitLabel.create({
-      data: {
-        habitId: id,
-        labelId,
-      },
-    })
+    await reconcileUserLabelInheritance(userId)
 
     // Return updated habit with labels
     const updatedHabit = await prisma.habit.findUnique({
@@ -135,8 +143,14 @@ export async function DELETE(
       return NextResponse.json({ error: "Habit not found" }, { status: 404 })
     }
 
-    const body = await request.json()
-    const { labelId } = removeLabelSchema.parse(body)
+    const body = await request.json().catch(() => ({}))
+    const queryLabelId = new URL(request.url).searchParams.get("labelId")
+    const { labelId } = removeLabelSchema.parse({
+      ...(body && typeof body === "object" ? body : {}),
+      labelId: (body && typeof body === "object" && "labelId" in body
+        ? (body as { labelId?: unknown }).labelId
+        : undefined) ?? queryLabelId ?? undefined,
+    })
 
     // Check if association exists
     const existing = await prisma.habitLabel.findUnique({
@@ -175,6 +189,7 @@ export async function DELETE(
         },
       },
     })
+    await reconcileUserLabelInheritance(userId)
 
     // Return updated habit with labels
     const updatedHabit = await prisma.habit.findUnique({

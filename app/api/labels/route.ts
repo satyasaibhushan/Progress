@@ -4,6 +4,7 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { createLabelSchema } from "@/lib/validations/label"
 import { getAuthenticatedUser, handleApiError } from "@/lib/api-helpers"
+import { deriveProgressModel } from "@/lib/progress-model"
 
 // GET /api/labels - Get all labels for the authenticated user
 export async function GET() {
@@ -34,6 +35,7 @@ export async function GET() {
       select: {
         id: true,
         parentId: true,
+        importance: true,
         progress: true,
         taskLabels: {
           select: {
@@ -48,8 +50,14 @@ export async function GET() {
       select: {
         id: true,
         currentCount: true,
+        importance: true,
         parentTaskId: true,
         targetCount: true,
+        habitLogs: {
+          select: {
+            count: true,
+          },
+        },
         habitLabels: {
           select: {
             labelId: true,
@@ -59,12 +67,7 @@ export async function GET() {
     })
 
     const taskById = new Map(tasks.map((task) => [task.id, task]))
-    const childCount = new Map<string, number>()
-
-    for (const task of tasks) {
-      if (!task.parentId) continue
-      childCount.set(task.parentId, (childCount.get(task.parentId) || 0) + 1)
-    }
+    const progressModel = deriveProgressModel(tasks, habits)
 
     const taskLabelCache = new Map<string, Set<string>>()
     const getTaskLabelIds = (taskId: string): Set<string> => {
@@ -95,9 +98,9 @@ export async function GET() {
     )
 
     for (const task of tasks) {
-      const isLeaf = (childCount.get(task.id) || 0) === 0
-      if (!isLeaf) continue
-      const progress = Math.min(100, Math.max(0, task.progress || 0))
+      const derived = progressModel.tasks.get(task.id)
+      if (!derived?.isLeaf) continue
+      const progress = derived.progress
       if (progress >= 100) continue
       const labelIds = getTaskLabelIds(task.id)
       labelIds.forEach((labelId) => {
@@ -109,10 +112,7 @@ export async function GET() {
     }
 
     for (const habit of habits) {
-      const totalCount = habit.currentCount || 0
-      const progress = habit.targetCount > 0
-        ? Math.min(100, Math.round((totalCount / habit.targetCount) * 100))
-        : 0
+      const progress = progressModel.habits.get(habit.id)?.progress || 0
       if (progress >= 100) continue
       const labelIds = new Set(habit.habitLabels.map((hl) => hl.labelId))
       if (habit.parentTaskId) {
@@ -165,7 +165,7 @@ export async function POST(request: Request) {
     const existingLabel = await prisma.label.findFirst({
       where: {
         userId,
-        name: validatedData.name,
+        name: { equals: validatedData.name, mode: "insensitive" },
       },
     })
 

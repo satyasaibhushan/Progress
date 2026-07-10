@@ -484,7 +484,7 @@ Key Changes:
 - **Cookie:** HttpOnly, Secure, SameSite
 
 ### Protected Routes
-- Middleware checks session on protected routes
+- Next.js Proxy checks the Auth.js database session on protected page routes
 - Redirect to login if not authenticated
 - Store original URL for post-login redirect
 
@@ -492,33 +492,31 @@ Key Changes:
 
 ## Progress Calculation Logic
 
-### Task Progress (Aggregate-Based Implementation)
+### Task Progress (Canonical Leaf Model)
 
 #### Current Implementation:
-- **Leaf Tasks:** Store manual progress (0-100%) in `progress` field
-- **Parent Tasks:** Use aggregate-based calculation with `total_weight` and `weighted_progress` fields
-- **Progress Calculation:** `weighted_progress / total_weight` calculated on-demand
-- **Automatic Updates:** When leaf task progress/importance changes, aggregates propagate up the hierarchy
-- **BIGINT Storage:** Uses BigInt to prevent overflow with large hierarchies
+- **Leaf Tasks:** A task with no child tasks and no directly linked habits stores manual progress (0-100%).
+- **Linked Habits:** Habit logs are the source of truth; the cached count is maintained by a database trigger.
+- **Parent Tasks:** Progress is the importance-weighted result of all descendant leaf tasks and linked habits. A task with a linked habit is therefore not also counted as a manual leaf.
+- **Cached Aggregates:** `progress`, `total_weight`, and `weighted_progress` are updated from the same canonical model after every relevant mutation.
+- **Repair:** `npm run db:reconcile` recomputes caches from source data and also repairs inherited organization and date bounds.
 
 #### Aggregate System:
-- Leaf tasks: Store `importance` (weight) and `progress` (0-100)
-- Parent tasks: Store `total_weight` (Σ weights of descendant leaves) and `weighted_progress` (Σ(progress × weight))
-- Progress calculated on-demand: `weighted_progress / total_weight`
-- Changes propagate automatically up the hierarchy
+- Leaf task contribution: `manual progress × task importance`
+- Habit contribution: `log-derived progress × habit importance`
+- Parent progress: `Σ(weighted contribution) / Σ(leaf and habit importance)`
+- The model is derived centrally in `lib/progress-model.ts` and persisted by the server reconciliation layer.
 
 ### Habit Progress (Cumulative Implementation)
 
-#### When Task Has Child Tasks:
+#### When Task Has Descendant Leaves:
 ```typescript
-taskProgress = (
-  Σ(childTask.progress × childTask.importance) /
-  Σ(childTask.importance)
-)
+taskProgress = Σ(leaf.progress × leaf.importance) / Σ(leaf.importance)
 
 Where:
-- childTask.progress: 0-100
-- childTask.importance: 1-100 weightage
+- leaf is either a manual leaf task or a linked habit
+- leaf.progress: 0-100
+- leaf.importance: 1-100 weight
 ```
 
 **Example:**
@@ -535,7 +533,7 @@ Task Progress = (50×80 + 100×60 + 0×40) / (80 + 60 + 40)
 ```
 
 #### Root Task Progress with Linked Habits:
-Root tasks use the same aggregate system as parent tasks, with habits contributing to aggregates:
+Root tasks use the same leaf model as every other parent task:
 - **Habit Contribution:** Habits linked via `parentTaskId` contribute their `importance` as weight and `completion × importance` as weighted progress
 - **Formula:** `weighted_progress / total_weight` where:
   - `total_weight = Σ(child_task.total_weight) + Σ(habit.importance)`
@@ -545,7 +543,7 @@ Root tasks use the same aggregate system as parent tasks, with habits contributi
 ```typescript
 For each linked habit (habit.parentTaskId = task.id):
   - All types use cumulative progress: (total count of all logs / targetCount) × 100
-  - Progress is calculated on-demand, not stored
+  - Progress is calculated from logs; `currentCount` is a synchronized cache
   - Capped at 100%
   - Completion = min(100, (totalLogs / targetCount) × 100)
 ```
@@ -554,16 +552,13 @@ For each linked habit (habit.parentTaskId = task.id):
 - **DAILY:** Can be logged multiple times per day, progress = (total logs / targetCount) × 100
 - **WEEKLY:** Can be logged n times per week on specific days (activeDays), progress = (total logs / targetCount) × 100
 - **MONTHLY:** Can be logged n times per month, progress = (total logs / targetCount) × 100
-- **targetCount:** Required, can be provided manually or auto-calculated from endDate
-  - Auto-calculated as: `<period_count> × countPerPeriod`
-  - DAILY: `days between start and endDate × countPerPeriod`
-  - WEEKLY: `weeks between start and endDate × countPerPeriod`
-  - MONTHLY: `months between start and endDate × countPerPeriod`
-  - Example: 10 days with countPerPeriod=5 → targetCount=50 (5 per day for 10 days)
+- **YEARLY:** Can be logged n times per year, progress = (total logs / targetCount) × 100
+- **targetCount:** Required explicit goal for the habit's full lifecycle
 - **countPerPeriod:** Multiplier for how many completions per period (default 1)
   - DAILY: "N times per day" (e.g., countPerPeriod=5 means 5 times per day)
   - WEEKLY: "N times per week" (e.g., countPerPeriod=3 means 3 times per week)
   - MONTHLY: "N times per month" (e.g., countPerPeriod=2 means 2 times per month)
+  - YEARLY: "N times per year" (e.g., countPerPeriod=1 means once per year)
 - **activeDays:** Required for WEEKLY habits (array of day numbers 0-6)
   - Now used as UI constraint/reminder only (which days user can log)
   - Does NOT affect targetCount calculation (based on total weeks instead)
@@ -581,12 +576,11 @@ weighted_progress = 4800 + 3200 + (100×50) + (50×30) = 8000 + 5000 + 1500 = 14
 Root Task Progress = 14500 / 200 = 72.5%
 ```
 
-### Update Triggers (Implemented)
-- **Child task update** → Automatically recalculates parent Task aggregates via `propagateAggregates()`
-- **Habit log/update** → Automatically updates parent Task aggregates (if parentTaskId set)
-- **Task importance change** → Updates aggregates up the hierarchy
-- **Task/habit added/removed** → Updates parent aggregates
-- All calculations happen in API routes using `lib/progress-calculator.ts` functions
+### Consistency Updates (Implemented)
+- **Task, habit, and log mutations** → Reconcile canonical progress for the affected user.
+- **Habit log writes** → A database trigger keeps `currentCount` synchronized even outside the API.
+- **Hierarchy mutations** → Reconcile progress, full-ancestry date bounds, inherited labels, and effective groups.
+- **Direct versus inherited organization** → Source metadata prevents reparenting or detaching from deleting deliberate group and label choices.
 
 ---
 
@@ -614,8 +608,8 @@ For each leaf node:
 
 Where:
   expectedProgress = (daysPassed / totalDays) × 100
-    - daysPassed = currentDate - createdAt
-    - totalDays = deadline/endDate - createdAt
+    - daysPassed = currentDate - (startDate or createdAt fallback)
+    - totalDays = deadline/endDate - (startDate or createdAt fallback)
   
   progressGap = max(0, expectedProgress - currentProgress)
   
@@ -623,7 +617,7 @@ Where:
 ```
 
 **Implementation Details:**
-- Uses `createdAt` as start date for both tasks and habits
+- Uses the explicit `startDate` when present and falls back to `createdAt` for legacy items
 - Uses `deadline` for tasks, `endDate` for habits as end date
 - Progress gap ensures only under-achieved items get positive scores
 - Randomness adds variety but can be disabled for deterministic results
@@ -1040,7 +1034,7 @@ If app grows significantly:
 
 ### Local Development
 1. Clone repository
-2. Install dependencies: `npm install`
+2. Install dependencies: `npm ci`
 3. Set up `.env.local` with local PostgreSQL
 4. Run migrations: `npx prisma migrate dev`
 5. Start dev server: `npm run dev`

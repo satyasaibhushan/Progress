@@ -100,7 +100,7 @@ Building a comprehensive progress tracking application with tasks, habits, and i
 - Create login page with Google sign-in button
 - Add session provider wrapper in layout
 - Create user menu/avatar component with logout
-- Add protected route middleware
+- Add protected route Proxy
 - Test authentication flow
 
 ---
@@ -193,25 +193,15 @@ Building a comprehensive progress tracking application with tasks, habits, and i
 
 ## Phase 5: Progress Calculation Engine
 
-### Task 5.1: Task Progress Calculation (Aggregate-Based)
+### Task 5.1: Task Progress Calculation (Canonical Leaf Model)
 **Status:** ✅ Completed
-**Description:** Implement aggregate-based progress calculation for tasks using bottom-up aggregation.
+**Description:** Derive task progress from descendant leaf tasks and directly linked habits.
 **What was done:**
-- Updated Prisma schema: Added `total_weight` (BigInt) and `weighted_progress` (BigInt) fields to Task model
-- Removed direct `progress` field from parent tasks (only leaf tasks store progress)
-- Created aggregate-based calculation system in `lib/progress-calculator.ts`:
-  - Leaf tasks store: `importance` (weight), `progress` (0-100)
-  - Parent tasks store: `total_weight` (Σ weights of all descendant leaves), `weighted_progress` (Σ(progress × weight) of descendant leaves)
-  - Progress calculated on-demand: `weighted_progress / total_weight`
-- Implemented functions:
-  - `getTaskProgress()` - On-demand progress calculation for any task
-  - `updateLeafTaskProgress()` - Update aggregates when leaf task progress changes
-  - `updateLeafTaskWeight()` - Update aggregates when leaf task importance changes
-  - `addChildToTask()` - Add child to parent's aggregates (handles leaf → parent transition)
-  - `removeChildFromTask()` - Remove child from parent's aggregates (handles parent → leaf transition)
-  - `propagateAggregates()` - Recursively propagate changes up the hierarchy
-- Integrated into task create/update/delete API routes
-- Uses BIGINT to prevent overflow with large hierarchies
+- Added a pure canonical model in `lib/progress-model.ts`.
+- Manual progress contributes only when a task has neither child tasks nor linked habits.
+- Habit progress is derived from habit-log counts and contributes at its declared importance.
+- Parent caches are reconciled from the canonical model after every relevant API mutation.
+- Added `npm run db:reconcile` to repair legacy or externally changed rows.
 
 ### Task 5.2: Root Task Progress Calculation (Aggregate-Based)
 **Status:** ✅ Completed
@@ -223,25 +213,21 @@ Building a comprehensive progress tracking application with tasks, habits, and i
 - Formula: `weighted_progress / total_weight` where:
   - `total_weight = Σ(child_task.total_weight) + Σ(habit.importance)`
   - `weighted_progress = Σ(child_task.weighted_progress) + Σ(habit.completion × habit.importance)`
-- Progress calculated on-demand, no manual updates needed
+- Cached progress is reconciled from the canonical model; no manual parent updates are needed
 
 ### Task 5.3: Habit Completion Tracking
 **Status:** ✅ Completed
 **Description:** Calculate habit completion using cumulative progress based on total logs.
 **What was done:**
-- **Habit Types:** Simplified to DAILY, WEEKLY, MONTHLY (removed N_PER_DAY)
+- **Habit Types:** DAILY, WEEKLY, MONTHLY, and YEARLY
 - **Progress Calculation:** Changed to cumulative approach - `(total count of all logs / targetCount) × 100`
   - All habit types use the same cumulative formula
-  - Progress is calculated on-demand, not stored
+  - Progress is calculated from logs; `currentCount` is a database-maintained cache
   - Capped at 100%
-- **targetCount:** Required field (can be provided or auto-calculated from endDate)
-  - **DAILY:** `days between start and endDate`
-  - **WEEKLY:** `count of active days in date range`
-  - **MONTHLY:** `number of months between start and endDate`
+- **targetCount:** Required explicit lifecycle goal
 - **activeDays:** New field for WEEKLY habits (Int[] array of day numbers: 0=Sun, 1=Mon, ..., 6=Sat)
-- **endDate:** Used for auto-calculating targetCount and urgency calculation (optional)
+- **endDate:** Used for lifecycle bounds and urgency calculation (optional)
 - Created `calculateHabitCompletion()` function (replaces `calculateHabitCompletionToday()`)
-- Created `calculateTargetCount()` helper function for auto-calculation
 - Created `updateHabitProgress()` - Update parent task aggregates when habit completion changes
 - Created `addHabitToTask()` - Add habit to parent task's aggregates
 - Created `removeHabitFromTask()` - Remove habit from parent task's aggregates
@@ -262,7 +248,7 @@ Building a comprehensive progress tracking application with tasks, habits, and i
 - Created `lib/suggestion-algorithm.ts` with core suggestion logic
 - Identifies leaf nodes (tasks with no children/habits, and all habits)
 - Calculates "under-achievement score" using formula: `importance × (expectedProgress - currentProgress) × randomFactor`
-- Expected progress calculated as: `(daysPassed / totalDays) × 100` using `createdAt` to `deadline/endDate`
+- Expected progress calculated as: `(daysPassed / totalDays) × 100` using explicit `startDate` (or the legacy `createdAt` fallback) to `deadline/endDate`
 - Progress gap: `max(0, expectedProgress - currentProgress)`
 - Randomness factor: 20% (multiplier between 0.8 and 1.2)
 - Excludes completed items (progress >= 100%)

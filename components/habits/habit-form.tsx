@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import * as React from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { format, parseISO } from "date-fns";
@@ -54,7 +54,7 @@ export function HabitForm({
     handleSubmit,
     formState: { errors },
     setValue,
-    watch,
+    control,
     getValues,
   } = useForm<HabitFormData>({
     resolver: zodResolver(habitFormSchema),
@@ -95,14 +95,16 @@ export function HabitForm({
     }
   }, [initialParentTaskId, habit, setValue]);
 
-  const type = watch("type");
+  const type = useWatch({ control, name: "type" });
   const isDaily = type === "DAILY";
-  const selectedParentTaskId = watch("parentTaskId");
-  const selectedGroupId = watch("groupId") || undefined;
-  const importance = watch("importance") ?? 50;
-  const watchedLabelIds = watch("labelIds");
+  const selectedParentTaskId = useWatch({ control, name: "parentTaskId" });
+  const selectedGroupId = useWatch({ control, name: "groupId" }) || undefined;
+  const importance = useWatch({ control, name: "importance" }) ?? 50;
+  const watchedLabelIds = useWatch({ control, name: "labelIds" });
   const selectedLabelIds = React.useMemo(() => watchedLabelIds ?? [], [watchedLabelIds]);
-  const activeDays = watch("activeDays") || [];
+  const activeDays = useWatch({ control, name: "activeDays" }) || [];
+  const startDate = useWatch({ control, name: "startDate" });
+  const endDate = useWatch({ control, name: "endDate" });
   const [apiError, setApiError] = useState<string | null>(null);
   const [showDailySchedule, setShowDailySchedule] = useState(false);
 
@@ -247,7 +249,7 @@ export function HabitForm({
         <div>
           <FormLabel htmlFor="groupId">Group</FormLabel>
           <Select
-            value={watch("groupId") || "__none__"}
+            value={selectedGroupId || "__none__"}
             onValueChange={(value) =>
               setValue("groupId", value === "__none__" ? undefined : value)
             }
@@ -352,7 +354,7 @@ export function HabitForm({
         <div>
           <FormLabel>Start Date</FormLabel>
           <DatePicker
-            date={watch("startDate") ? parseISO(watch("startDate")!) : undefined}
+            date={startDate ? parseISO(startDate) : undefined}
             onSelect={(date) =>
               setValue("startDate", date ? format(date, "yyyy-MM-dd") : undefined)
             }
@@ -366,7 +368,7 @@ export function HabitForm({
         <div>
           <FormLabel>End Date</FormLabel>
           <DatePicker
-            date={watch("endDate") ? parseISO(watch("endDate")!) : undefined}
+            date={endDate ? parseISO(endDate) : undefined}
             onSelect={(date) =>
               setValue("endDate", date ? format(date, "yyyy-MM-dd") : undefined)
             }
@@ -382,7 +384,7 @@ export function HabitForm({
       <div>
         <FormLabel htmlFor="parentTaskId">Link to Task (Optional)</FormLabel>
         <Select
-          value={watch("parentTaskId") || "__none__"}
+          value={selectedParentTaskId || "__none__"}
           onValueChange={(value) =>
             setValue("parentTaskId", value === "__none__" ? undefined : value)
           }

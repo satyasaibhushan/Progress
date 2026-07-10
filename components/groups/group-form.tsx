@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Group } from "@/types";
@@ -49,7 +49,7 @@ export function GroupForm({
     handleSubmit,
     formState: { errors },
     setValue,
-    watch,
+    control,
   } = useForm<GroupFormData>({
     resolver: zodResolver(formSchema),
     defaultValues: group
@@ -63,7 +63,7 @@ export function GroupForm({
         },
   });
 
-  const selectedColor = watch("color");
+  const selectedColor = useWatch({ control, name: "color" });
   const [apiError, setApiError] = useState<string | null>(null);
 
   const handleFormSubmit = async (data: GroupFormData) => {
