@@ -213,6 +213,9 @@ npm run db:deploy
 npm run db:reconcile
 ```
 
+Vercel production deployments run committed migrations before building the
+application. Preview deployments build without changing the database.
+
 The API smoke-test scripts require an explicit authenticated cookie and never contain a reusable token:
 
 ```bash
