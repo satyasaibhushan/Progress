@@ -4,7 +4,9 @@ import {
   timingSafeEqual,
 } from "node:crypto"
 
-export function createOpaqueToken(prefix: "progress_ac_" | "progress_rt_"): string {
+export function createOpaqueToken(
+  prefix: "progress_ac_" | "progress_rt_" | "progress_client_",
+): string {
   return `${prefix}${randomBytes(32).toString("base64url")}`
 }
 

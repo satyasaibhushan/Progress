@@ -12,6 +12,7 @@ import {
   getProtectedResourceMetadata,
   readMcpAuthConfig,
 } from "../lib/mcp/config"
+import { validateClientRegistration } from "../lib/oauth/clients"
 import {
   getAuthorizationServerMetadata,
   readOAuthServerConfig,
@@ -38,14 +39,22 @@ const environment = {
   NEXTAUTH_URL: "https://progress.example.com",
   MCP_RESOURCE_URL: "https://progress.example.com/mcp",
   MCP_AUTH_REQUIRED_SCOPES: "progress:read",
-  OAUTH_KAIRO_CLIENT_ID: "kairo",
-  OAUTH_KAIRO_REDIRECT_URIS: "http://127.0.0.1:8765/callback",
   OAUTH_SIGNING_PRIVATE_KEY: privateKeyPem,
   OAUTH_SIGNING_KEY_ID: "test-key",
 }
 
 const config = readMcpAuthConfig(environment)
 const keys = readOAuthSigningKeys(environment)
+const client = {
+  clientId: "dynamic-client",
+  clientName: "Example MCP Client",
+  redirectUris: ["http://127.0.0.1:8765/callback"],
+  grantTypes: ["authorization_code", "refresh_token"],
+  responseTypes: ["code"] as ["code"],
+  tokenEndpointAuthMethod: "none" as const,
+  scope: "progress:read",
+  createdAt: new Date(),
+}
 
 function createUserStore(userId: string | null): McpUserStore {
   return {
@@ -73,6 +82,7 @@ test("first-party OAuth configuration publishes MCP and authorization metadata",
   )
   assert.equal(metadata.authorization_endpoint, "https://progress.example.com/oauth/authorize")
   assert.equal(metadata.token_endpoint, "https://progress.example.com/oauth/token")
+  assert.equal(metadata.registration_endpoint, "https://progress.example.com/oauth/register")
   assert.equal(metadata.jwks_uri, "https://progress.example.com/.well-known/jwks.json")
   assert.deepEqual(metadata.code_challenge_methods_supported, ["S256"])
   assert.deepEqual(metadata.token_endpoint_auth_methods_supported, ["none"])
@@ -92,22 +102,86 @@ test("OAuth configuration rejects a cross-origin MCP resource", () => {
   )
 })
 
+test("dynamic registration accepts public clients with safe redirect URIs", () => {
+  assert.deepEqual(
+    validateClientRegistration(
+      {
+        client_name: "Example MCP Client",
+        redirect_uris: [
+          "http://127.0.0.1:8765/callback",
+          "https://client.example.com/oauth/callback",
+        ],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+        scope: "progress:read",
+      },
+      config,
+    ),
+    {
+      clientName: "Example MCP Client",
+      redirectUris: [
+        "http://127.0.0.1:8765/callback",
+        "https://client.example.com/oauth/callback",
+      ],
+      grantTypes: ["authorization_code", "refresh_token"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "none",
+      scope: "progress:read",
+    },
+  )
+})
+
+test("dynamic registration rejects unsafe redirects and confidential clients", () => {
+  for (const redirectUri of [
+    "http://client.example.com/callback",
+    "javascript:alert(1)",
+    "https://user:password@client.example.com/callback",
+    "https://client.example.com/callback#fragment",
+  ]) {
+    assert.throws(
+      () => validateClientRegistration(
+        { redirect_uris: [redirectUri] },
+        config,
+      ),
+      (error: unknown) => (
+        error instanceof OAuthProtocolError
+        && error.errorCode === "invalid_redirect_uri"
+      ),
+    )
+  }
+
+  assert.throws(
+    () => validateClientRegistration(
+      {
+        redirect_uris: ["https://client.example.com/callback"],
+        token_endpoint_auth_method: "client_secret_post",
+      },
+      config,
+    ),
+    (error: unknown) => (
+      error instanceof OAuthProtocolError
+      && error.errorCode === "invalid_client_metadata"
+    ),
+  )
+})
+
 test("authorization requests require the registered client, resource, scope, redirect, and S256 PKCE", () => {
   const verifier = "a".repeat(64)
   const challenge = createPkceChallenge(verifier)
   const validUrl = new URL("https://progress.example.com/oauth/authorize")
   validUrl.searchParams.set("response_type", "code")
-  validUrl.searchParams.set("client_id", "kairo")
-  validUrl.searchParams.set("redirect_uri", "http://127.0.0.1:8765/callback")
+  validUrl.searchParams.set("client_id", client.clientId)
+  validUrl.searchParams.set("redirect_uri", client.redirectUris[0])
   validUrl.searchParams.set("resource", "https://progress.example.com/mcp")
   validUrl.searchParams.set("scope", "progress:read")
   validUrl.searchParams.set("state", "test-state")
   validUrl.searchParams.set("code_challenge", challenge)
   validUrl.searchParams.set("code_challenge_method", "S256")
 
-  assert.deepEqual(validateAuthorizationRequest(validUrl, config), {
-    clientId: "kairo",
-    redirectUri: "http://127.0.0.1:8765/callback",
+  assert.deepEqual(validateAuthorizationRequest(validUrl, config, client), {
+    clientId: client.clientId,
+    redirectUri: client.redirectUris[0],
     resource: "https://progress.example.com/mcp",
     scope: "progress:read",
     state: "test-state",
@@ -126,7 +200,7 @@ test("authorization requests require the registered client, resource, scope, red
     const invalidUrl = new URL(validUrl)
     invalidUrl.searchParams.set(parameter, value)
     assert.throws(
-      () => validateAuthorizationRequest(invalidUrl, config),
+      () => validateAuthorizationRequest(invalidUrl, config, client),
       (error: unknown) => (
         error instanceof OAuthProtocolError
         && error.errorCode === errorCode
@@ -135,11 +209,11 @@ test("authorization requests require the registered client, resource, scope, red
   }
 })
 
-test("Progress access tokens require the first-party issuer, audience, client, scope, and user", async () => {
+test("Progress access tokens require the first-party issuer, audience, scope, and user", async () => {
   const signed = await signProgressAccessToken(
     {
       userId: "progress-user",
-      clientId: "kairo",
+      clientId: client.clientId,
       scope: "progress:read",
     },
     config,
@@ -156,7 +230,7 @@ test("Progress access tokens require the first-party issuer, audience, client, s
     userId: "progress-user",
     issuer: "https://progress.example.com",
     subject: "progress-user",
-    clientId: "kairo",
+    clientId: client.clientId,
     scopes: ["progress:read"],
     expiresAt: signed.expiresAt,
   })
@@ -179,7 +253,7 @@ test("Progress access tokens reject an incorrect audience or missing scope", asy
   const now = Math.floor(Date.now() / 1000)
   const wrongAudience = await new SignJWT({
     scope: "progress:read",
-    client_id: "kairo",
+    client_id: client.clientId,
   })
     .setProtectedHeader({ alg: "RS256", kid: keys.keyId, typ: "at+jwt" })
     .setIssuer(config.issuer)
@@ -192,7 +266,7 @@ test("Progress access tokens reject an incorrect audience or missing scope", asy
   const missingScope = await signProgressAccessToken(
     {
       userId: "progress-user",
-      clientId: "kairo",
+      clientId: client.clientId,
       scope: "openid",
     },
     config,

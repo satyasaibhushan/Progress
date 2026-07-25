@@ -1,3 +1,4 @@
+import { findOAuthClient } from "@/lib/oauth/clients"
 import { readOAuthServerConfig } from "@/lib/oauth/config"
 import {
   OAuthProtocolError,
@@ -8,6 +9,7 @@ import {
 import {
   handleOAuthRouteError,
   logOAuthEvent,
+  oauthCorsPreflightResponse,
   OAUTH_NO_STORE_HEADERS,
 } from "@/lib/oauth/responses"
 import {
@@ -17,6 +19,8 @@ import {
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
+
+export const OPTIONS = oauthCorsPreflightResponse
 
 export async function POST(request: Request) {
   let clientId: string | undefined
@@ -36,11 +40,27 @@ export async function POST(request: Request) {
     clientId = requireSingleFormValue(form, "client_id", 128)
     const resource = requireSingleFormValue(form, "resource")
 
-    if (clientId !== config.client.id) {
+    const client = await findOAuthClient(clientId)
+    if (!client) {
       throw new OAuthProtocolError("invalid_client", "Unknown OAuth client", 401)
     }
     if (resource !== config.resourceUrl.toString()) {
       throw new OAuthProtocolError("invalid_target", "resource is not supported")
+    }
+    if (
+      grantType !== "authorization_code"
+      && grantType !== "refresh_token"
+    ) {
+      throw new OAuthProtocolError(
+        "unsupported_grant_type",
+        "Only authorization_code and refresh_token are supported",
+      )
+    }
+    if (!client.grantTypes.includes(grantType)) {
+      throw new OAuthProtocolError(
+        "unauthorized_client",
+        "The client is not registered for this grant type",
+      )
     }
 
     let tokens
@@ -52,12 +72,13 @@ export async function POST(request: Request) {
           clientId,
           redirectUri: requireSingleFormValue(form, "redirect_uri"),
           resource,
+          issueRefreshToken: client.grantTypes.includes("refresh_token"),
         },
         config,
       )
-    } else if (grantType === "refresh_token") {
+    } else {
       const requestedScope = readOptionalSingleFormValue(form, "scope", 512)
-      if (requestedScope && requestedScope !== config.scopes.join(" ")) {
+      if (requestedScope && requestedScope !== client.scope) {
         throw new OAuthProtocolError(
           "invalid_scope",
           "Refresh tokens cannot request a different scope",
@@ -70,11 +91,6 @@ export async function POST(request: Request) {
           resource,
         },
         config,
-      )
-    } else {
-      throw new OAuthProtocolError(
-        "unsupported_grant_type",
-        "Only authorization_code and refresh_token are supported",
       )
     }
 

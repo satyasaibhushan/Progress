@@ -82,14 +82,6 @@ export async function verifyMcpAccessToken(
     )
   }
 
-  if (payload.client_id !== config.client.id) {
-    throw new McpAuthenticationError(
-      "Access token was issued to an unknown client",
-      401,
-      "invalid_token",
-    )
-  }
-
   const scopes = getTokenScopes(payload)
   requireScopes(scopes, config.requiredScopes)
 

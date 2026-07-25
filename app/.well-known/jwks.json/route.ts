@@ -7,6 +7,7 @@ export function GET() {
   try {
     return Response.json(getPublicJwks(), {
       headers: {
+        "Access-Control-Allow-Origin": "*",
         "Cache-Control": "public, max-age=300",
       },
     })

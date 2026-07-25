@@ -16,7 +16,7 @@ const principal: McpPrincipal = {
   userId: "progress-user",
   issuer: config.issuer,
   subject: "provider-subject",
-  clientId: "kairo",
+  clientId: "dynamic-client",
   scopes: ["progress:read"],
 }
 

@@ -45,6 +45,20 @@ model McpIdentity {
   @@map("mcp_identities")
 }
 
+model OauthClient {
+  clientId                String   @id
+  clientName              String
+  redirectUris            String[]
+  grantTypes              String[]
+  responseTypes           String[]
+  tokenEndpointAuthMethod String
+  scope                   String
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@map("oauth_clients")
+}
+
 model OauthAuthorizationRequest {
   id            String   @id @default(cuid())
   userId        String

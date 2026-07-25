@@ -20,7 +20,7 @@ export type OAuthTokenResponse = {
   access_token: string
   token_type: "Bearer"
   expires_in: number
-  refresh_token: string
+  refresh_token?: string
   scope: string
 }
 
@@ -70,6 +70,7 @@ export async function completeAuthorizationRequest(
 ): Promise<{
   redirectUri: string
   state: string
+  clientId: string
   code: string | null
 }> {
   const rawCode = input.approved ? createOpaqueToken("progress_ac_") : null
@@ -122,6 +123,7 @@ export async function completeAuthorizationRequest(
   return {
     redirectUri: completed.redirectUri,
     state: completed.state,
+    clientId: completed.clientId,
     code: rawCode,
   }
 }
@@ -136,27 +138,32 @@ async function createTokenResponse(
     familyId: string
     refreshExpiresAt: Date
     refreshToken: string
+    issueRefreshToken: boolean
   },
   config: OAuthServerConfig,
 ): Promise<OAuthTokenResponse> {
   const signed = await signProgressAccessToken(input, config)
-  await transaction.oauthRefreshToken.create({
-    data: {
-      tokenHash: hashOpaqueToken(input.refreshToken),
-      familyId: input.familyId,
-      userId: input.userId,
-      clientId: input.clientId,
-      resource: input.resource,
-      scope: input.scope,
-      expiresAt: input.refreshExpiresAt,
-    },
-  })
+  if (input.issueRefreshToken) {
+    await transaction.oauthRefreshToken.create({
+      data: {
+        tokenHash: hashOpaqueToken(input.refreshToken),
+        familyId: input.familyId,
+        userId: input.userId,
+        clientId: input.clientId,
+        resource: input.resource,
+        scope: input.scope,
+        expiresAt: input.refreshExpiresAt,
+      },
+    })
+  }
 
   return {
     access_token: signed.token,
     token_type: "Bearer",
     expires_in: config.accessTokenTtlSeconds,
-    refresh_token: input.refreshToken,
+    ...(input.issueRefreshToken
+      ? { refresh_token: input.refreshToken }
+      : {}),
     scope: input.scope,
   }
 }
@@ -168,6 +175,7 @@ export async function exchangeAuthorizationCode(
     clientId: string
     redirectUri: string
     resource: string
+    issueRefreshToken: boolean
   },
   config: OAuthServerConfig,
 ): Promise<OAuthTokenResponse> {
@@ -212,6 +220,7 @@ export async function exchangeAuthorizationCode(
         familyId,
         refreshExpiresAt: expiresAt(config.refreshTokenTtlSeconds),
         refreshToken,
+        issueRefreshToken: input.issueRefreshToken,
       },
       config,
     )
@@ -288,6 +297,7 @@ export async function exchangeRefreshToken(
         familyId: current.familyId,
         refreshExpiresAt: current.expiresAt,
         refreshToken: replacementToken,
+        issueRefreshToken: true,
       },
       config,
     )

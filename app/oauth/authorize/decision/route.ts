@@ -66,7 +66,7 @@ export async function POST(request: Request) {
       action: "consent",
       outcome: decision === "allow" ? "allowed" : "denied",
       userId: session.user.id,
-      clientId: config.client.id,
+      clientId: completed.clientId,
     })
     return Response.redirect(redirectUrl, 303)
   } catch (error) {

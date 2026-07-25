@@ -46,6 +46,11 @@ function getSingleParameter(
 export function validateAuthorizationRequest(
   url: URL,
   config: OAuthServerConfig,
+  client: {
+    clientId: string
+    redirectUris: string[]
+    scope: string
+  },
 ): ValidatedAuthorizationRequest {
   const parameters = url.searchParams
   const responseType = getSingleParameter(parameters, "response_type", {
@@ -86,10 +91,10 @@ export function validateAuthorizationRequest(
       "Only the authorization code response type is supported",
     )
   }
-  if (clientId !== config.client.id) {
+  if (clientId !== client.clientId) {
     throw new OAuthProtocolError("unauthorized_client", "Unknown OAuth client")
   }
-  if (!redirectUri || !config.client.redirectUris.includes(redirectUri)) {
+  if (!redirectUri || !client.redirectUris.includes(redirectUri)) {
     throw new OAuthProtocolError("invalid_request", "redirect_uri is not registered")
   }
   if (resource !== config.resourceUrl.toString()) {
@@ -115,7 +120,7 @@ export function validateAuthorizationRequest(
   const missesRequiredScope = config.scopes.some(
     (required) => !requestedScopes.has(required),
   )
-  if (hasUnknownScope || missesRequiredScope) {
+  if (hasUnknownScope || missesRequiredScope || scope !== client.scope) {
     throw new OAuthProtocolError("invalid_scope", "Requested scope is not supported")
   }
 
@@ -127,6 +132,13 @@ export function validateAuthorizationRequest(
     state,
     codeChallenge,
   }
+}
+
+export function readAuthorizationClientId(url: URL): string {
+  return getSingleParameter(url.searchParams, "client_id", {
+    required: true,
+    maxLength: 256,
+  }) || ""
 }
 
 export function validatePkceVerifier(verifier: string): void {
@@ -159,6 +171,7 @@ export function oauthJsonError(error: unknown): Response {
     {
       status: protocolError.status,
       headers: {
+        "Access-Control-Allow-Origin": "*",
         "Cache-Control": "no-store",
         Pragma: "no-cache",
       },
@@ -185,6 +198,43 @@ export async function readFormRequest(request: Request): Promise<URLSearchParams
     throw new OAuthProtocolError("invalid_request", "Request body is too large", 413)
   }
   return new URLSearchParams(body)
+}
+
+export async function readJsonRequest(request: Request): Promise<unknown> {
+  const contentType = request.headers.get("content-type")?.toLowerCase() || ""
+  if (!contentType.startsWith("application/json")) {
+    throw new OAuthProtocolError(
+      "invalid_client_metadata",
+      "Content-Type must be application/json",
+    )
+  }
+
+  const contentLength = Number(request.headers.get("content-length") || 0)
+  if (contentLength > 16384) {
+    throw new OAuthProtocolError(
+      "invalid_client_metadata",
+      "Request body is too large",
+      413,
+    )
+  }
+
+  const body = await request.text()
+  if (body.length > 16384) {
+    throw new OAuthProtocolError(
+      "invalid_client_metadata",
+      "Request body is too large",
+      413,
+    )
+  }
+
+  try {
+    return JSON.parse(body) as unknown
+  } catch {
+    throw new OAuthProtocolError(
+      "invalid_client_metadata",
+      "Request body must contain valid JSON",
+    )
+  }
 }
 
 export function requireSingleFormValue(

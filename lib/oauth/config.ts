@@ -1,7 +1,4 @@
 const DEFAULT_SCOPE = "progress:read"
-const DEFAULT_CLIENT_ID = "kairo"
-const DEFAULT_CLIENT_NAME = "Kairo"
-const DEFAULT_REDIRECT_URI = "http://127.0.0.1:8765/callback"
 const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 15 * 60
 const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 const AUTHORIZATION_REQUEST_TTL_SECONDS = 10 * 60
@@ -9,22 +6,16 @@ const AUTHORIZATION_CODE_TTL_SECONDS = 5 * 60
 
 type OAuthEnvironment = Readonly<Record<string, string | undefined>>
 
-export type OAuthClientConfig = {
-  id: string
-  name: string
-  redirectUris: string[]
-}
-
 export type OAuthServerConfig = {
   issuer: string
   resourceUrl: URL
   protectedResourceMetadataUrl: URL
   authorizationEndpoint: URL
   tokenEndpoint: URL
+  registrationEndpoint: URL
   revocationEndpoint: URL
   jwksUrl: URL
   scopes: string[]
-  client: OAuthClientConfig
   accessTokenTtlSeconds: number
   refreshTokenTtlSeconds: number
   authorizationRequestTtlSeconds: number
@@ -106,16 +97,6 @@ function parsePositiveInteger(
   return parsed
 }
 
-function validateRedirectUri(value: string): string {
-  const url = parseAbsoluteUrl(value, "OAUTH_KAIRO_REDIRECT_URIS")
-  if (url.search) {
-    throw new OAuthConfigurationError(
-      "OAUTH_KAIRO_REDIRECT_URIS must not contain a query",
-    )
-  }
-  return url.toString()
-}
-
 export function readOAuthServerConfig(
   environment: OAuthEnvironment = process.env,
 ): OAuthServerConfig {
@@ -125,10 +106,6 @@ export function readOAuthServerConfig(
     ? parseAbsoluteUrl(configuredResource, "MCP_RESOURCE_URL")
     : new URL("/mcp", issuer)
   const scopes = parseList(environment.MCP_AUTH_REQUIRED_SCOPES, DEFAULT_SCOPE)
-  const redirectUris = parseList(
-    environment.OAUTH_KAIRO_REDIRECT_URIS,
-    DEFAULT_REDIRECT_URI,
-  ).map(validateRedirectUri)
 
   if (resourceUrl.origin !== issuer) {
     throw new OAuthConfigurationError(
@@ -138,10 +115,6 @@ export function readOAuthServerConfig(
   if (scopes.length === 0) {
     throw new OAuthConfigurationError("MCP_AUTH_REQUIRED_SCOPES must not be empty")
   }
-  if (redirectUris.length === 0) {
-    throw new OAuthConfigurationError("OAUTH_KAIRO_REDIRECT_URIS must not be empty")
-  }
-
   const resourcePath = resourceUrl.pathname === "/"
     ? ""
     : resourceUrl.pathname.replace(/\/$/, "")
@@ -155,14 +128,10 @@ export function readOAuthServerConfig(
     ),
     authorizationEndpoint: new URL("/oauth/authorize", issuer),
     tokenEndpoint: new URL("/oauth/token", issuer),
+    registrationEndpoint: new URL("/oauth/register", issuer),
     revocationEndpoint: new URL("/oauth/revoke", issuer),
     jwksUrl: new URL("/.well-known/jwks.json", issuer),
     scopes,
-    client: {
-      id: environment.OAUTH_KAIRO_CLIENT_ID?.trim() || DEFAULT_CLIENT_ID,
-      name: environment.OAUTH_KAIRO_CLIENT_NAME?.trim() || DEFAULT_CLIENT_NAME,
-      redirectUris,
-    },
     accessTokenTtlSeconds: parsePositiveInteger(
       environment.OAUTH_ACCESS_TOKEN_TTL_SECONDS,
       DEFAULT_ACCESS_TOKEN_TTL_SECONDS,
@@ -187,6 +156,7 @@ export function getAuthorizationServerMetadata(config: OAuthServerConfig) {
     issuer: config.issuer,
     authorization_endpoint: config.authorizationEndpoint.toString(),
     token_endpoint: config.tokenEndpoint.toString(),
+    registration_endpoint: config.registrationEndpoint.toString(),
     revocation_endpoint: config.revocationEndpoint.toString(),
     jwks_uri: config.jwksUrl.toString(),
     response_types_supported: ["code"],

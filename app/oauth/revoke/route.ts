@@ -1,3 +1,4 @@
+import { findOAuthClient } from "@/lib/oauth/clients"
 import { readOAuthServerConfig } from "@/lib/oauth/config"
 import {
   OAuthProtocolError,
@@ -7,12 +8,15 @@ import {
 import {
   handleOAuthRouteError,
   logOAuthEvent,
+  oauthCorsPreflightResponse,
   OAUTH_NO_STORE_HEADERS,
 } from "@/lib/oauth/responses"
 import { revokeRefreshToken } from "@/lib/oauth/store"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
+
+export const OPTIONS = oauthCorsPreflightResponse
 
 export async function POST(request: Request) {
   let clientId: string | undefined
@@ -26,12 +30,12 @@ export async function POST(request: Request) {
       )
     }
 
-    const config = readOAuthServerConfig()
+    readOAuthServerConfig()
     const form = await readFormRequest(request)
     clientId = requireSingleFormValue(form, "client_id", 128)
     const token = requireSingleFormValue(form, "token")
 
-    if (clientId !== config.client.id) {
+    if (!await findOAuthClient(clientId)) {
       throw new OAuthProtocolError("invalid_client", "Unknown OAuth client", 401)
     }
 

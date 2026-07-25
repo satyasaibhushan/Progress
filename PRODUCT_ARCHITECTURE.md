@@ -394,6 +394,7 @@ Key Changes:
 /oauth
 ├── authorize                  (Login and PKCE authorization)
 ├── consent                    (Read-only consent screen)
+├── register                   (RFC 7591 dynamic client registration)
 ├── token                      (Code exchange and refresh rotation)
 └── revoke                     (Refresh-token family revocation)
 ```
@@ -500,14 +501,15 @@ Key Changes:
 
 - Progress is both the OAuth authorization server and the `/mcp` resource server.
 - The server publishes RFC 9728 protected-resource metadata at both the root fallback and the `/mcp` path-specific well-known URL.
-- Kairo is a pre-registered public client using authorization code with PKCE `S256` and an exact loopback callback allowlist.
+- MCP clients register dynamically through RFC 7591 and receive an opaque public client ID.
+- Each registered client is restricted to its exact redirect URI allowlist and uses authorization code with PKCE `S256`.
 - The existing Auth.js/Google login authenticates the user before a read-only consent screen is shown.
 - Progress issues 15-minute RS256 access tokens and rotating opaque refresh tokens with a 30-day absolute family lifetime.
 - Every MCP request verifies signature, issuer, audience, lifetime, client, the `progress:read` scope, and that the internal user still exists.
 - Auth.js session cookies and Google access tokens are not accepted as MCP credentials.
 - All exposed MCP tools are read-only and enforce the resolved `userId` in Prisma queries.
 
-Configuration and Kairo setup are documented in `docs/mcp.md`.
+Configuration and client setup are documented in `docs/mcp.md`.
 
 ### Protected Routes
 - Next.js Proxy checks the Auth.js database session on protected page routes

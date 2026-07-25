@@ -1,6 +1,11 @@
 import { auth } from "@/lib/auth"
+import { findOAuthClient } from "@/lib/oauth/clients"
 import { readOAuthServerConfig } from "@/lib/oauth/config"
-import { validateAuthorizationRequest } from "@/lib/oauth/protocol"
+import {
+  OAuthProtocolError,
+  readAuthorizationClientId,
+  validateAuthorizationRequest,
+} from "@/lib/oauth/protocol"
 import {
   handleOAuthRouteError,
   logOAuthEvent,
@@ -14,7 +19,11 @@ export async function GET(request: Request) {
   try {
     const config = readOAuthServerConfig()
     const url = new URL(request.url)
-    const authorizationRequest = validateAuthorizationRequest(url, config)
+    const client = await findOAuthClient(readAuthorizationClientId(url))
+    if (!client) {
+      throw new OAuthProtocolError("unauthorized_client", "Unknown OAuth client")
+    }
+    const authorizationRequest = validateAuthorizationRequest(url, config, client)
     const session = await auth()
 
     if (!session?.user?.id) {

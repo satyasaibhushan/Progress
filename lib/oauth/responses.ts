@@ -4,9 +4,22 @@ import {
 import { oauthJsonError } from "@/lib/oauth/protocol"
 
 export const OAUTH_NO_STORE_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
   "Cache-Control": "no-store",
   Pragma: "no-cache",
 } as const
+
+export function oauthCorsPreflightResponse(): Response {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Max-Age": "86400",
+    },
+  })
+}
 
 export function getOAuthConfigurationErrorResponse(error: unknown): Response {
   const message = error instanceof OAuthConfigurationError
