@@ -1,252 +1,223 @@
 import assert from "node:assert/strict"
+import { generateKeyPairSync } from "node:crypto"
 import test from "node:test"
-import {
-  createLocalJWKSet,
-  exportJWK,
-  generateKeyPair,
-  SignJWT,
-} from "jose"
+import { SignJWT } from "jose"
 import {
   McpAuthenticationError,
-  resolveMcpUserId,
   verifyMcpAccessToken,
-  type McpIdentityStore,
+  type McpUserStore,
 } from "../lib/mcp/auth"
 import {
   getBearerChallenge,
   getProtectedResourceMetadata,
   readMcpAuthConfig,
-  type McpAuthConfig,
 } from "../lib/mcp/config"
+import {
+  getAuthorizationServerMetadata,
+  readOAuthServerConfig,
+} from "../lib/oauth/config"
+import {
+  createPkceChallenge,
+  verifyPkceChallenge,
+} from "../lib/oauth/crypto"
+import { readOAuthSigningKeys } from "../lib/oauth/keys"
+import {
+  OAuthProtocolError,
+  validateAuthorizationRequest,
+} from "../lib/oauth/protocol"
+import { signProgressAccessToken } from "../lib/oauth/tokens"
 
-const USER_ID_CLAIM = "https://progress.example.com/user_id"
+const privateKeyPem = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+}).privateKey.export({
+  format: "pem",
+  type: "pkcs8",
+}).toString()
 
-function getConfig(): McpAuthConfig {
-  return readMcpAuthConfig({
-    MCP_RESOURCE_URL: "https://progress.example.com/mcp",
-    MCP_AUTH_ISSUER: "https://auth.example.com/",
-    MCP_AUTH_JWKS_URL: "https://auth.example.com/.well-known/jwks.json",
-    MCP_AUTH_AUDIENCE: "https://progress.example.com/mcp",
-    MCP_AUTH_REQUIRED_SCOPES: "progress:read",
-    MCP_AUTH_JWT_ALGORITHMS: "RS256",
-    MCP_AUTH_USER_ID_CLAIM: USER_ID_CLAIM,
-    MCP_AUTH_ALLOW_EMAIL_LINKING: "false",
-  })
+const environment = {
+  NEXTAUTH_URL: "https://progress.example.com",
+  MCP_RESOURCE_URL: "https://progress.example.com/mcp",
+  MCP_AUTH_REQUIRED_SCOPES: "progress:read",
+  OAUTH_KAIRO_CLIENT_ID: "kairo",
+  OAUTH_KAIRO_REDIRECT_URIS: "http://127.0.0.1:8765/callback",
+  OAUTH_SIGNING_PRIVATE_KEY: privateKeyPem,
+  OAUTH_SIGNING_KEY_ID: "test-key",
 }
 
-function createIdentityStore(options?: {
-  existingUserId?: string
-  validUserId?: string
-  emailUserId?: string
-}) {
-  const links: Array<{ issuer: string; subject: string; userId: string }> = []
-  const store: McpIdentityStore = {
-    async findIdentity() {
-      return options?.existingUserId
-        ? { userId: options.existingUserId }
-        : null
-    },
-    async findUserById(userId) {
-      return userId === options?.validUserId ? { id: userId } : null
-    },
-    async findUserByEmail() {
-      return options?.emailUserId ? { id: options.emailUserId } : null
-    },
-    async linkIdentity(issuer, subject, userId) {
-      links.push({ issuer, subject, userId })
-      return { userId }
+const config = readMcpAuthConfig(environment)
+const keys = readOAuthSigningKeys(environment)
+
+function createUserStore(userId: string | null): McpUserStore {
+  return {
+    async findUserById(candidate) {
+      return candidate === userId ? { id: candidate } : null
     },
   }
-
-  return { store, links }
 }
 
-test("MCP configuration publishes path-specific OAuth metadata", () => {
-  const config = getConfig()
-
+test("first-party OAuth configuration publishes MCP and authorization metadata", () => {
+  assert.equal(config.issuer, "https://progress.example.com")
   assert.equal(
     config.resourceMetadataUrl.toString(),
     "https://progress.example.com/.well-known/oauth-protected-resource/mcp",
   )
   assert.deepEqual(getProtectedResourceMetadata(config), {
     resource: "https://progress.example.com/mcp",
-    authorization_servers: ["https://auth.example.com/"],
+    authorization_servers: ["https://progress.example.com"],
     bearer_methods_supported: ["header"],
     scopes_supported: ["progress:read"],
   })
+
+  const metadata = getAuthorizationServerMetadata(
+    readOAuthServerConfig(environment),
+  )
+  assert.equal(metadata.authorization_endpoint, "https://progress.example.com/oauth/authorize")
+  assert.equal(metadata.token_endpoint, "https://progress.example.com/oauth/token")
+  assert.equal(metadata.jwks_uri, "https://progress.example.com/.well-known/jwks.json")
+  assert.deepEqual(metadata.code_challenge_methods_supported, ["S256"])
+  assert.deepEqual(metadata.token_endpoint_auth_methods_supported, ["none"])
   assert.match(
     getBearerChallenge(config),
     /resource_metadata="https:\/\/progress\.example\.com\/\.well-known\/oauth-protected-resource\/mcp"/,
   )
-
-  const issuerWithoutTrailingSlash = readMcpAuthConfig({
-    MCP_RESOURCE_URL: "https://progress.example.com/mcp",
-    MCP_AUTH_ISSUER: "https://auth.example.com",
-    MCP_AUTH_JWKS_URL: "https://auth.example.com/.well-known/jwks.json",
-  })
-  assert.equal(issuerWithoutTrailingSlash.issuer, "https://auth.example.com")
 })
 
-test("MCP identity mapping uses a stable existing issuer and subject link", async () => {
-  const config = getConfig()
-  const { store, links } = createIdentityStore({
-    existingUserId: "existing-user",
-  })
-
-  const userId = await resolveMcpUserId(
-    {
-      sub: "provider-subject",
-      [USER_ID_CLAIM]: "untrusted-new-value",
-    },
-    config,
-    store,
+test("OAuth configuration rejects a cross-origin MCP resource", () => {
+  assert.throws(
+    () => readOAuthServerConfig({
+      NEXTAUTH_URL: "https://progress.example.com",
+      MCP_RESOURCE_URL: "https://other.example.com/mcp",
+    }),
+    /same origin/,
   )
-
-  assert.equal(userId, "existing-user")
-  assert.deepEqual(links, [])
 })
 
-test("MCP identity mapping creates a stable link from a trusted user ID claim", async () => {
-  const config = getConfig()
-  const { store, links } = createIdentityStore({
-    validUserId: "progress-user",
+test("authorization requests require the registered client, resource, scope, redirect, and S256 PKCE", () => {
+  const verifier = "a".repeat(64)
+  const challenge = createPkceChallenge(verifier)
+  const validUrl = new URL("https://progress.example.com/oauth/authorize")
+  validUrl.searchParams.set("response_type", "code")
+  validUrl.searchParams.set("client_id", "kairo")
+  validUrl.searchParams.set("redirect_uri", "http://127.0.0.1:8765/callback")
+  validUrl.searchParams.set("resource", "https://progress.example.com/mcp")
+  validUrl.searchParams.set("scope", "progress:read")
+  validUrl.searchParams.set("state", "test-state")
+  validUrl.searchParams.set("code_challenge", challenge)
+  validUrl.searchParams.set("code_challenge_method", "S256")
+
+  assert.deepEqual(validateAuthorizationRequest(validUrl, config), {
+    clientId: "kairo",
+    redirectUri: "http://127.0.0.1:8765/callback",
+    resource: "https://progress.example.com/mcp",
+    scope: "progress:read",
+    state: "test-state",
+    codeChallenge: challenge,
   })
+  assert.equal(verifyPkceChallenge(verifier, challenge), true)
+  assert.equal(verifyPkceChallenge(`${verifier}x`, challenge), false)
 
-  const userId = await resolveMcpUserId(
-    {
-      sub: "provider-subject",
-      [USER_ID_CLAIM]: "progress-user",
-    },
-    config,
-    store,
-  )
-
-  assert.equal(userId, "progress-user")
-  assert.deepEqual(links, [{
-    issuer: "https://auth.example.com/",
-    subject: "provider-subject",
-    userId: "progress-user",
-  }])
-})
-
-test("MCP email linking requires both explicit opt-in and a verified email", async () => {
-  const config = {
-    ...getConfig(),
-    userIdClaim: null,
-    allowEmailLinking: true,
+  for (const [parameter, value, errorCode] of [
+    ["client_id", "unknown", "unauthorized_client"],
+    ["redirect_uri", "http://127.0.0.1:9999/callback", "invalid_request"],
+    ["resource", "https://other.example.com/mcp", "invalid_target"],
+    ["scope", "progress:write", "invalid_scope"],
+    ["code_challenge_method", "plain", "invalid_request"],
+  ] as const) {
+    const invalidUrl = new URL(validUrl)
+    invalidUrl.searchParams.set(parameter, value)
+    assert.throws(
+      () => validateAuthorizationRequest(invalidUrl, config),
+      (error: unknown) => (
+        error instanceof OAuthProtocolError
+        && error.errorCode === errorCode
+      ),
+    )
   }
-  const { store } = createIdentityStore({
-    emailUserId: "email-user",
-  })
-
-  await assert.rejects(
-    resolveMcpUserId(
-      {
-        sub: "provider-subject",
-        email: "user@example.com",
-        email_verified: false,
-      },
-      config,
-      store,
-    ),
-    (error: unknown) => (
-      error instanceof McpAuthenticationError
-      && error.errorCode === "account_not_linked"
-    ),
-  )
-
-  assert.equal(
-    await resolveMcpUserId(
-      {
-        sub: "provider-subject",
-        email: "USER@example.com",
-        email_verified: true,
-      },
-      config,
-      store,
-    ),
-    "email-user",
-  )
 })
 
-test("MCP access tokens require signature, issuer, audience, scope, and user mapping", async () => {
-  const config = getConfig()
-  const { publicKey, privateKey } = await generateKeyPair("RS256")
-  const publicJwk = await exportJWK(publicKey)
-  const keySet = createLocalJWKSet({
-    keys: [{
-      ...publicJwk,
-      alg: "RS256",
-      kid: "test-key",
-      use: "sig",
-    }],
-  })
-  const { store } = createIdentityStore({
-    validUserId: "progress-user",
-  })
-  const now = Math.floor(Date.now() / 1000)
-
-  const validToken = await new SignJWT({
-    scope: "openid progress:read",
-    client_id: "test-client",
-    [USER_ID_CLAIM]: "progress-user",
-  })
-    .setProtectedHeader({ alg: "RS256", kid: "test-key" })
-    .setIssuer(config.issuer)
-    .setAudience(config.audience)
-    .setSubject("provider-subject")
-    .setIssuedAt(now)
-    .setExpirationTime(now + 300)
-    .sign(privateKey)
-
-  const principal = await verifyMcpAccessToken(
-    validToken,
+test("Progress access tokens require the first-party issuer, audience, client, scope, and user", async () => {
+  const signed = await signProgressAccessToken(
+    {
+      userId: "progress-user",
+      clientId: "kairo",
+      scope: "progress:read",
+    },
     config,
-    keySet,
-    store,
+    keys,
   )
+  const principal = await verifyMcpAccessToken(
+    signed.token,
+    config,
+    keys,
+    createUserStore("progress-user"),
+  )
+
   assert.deepEqual(principal, {
     userId: "progress-user",
-    issuer: "https://auth.example.com/",
-    subject: "provider-subject",
-    clientId: "test-client",
-    scopes: ["openid", "progress:read"],
-    expiresAt: now + 300,
+    issuer: "https://progress.example.com",
+    subject: "progress-user",
+    clientId: "kairo",
+    scopes: ["progress:read"],
+    expiresAt: signed.expiresAt,
   })
-
-  const wrongAudienceToken = await new SignJWT({
-    scope: "progress:read",
-    [USER_ID_CLAIM]: "progress-user",
-  })
-    .setProtectedHeader({ alg: "RS256", kid: "test-key" })
-    .setIssuer(config.issuer)
-    .setAudience("https://other.example.com/mcp")
-    .setSubject("provider-subject")
-    .setExpirationTime(now + 300)
-    .sign(privateKey)
 
   await assert.rejects(
-    verifyMcpAccessToken(wrongAudienceToken, config, keySet, store),
+    verifyMcpAccessToken(
+      signed.token,
+      config,
+      keys,
+      createUserStore(null),
+    ),
     (error: unknown) => (
       error instanceof McpAuthenticationError
-      && error.status === 401
       && error.errorCode === "invalid_token"
     ),
   )
+})
 
-  const missingScopeToken = await new SignJWT({
-    scope: "openid",
-    [USER_ID_CLAIM]: "progress-user",
+test("Progress access tokens reject an incorrect audience or missing scope", async () => {
+  const now = Math.floor(Date.now() / 1000)
+  const wrongAudience = await new SignJWT({
+    scope: "progress:read",
+    client_id: "kairo",
   })
-    .setProtectedHeader({ alg: "RS256", kid: "test-key" })
+    .setProtectedHeader({ alg: "RS256", kid: keys.keyId, typ: "at+jwt" })
     .setIssuer(config.issuer)
-    .setAudience(config.audience)
-    .setSubject("provider-subject")
+    .setAudience("https://other.example.com/mcp")
+    .setSubject("progress-user")
+    .setIssuedAt(now)
     .setExpirationTime(now + 300)
-    .sign(privateKey)
+    .sign(keys.privateKey)
+
+  const missingScope = await signProgressAccessToken(
+    {
+      userId: "progress-user",
+      clientId: "kairo",
+      scope: "openid",
+    },
+    config,
+    keys,
+  )
 
   await assert.rejects(
-    verifyMcpAccessToken(missingScopeToken, config, keySet, store),
+    verifyMcpAccessToken(
+      wrongAudience,
+      config,
+      keys,
+      createUserStore("progress-user"),
+    ),
+    (error: unknown) => (
+      error instanceof McpAuthenticationError
+      && error.status === 401
+    ),
+  )
+  await assert.rejects(
+    verifyMcpAccessToken(
+      missingScope.token,
+      config,
+      keys,
+      createUserStore("progress-user"),
+    ),
     (error: unknown) => (
       error instanceof McpAuthenticationError
       && error.status === 403

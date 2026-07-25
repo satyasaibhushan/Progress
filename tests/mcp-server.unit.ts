@@ -7,10 +7,8 @@ import { readMcpAuthConfig } from "../lib/mcp/config"
 import type { McpPrincipal } from "../lib/mcp/auth"
 
 const config = readMcpAuthConfig({
+  NEXTAUTH_URL: "https://progress.example.com",
   MCP_RESOURCE_URL: "https://progress.example.com/mcp",
-  MCP_AUTH_ISSUER: "https://auth.example.com/",
-  MCP_AUTH_JWKS_URL: "https://auth.example.com/.well-known/jwks.json",
-  MCP_AUTH_AUDIENCE: "https://progress.example.com/mcp",
   MCP_AUTH_REQUIRED_SCOPES: "progress:read",
 })
 
@@ -18,7 +16,7 @@ const principal: McpPrincipal = {
   userId: "progress-user",
   issuer: config.issuer,
   subject: "provider-subject",
-  clientId: "test-client",
+  clientId: "kairo",
   scopes: ["progress:read"],
 }
 

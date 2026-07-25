@@ -1,25 +1,38 @@
 # Progress MCP server
 
-Progress exposes a remote, read-only MCP server at `/mcp`. It uses Streamable HTTP with JSON responses and requires an OAuth 2.1 bearer access token for every MCP request.
+Progress exposes a remote, read-only MCP server at `/mcp`. The same application
+acts as the OAuth authorization server and MCP resource server. A user's normal
+Auth.js/Google session authenticates the consent screen; it is never accepted as
+an MCP credential.
 
-The application is an OAuth resource server only. Authorization, consent, PKCE, token issuance, refresh tokens, client registration, and authorization-server discovery are owned by an external identity provider such as Auth0, Okta, Cognito, or Stytch.
+Kairo is a pre-registered public client. It uses authorization code with PKCE
+`S256`, so there is no client secret to copy onto the devbox.
 
 ## Endpoints
 
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /mcp` | MCP Streamable HTTP requests |
-| `GET /mcp` | Authenticated transport request; stateless mode returns method-not-allowed |
-| `DELETE /mcp` | Authenticated transport request; stateless mode returns method-not-allowed |
-| `OPTIONS /mcp` | CORS preflight for browser-based inspectors |
-| `GET /.well-known/oauth-protected-resource/mcp` | Path-specific RFC 9728 protected-resource metadata |
-| `GET /.well-known/oauth-protected-resource` | Root metadata fallback |
+| `GET` or `DELETE /mcp` | Authenticated transport requests |
+| `OPTIONS /mcp` | CORS preflight |
+| `GET /.well-known/oauth-protected-resource/mcp` | RFC 9728 protected-resource metadata |
+| `GET /.well-known/oauth-protected-resource` | Root protected-resource metadata fallback |
+| `GET /.well-known/oauth-authorization-server` | OAuth authorization-server metadata |
+| `GET /.well-known/jwks.json` | Public access-token signing key |
+| `GET /oauth/authorize` | Login and authorization entry point |
+| `POST /oauth/authorize/decision` | Consent decision |
+| `POST /oauth/token` | Authorization-code exchange and refresh-token rotation |
+| `POST /oauth/revoke` | Refresh-token family revocation |
 
-Unauthenticated requests return `401` with a `WWW-Authenticate` challenge pointing at the path-specific metadata document. Tokens with insufficient scopes return `403`.
+Unauthenticated MCP requests return `401` with a `WWW-Authenticate` challenge
+pointing to the protected-resource metadata. Tokens with insufficient scopes
+return `403`.
 
 ## Tools
 
-All tools require `progress:read`, are marked read-only and idempotent, and derive the internal user from the access token rather than accepting a `userId` argument.
+All tools require `progress:read`, are marked read-only and idempotent, and
+derive the internal user from the access token rather than accepting a
+`userId` argument.
 
 | Tool | Result |
 | --- | --- |
@@ -28,63 +41,97 @@ All tools require `progress:read`, are marked read-only and idempotent, and deri
 | `list_habits` | Up to 100 habits, filtered by status, type, and text, with streak and current-period metrics |
 | `get_progress_item` | One task or habit; habit details include at most 30 recent logs |
 
-## Required configuration
+## Production configuration
+
+Generate a dedicated RSA signing key outside the repository:
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out progress-oauth-private.pem
+```
+
+Store the private key only in the production environment-variable manager.
+Configure:
 
 ```dotenv
-MCP_RESOURCE_URL=https://progress.example.com/mcp
-MCP_AUTH_ISSUER=https://tenant.example.com/
-MCP_AUTH_JWKS_URL=https://tenant.example.com/.well-known/jwks.json
-MCP_AUTH_AUDIENCE=https://progress.example.com/mcp
+OAUTH_ISSUER=https://progress.bhushan.fun
+MCP_RESOURCE_URL=https://progress.bhushan.fun/mcp
 MCP_AUTH_REQUIRED_SCOPES=progress:read
-MCP_AUTH_JWT_ALGORITHMS=RS256
+OAUTH_KAIRO_CLIENT_ID=kairo
+OAUTH_KAIRO_CLIENT_NAME=Kairo
+OAUTH_KAIRO_REDIRECT_URIS=http://127.0.0.1:8765/callback
+OAUTH_SIGNING_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+OAUTH_SIGNING_KEY_ID=progress-oauth-1
+OAUTH_ACCESS_TOKEN_TTL_SECONDS=900
+OAUTH_REFRESH_TOKEN_TTL_SECONDS=2592000
 ```
 
-`MCP_RESOURCE_URL` is the canonical RFC 8707 resource identifier. Configure the authorization server to preserve the OAuth `resource` parameter and issue access tokens with the same value as their audience.
+`NEXTAUTH_URL` must also remain `https://progress.bhushan.fun`. The signing key
+may be multiline or use literal `\n` separators.
 
-The server verifies the JWT signature, algorithm, issuer, audience, expiration/not-before claims, subject, and required scopes on every request. Scopes may be supplied in `scope`, `scp`, or `permissions`.
+The production build applies the Prisma migration before building. It creates
+tables for pending authorization requests, one-use authorization codes, and
+rotating refresh tokens.
 
-## Linking OAuth identities to Progress users
+## Authorization and token behavior
 
-The stable authorization identity is `(issuer, subject)`. It is stored in `mcp_identities` and linked to one existing Progress `User`.
+1. Kairo discovers `/mcp` as a protected resource and then discovers Progress
+   as its authorization server.
+2. Kairo opens `/oauth/authorize` with its registered loopback callback, the
+   exact MCP resource, requested scope, state, and a PKCE challenge.
+3. Progress asks the user to sign in with the existing Google flow and displays
+   a read-only consent screen.
+4. Progress returns a one-use, five-minute authorization code to Kairo's local
+   callback listener.
+5. Kairo exchanges the code and PKCE verifier for a 15-minute signed access
+   token and an opaque refresh token.
+6. Every refresh rotates the refresh token. Reuse of an older token revokes the
+   entire token family. The family expires after 30 days.
 
-The preferred first-link flow is a trusted custom access-token claim containing the internal Progress user ID:
+Authorization codes and refresh tokens are stored only as SHA-256 hashes.
+Access tokens are RS256 JWTs bound to the exact issuer, `/mcp` audience,
+internal user ID, `kairo` client ID, and `progress:read` scope. Each MCP request
+also verifies that the referenced Progress user still exists.
 
-```dotenv
-MCP_AUTH_USER_ID_CLAIM=https://progress.example.com/user_id
+Changing the signing key invalidates active access tokens. Existing refresh
+tokens can obtain access tokens signed with the new key. Use a new
+`OAUTH_SIGNING_KEY_ID` whenever the private key changes.
+
+## Kairo configuration
+
+Add this to `~/.hermes/profiles/kairo/config.yaml`:
+
+```yaml
+mcp_servers:
+  progress:
+    url: "https://progress.bhushan.fun/mcp"
+    auth: oauth
+    timeout: 120
+    connect_timeout: 315
+    oauth:
+      client_id: "kairo"
+      scope: "progress:read"
+      redirect_port: 8765
+      redirect_host: "127.0.0.1"
 ```
 
-Configure the identity provider to populate that claim from protected user metadata. On the first valid MCP request, Progress verifies that the user exists and persists the `(issuer, subject)` link. Later requests use only that stable link, even if email or other claims change.
+Then run:
 
-For a controlled migration, verified-email linking can be temporarily enabled:
-
-```dotenv
-MCP_AUTH_ALLOW_EMAIL_LINKING=true
+```bash
+kairo mcp login progress
+kairo mcp test progress
+kairo mcp list
 ```
 
-Email linking is attempted only for a token from the configured issuer with `email_verified: true`. Keep it disabled when the custom user-ID claim or pre-provisioned identity links are available.
-
-## Authorization-server requirements
-
-The external provider must:
-
-- publish OAuth authorization-server metadata or OpenID Connect discovery;
-- support authorization code with PKCE using `S256`;
-- support the MCP client's registration mode: CIMD, DCR, or a pre-registered client;
-- preserve the OAuth `resource` parameter and bind tokens to the MCP audience;
-- issue `progress:read`;
-- issue refresh tokens when long-lived client connectivity is required.
-
-The existing Auth.js Google login and database session remain responsible for browser authentication. Browser session cookies and Google access tokens are never accepted by `/mcp`.
-
-See the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
+The login command starts a temporary callback listener on
+`127.0.0.1:8765`, opens the Progress consent page, and stores Kairo's tokens in
+its profile-specific token store. Re-run the login command if consent is
+revoked, the refresh-token family expires, or the local token file is removed.
 
 ## Operational behavior
 
-- MCP access events are emitted as structured JSON logs.
+- OAuth and MCP access decisions are emitted as structured JSON logs.
 - Tokens, emails, tool inputs, and tool outputs are not logged.
-- The external subject is represented only by a short SHA-256-derived value in allowed tool-call logs.
-- Responses include a request ID and `Cache-Control: no-store`.
+- Responses include a request ID where applicable and disable caching of
+  sensitive responses.
+- Redirect URIs, client IDs, resources, and scopes are exact-match allowlists.
 - Output limits are enforced independently of client input.
-- Apply the Prisma migration before enabling the endpoint in production.
-
-Use the MCP Inspector against the deployed HTTPS endpoint to validate discovery, PKCE, token audience, refresh, and all four tools before enabling the connector for additional users.

@@ -1,17 +1,12 @@
 import { createHash, randomUUID } from "node:crypto"
-import {
-  createRemoteJWKSet,
-  jwtVerify,
-  type JWTPayload,
-  type JWTVerifyGetKey,
-} from "jose"
+import type { OAuthSigningKeys } from "@/lib/oauth/keys"
+import { OAuthConfigurationError } from "@/lib/oauth/config"
+import { verifyProgressAccessToken } from "@/lib/oauth/tokens"
 import { prisma } from "@/lib/prisma"
 import {
   getBearerChallenge,
   type McpAuthConfig,
 } from "@/lib/mcp/config"
-
-const remoteKeySets = new Map<string, JWTVerifyGetKey>()
 
 export type McpPrincipal = {
   userId: string
@@ -22,11 +17,8 @@ export type McpPrincipal = {
   expiresAt?: number
 }
 
-export type McpIdentityStore = {
-  findIdentity(issuer: string, subject: string): Promise<{ userId: string } | null>
+export type McpUserStore = {
   findUserById(userId: string): Promise<{ id: string } | null>
-  findUserByEmail(email: string): Promise<{ id: string } | null>
-  linkIdentity(issuer: string, subject: string, userId: string): Promise<{ userId: string }>
 }
 
 export class McpAuthenticationError extends Error {
@@ -41,70 +33,18 @@ export class McpAuthenticationError extends Error {
   }
 }
 
-const prismaIdentityStore: McpIdentityStore = {
-  findIdentity(issuer, subject) {
-    return prisma.mcpIdentity.findUnique({
-      where: {
-        issuer_subject: { issuer, subject },
-      },
-      select: { userId: true },
-    })
-  },
+const prismaUserStore: McpUserStore = {
   findUserById(userId) {
     return prisma.user.findUnique({
       where: { id: userId },
       select: { id: true },
     })
   },
-  findUserByEmail(email) {
-    return prisma.user.findUnique({
-      where: { email },
-      select: { id: true },
-    })
-  },
-  linkIdentity(issuer, subject, userId) {
-    return prisma.mcpIdentity.upsert({
-      where: {
-        issuer_subject: { issuer, subject },
-      },
-      update: {},
-      create: {
-        issuer,
-        subject,
-        userId,
-      },
-      select: { userId: true },
-    })
-  },
 }
 
-function getRemoteKeySet(url: URL): JWTVerifyGetKey {
-  const key = url.toString()
-  const existing = remoteKeySets.get(key)
-  if (existing) return existing
-
-  const created = createRemoteJWKSet(url)
-  remoteKeySets.set(key, created)
-  return created
-}
-
-export function getTokenScopes(payload: JWTPayload): string[] {
-  const scopes = new Set<string>()
-
-  if (typeof payload.scope === "string") {
-    for (const scope of payload.scope.split(/\s+/)) {
-      if (scope) scopes.add(scope)
-    }
-  }
-
-  for (const claim of [payload.scp, payload.permissions]) {
-    if (!Array.isArray(claim)) continue
-    for (const scope of claim) {
-      if (typeof scope === "string" && scope) scopes.add(scope)
-    }
-  }
-
-  return [...scopes]
+export function getTokenScopes(payload: { scope?: unknown }): string[] {
+  if (typeof payload.scope !== "string") return []
+  return [...new Set(payload.scope.split(/\s+/).filter(Boolean))]
 }
 
 function requireScopes(
@@ -124,72 +64,17 @@ function requireScopes(
   }
 }
 
-function getStringClaim(payload: JWTPayload, name: string): string | null {
-  const value = payload[name]
-  return typeof value === "string" && value.trim() ? value.trim() : null
-}
-
-export async function resolveMcpUserId(
-  payload: JWTPayload,
-  config: McpAuthConfig,
-  store: McpIdentityStore = prismaIdentityStore,
-): Promise<string> {
-  if (!payload.sub) {
-    throw new McpAuthenticationError("Access token has no subject", 401, "invalid_token")
-  }
-
-  const existing = await store.findIdentity(config.issuer, payload.sub)
-  if (existing) return existing.userId
-
-  let candidateUserId: string | null = null
-
-  if (config.userIdClaim) {
-    const claimedUserId = getStringClaim(payload, config.userIdClaim)
-    if (claimedUserId) {
-      const user = await store.findUserById(claimedUserId)
-      candidateUserId = user?.id || null
-    }
-  }
-
-  if (
-    !candidateUserId &&
-    config.allowEmailLinking &&
-    payload.email_verified === true &&
-    typeof payload.email === "string"
-  ) {
-    const user = await store.findUserByEmail(payload.email.trim().toLowerCase())
-    candidateUserId = user?.id || null
-  }
-
-  if (!candidateUserId) {
-    throw new McpAuthenticationError(
-      "This OAuth identity is not linked to a Progress account",
-      403,
-      "account_not_linked",
-    )
-  }
-
-  const linked = await store.linkIdentity(config.issuer, payload.sub, candidateUserId)
-  return linked.userId
-}
-
 export async function verifyMcpAccessToken(
   token: string,
   config: McpAuthConfig,
-  keySet: JWTVerifyGetKey = getRemoteKeySet(config.jwksUrl),
-  store: McpIdentityStore = prismaIdentityStore,
+  keys?: OAuthSigningKeys,
+  store: McpUserStore = prismaUserStore,
 ): Promise<McpPrincipal> {
-  let payload: JWTPayload
-
+  let payload
   try {
-    const verified = await jwtVerify(token, keySet, {
-      issuer: config.issuer,
-      audience: config.audience,
-      algorithms: config.jwtAlgorithms,
-      clockTolerance: 5,
-    })
-    payload = verified.payload
-  } catch {
+    payload = await verifyProgressAccessToken(token, config, keys)
+  } catch (error) {
+    if (error instanceof OAuthConfigurationError) throw error
     throw new McpAuthenticationError(
       "Access token is invalid or expired",
       401,
@@ -197,22 +82,31 @@ export async function verifyMcpAccessToken(
     )
   }
 
-  if (!payload.sub) {
-    throw new McpAuthenticationError("Access token has no subject", 401, "invalid_token")
+  if (payload.client_id !== config.client.id) {
+    throw new McpAuthenticationError(
+      "Access token was issued to an unknown client",
+      401,
+      "invalid_token",
+    )
   }
 
   const scopes = getTokenScopes(payload)
   requireScopes(scopes, config.requiredScopes)
-  const userId = await resolveMcpUserId(payload, config, store)
-  const clientId = getStringClaim(payload, "client_id")
-    || getStringClaim(payload, "azp")
-    || "unknown"
+
+  const user = await store.findUserById(payload.sub)
+  if (!user) {
+    throw new McpAuthenticationError(
+      "Access token subject is not a Progress user",
+      401,
+      "invalid_token",
+    )
+  }
 
   return {
-    userId,
+    userId: user.id,
     issuer: config.issuer,
     subject: payload.sub,
-    clientId,
+    clientId: payload.client_id,
     scopes,
     expiresAt: payload.exp,
   }

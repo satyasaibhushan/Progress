@@ -387,8 +387,15 @@ Key Changes:
             └── route.ts      (GET all tasks & habits in group with tree structure)
 
 /mcp                            (OAuth-protected Streamable HTTP MCP server)
+/.well-known/oauth-authorization-server
+/.well-known/jwks.json
 /.well-known/oauth-protected-resource
 └── mcp                         (RFC 9728 resource metadata)
+/oauth
+├── authorize                  (Login and PKCE authorization)
+├── consent                    (Read-only consent screen)
+├── token                      (Code exchange and refresh rotation)
+└── revoke                     (Refresh-token family revocation)
 ```
 
 ### API Conventions
@@ -491,14 +498,16 @@ Key Changes:
 
 ### Remote MCP OAuth Flow
 
-- `/mcp` is an OAuth 2.1 resource server; token issuance is delegated to an external identity provider.
+- Progress is both the OAuth authorization server and the `/mcp` resource server.
 - The server publishes RFC 9728 protected-resource metadata at both the root fallback and the `/mcp` path-specific well-known URL.
-- Every request verifies signature, issuer, audience, lifetime, and the `progress:read` scope.
-- The stable `(issuer, subject)` identity is linked to an internal `User` through `McpIdentity`.
+- Kairo is a pre-registered public client using authorization code with PKCE `S256` and an exact loopback callback allowlist.
+- The existing Auth.js/Google login authenticates the user before a read-only consent screen is shown.
+- Progress issues 15-minute RS256 access tokens and rotating opaque refresh tokens with a 30-day absolute family lifetime.
+- Every MCP request verifies signature, issuer, audience, lifetime, client, the `progress:read` scope, and that the internal user still exists.
 - Auth.js session cookies and Google access tokens are not accepted as MCP credentials.
 - All exposed MCP tools are read-only and enforce the resolved `userId` in Prisma queries.
 
-Configuration and identity-provider requirements are documented in `docs/mcp.md`.
+Configuration and Kairo setup are documented in `docs/mcp.md`.
 
 ### Protected Routes
 - Next.js Proxy checks the Auth.js database session on protected page routes

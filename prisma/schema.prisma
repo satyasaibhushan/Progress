@@ -9,21 +9,24 @@ datasource db {
 
 // Auth.js required models - must use singular PascalCase names for @auth/prisma-adapter
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String?
-  image         String?
-  timezone      String    @default("UTC")
-  emailVerified DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  accounts      Account[]
-  sessions      Session[]
-  groups        Group[]
-  habits        Habit[]
-  labels        Label[]
-  mcpIdentities McpIdentity[]
-  tasks         Task[]
+  id                         String                      @id @default(cuid())
+  email                      String                      @unique
+  name                       String?
+  image                      String?
+  timezone                   String                      @default("UTC")
+  emailVerified              DateTime?
+  createdAt                  DateTime                    @default(now())
+  updatedAt                  DateTime                    @updatedAt
+  accounts                   Account[]
+  sessions                   Session[]
+  groups                     Group[]
+  habits                     Habit[]
+  labels                     Label[]
+  mcpIdentities              McpIdentity[]
+  oauthAuthorizationCodes    OauthAuthorizationCode[]
+  oauthAuthorizationRequests OauthAuthorizationRequest[]
+  oauthRefreshTokens         OauthRefreshToken[]
+  tasks                      Task[]
 
   @@map("users")
 }
@@ -40,6 +43,63 @@ model McpIdentity {
   @@unique([issuer, subject])
   @@index([userId])
   @@map("mcp_identities")
+}
+
+model OauthAuthorizationRequest {
+  id            String   @id @default(cuid())
+  userId        String
+  clientId      String
+  redirectUri   String
+  resource      String
+  scope         String
+  state         String
+  codeChallenge String
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("oauth_authorization_requests")
+}
+
+model OauthAuthorizationCode {
+  id            String    @id @default(cuid())
+  codeHash      String    @unique
+  userId        String
+  clientId      String
+  redirectUri   String
+  resource      String
+  scope         String
+  codeChallenge String
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("oauth_authorization_codes")
+}
+
+model OauthRefreshToken {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  familyId   String
+  userId     String
+  clientId   String
+  resource   String
+  scope      String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("oauth_refresh_tokens")
 }
 
 model Account {
