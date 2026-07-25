@@ -45,6 +45,7 @@
 │  │  - /api/labels              (CRUD)                  │   │
 │  │  - /api/suggestions         (Algorithm)             │   │
 │  │  - /api/analytics           (Queries)               │   │
+│  │  - /mcp                     (Read-only MCP tools)    │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
                               ↕
@@ -384,13 +385,17 @@ Key Changes:
     └── [id]
         └── items
             └── route.ts      (GET all tasks & habits in group with tree structure)
+
+/mcp                            (OAuth-protected Streamable HTTP MCP server)
+/.well-known/oauth-protected-resource
+└── mcp                         (RFC 9728 resource metadata)
 ```
 
 ### API Conventions
 
 #### Request/Response Format
 - **Content-Type:** `application/json`
-- **Authentication:** Session-based via NextAuth
+- **Authentication:** Session-based via Auth.js for REST; OAuth bearer tokens for MCP
 
 #### Standard Responses
 
@@ -427,6 +432,7 @@ Key Changes:
 - Users can only access their own data
 - Filter all queries by `userId`
 - Validate ownership on mutations
+- MCP tools derive `userId` from the verified OAuth identity and never accept it as input
 
 ---
 
@@ -482,6 +488,17 @@ Key Changes:
 - **Duration:** 30 days (configurable)
 - **Storage:** Session table via Prisma
 - **Cookie:** HttpOnly, Secure, SameSite
+
+### Remote MCP OAuth Flow
+
+- `/mcp` is an OAuth 2.1 resource server; token issuance is delegated to an external identity provider.
+- The server publishes RFC 9728 protected-resource metadata at both the root fallback and the `/mcp` path-specific well-known URL.
+- Every request verifies signature, issuer, audience, lifetime, and the `progress:read` scope.
+- The stable `(issuer, subject)` identity is linked to an internal `User` through `McpIdentity`.
+- Auth.js session cookies and Google access tokens are not accepted as MCP credentials.
+- All exposed MCP tools are read-only and enforce the resolved `userId` in Prisma queries.
+
+Configuration and identity-provider requirements are documented in `docs/mcp.md`.
 
 ### Protected Routes
 - Next.js Proxy checks the Auth.js database session on protected page routes
