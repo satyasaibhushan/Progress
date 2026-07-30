@@ -97,18 +97,19 @@ model OauthAuthorizationCode {
 }
 
 model OauthRefreshToken {
-  id         String    @id @default(cuid())
-  tokenHash  String    @unique
-  familyId   String
-  userId     String
-  clientId   String
-  resource   String
-  scope      String
-  expiresAt  DateTime
-  consumedAt DateTime?
-  revokedAt  DateTime?
-  createdAt  DateTime  @default(now())
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                         String    @id @default(cuid())
+  tokenHash                  String    @unique
+  familyId                   String
+  userId                     String
+  clientId                   String
+  resource                   String
+  scope                      String
+  expiresAt                  DateTime
+  consumedAt                 DateTime?
+  revokedAt                  DateTime?
+  replacementTokenCiphertext String?
+  createdAt                  DateTime  @default(now())
+  user                       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([familyId])
   @@index([userId])

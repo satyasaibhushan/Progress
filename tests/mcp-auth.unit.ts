@@ -66,6 +66,7 @@ function createUserStore(userId: string | null): McpUserStore {
 
 test("first-party OAuth configuration publishes MCP and authorization metadata", () => {
   assert.equal(config.issuer, "https://progress.example.com")
+  assert.equal(config.refreshTokenReuseGraceSeconds, 10)
   assert.equal(
     config.resourceMetadataUrl.toString(),
     "https://progress.example.com/.well-known/oauth-protected-resource/mcp",
