@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Enable standalone output for Docker deployment
   output: 'standalone',
+  experimental: {
+    turbopackPluginRuntimeStrategy: "workerThreads",
+  },
   async headers() {
     return [
       {

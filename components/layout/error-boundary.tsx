@@ -1,6 +1,7 @@
 'use client';
 
 import React, { ReactNode } from 'react';
+import Link from 'next/link';
 import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -70,14 +71,8 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                 >
                   Try again
                 </Button>
-                <Button
-                  onClick={() => {
-                    window.location.href = '/';
-                  }}
-                  variant="outline"
-                  size="sm"
-                >
-                  Go to dashboard
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/">Go to dashboard</Link>
                 </Button>
               </div>
             </CardContent>
