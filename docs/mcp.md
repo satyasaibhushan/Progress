@@ -63,6 +63,7 @@ OAUTH_SIGNING_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KE
 OAUTH_SIGNING_KEY_ID=progress-oauth-1
 OAUTH_ACCESS_TOKEN_TTL_SECONDS=900
 OAUTH_REFRESH_TOKEN_TTL_SECONDS=2592000
+OAUTH_REFRESH_TOKEN_REUSE_GRACE_SECONDS=10
 ```
 
 `NEXTAUTH_URL` must also remain `https://progress.bhushan.fun`. The signing key
@@ -87,10 +88,18 @@ one-use authorization codes, and rotating refresh tokens.
    registered callback listener.
 6. The client exchanges the code and PKCE verifier for a 15-minute signed access
    token and, when the client registered for refresh, an opaque refresh token.
-7. Every issued refresh token is rotated when used. Reuse of an older token
-   revokes the entire token family. The family expires after 30 days.
+7. Every issued refresh token is rotated when used. Concurrent refreshes during
+   the configured 10-second grace period receive the same encrypted rotation
+   result, which makes shared multi-process MCP clients safe. Reuse after that
+   grace period revokes the entire token family. Each successful refresh renews
+   the 30-day inactivity window, so an actively used connection does not
+   require periodic browser authorization.
 
-Authorization codes and refresh tokens are stored only as SHA-256 hashes.
+Authorization codes and active refresh tokens are stored only as SHA-256
+hashes. A consumed refresh token stores its replacement encrypted with an
+authenticated key derived from the OAuth signing key; Progress accepts that
+cached result only during the configured grace period. The encrypted value is
+unusable after signing-key rotation and never appears in logs.
 Access tokens are RS256 JWTs bound to the exact issuer, `/mcp` audience,
 internal user ID, registered client ID, and `progress:read` scope. Each MCP
 request also verifies that the referenced Progress user still exists.
@@ -125,9 +134,11 @@ kairo mcp list
 
 The login command selects a loopback callback port, dynamically registers that
 exact callback, opens the Progress consent page, and stores its client
-registration and tokens in the profile-specific token store. Re-run the login
-command if consent is revoked, the refresh-token family expires, or the local
-OAuth state is removed.
+registration and tokens in the profile-specific token store. Authorization is
+normally one-time: access tokens refresh silently, including when multiple
+processes refresh concurrently. Re-run the login command only if consent is
+revoked, the connection is unused for 30 days, or the local OAuth state is
+removed.
 
 ## Operational behavior
 

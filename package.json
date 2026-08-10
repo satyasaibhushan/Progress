@@ -15,7 +15,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.unit.ts",
-    "test:integration": "tsx tests/database-invariants.integration.ts",
+    "test:integration": "node --import tsx tests/database-invariants.integration.ts && node --import tsx tests/oauth-refresh.integration.ts",
     "verify": "npm run test && npm run lint && npm run typecheck",
     "postinstall": "prisma generate"
   },

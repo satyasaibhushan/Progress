@@ -1,6 +1,7 @@
 const DEFAULT_SCOPE = "progress:read"
 const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 15 * 60
 const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
+const DEFAULT_REFRESH_TOKEN_REUSE_GRACE_SECONDS = 10
 const AUTHORIZATION_REQUEST_TTL_SECONDS = 10 * 60
 const AUTHORIZATION_CODE_TTL_SECONDS = 5 * 60
 
@@ -18,6 +19,7 @@ export type OAuthServerConfig = {
   scopes: string[]
   accessTokenTtlSeconds: number
   refreshTokenTtlSeconds: number
+  refreshTokenReuseGraceSeconds: number
   authorizationRequestTtlSeconds: number
   authorizationCodeTtlSeconds: number
 }
@@ -145,6 +147,13 @@ export function readOAuthServerConfig(
       "OAUTH_REFRESH_TOKEN_TTL_SECONDS",
       60 * 60,
       365 * 24 * 60 * 60,
+    ),
+    refreshTokenReuseGraceSeconds: parsePositiveInteger(
+      environment.OAUTH_REFRESH_TOKEN_REUSE_GRACE_SECONDS,
+      DEFAULT_REFRESH_TOKEN_REUSE_GRACE_SECONDS,
+      "OAUTH_REFRESH_TOKEN_REUSE_GRACE_SECONDS",
+      1,
+      60,
     ),
     authorizationRequestTtlSeconds: AUTHORIZATION_REQUEST_TTL_SECONDS,
     authorizationCodeTtlSeconds: AUTHORIZATION_CODE_TTL_SECONDS,

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import type { Prisma } from "@prisma/client"
+import type { OauthRefreshToken, Prisma } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
 import type {
   OAuthServerConfig,
@@ -14,6 +14,12 @@ import {
   validatePkceVerifier,
   type ValidatedAuthorizationRequest,
 } from "@/lib/oauth/protocol"
+import {
+  classifyRefreshTokenUse,
+  protectRefreshTokenForReplay,
+  recoverRefreshTokenForReplay,
+} from "@/lib/oauth/refresh"
+import { readOAuthSigningKeys } from "@/lib/oauth/keys"
 import { signProgressAccessToken } from "@/lib/oauth/tokens"
 
 export type OAuthTokenResponse = {
@@ -22,6 +28,17 @@ export type OAuthTokenResponse = {
   expires_in: number
   refresh_token?: string
   scope: string
+}
+
+type TokenResponseInput = {
+  userId: string
+  clientId: string
+  resource: string
+  scope: string
+  familyId: string
+  refreshExpiresAt: Date
+  refreshToken: string
+  issueRefreshToken: boolean
 }
 
 function expiresAt(seconds: number): Date {
@@ -128,21 +145,29 @@ export async function completeAuthorizationRequest(
   }
 }
 
-async function createTokenResponse(
-  transaction: Prisma.TransactionClient,
-  input: {
-    userId: string
-    clientId: string
-    resource: string
-    scope: string
-    familyId: string
-    refreshExpiresAt: Date
-    refreshToken: string
-    issueRefreshToken: boolean
-  },
+async function createSignedTokenResponse(
+  input: TokenResponseInput,
   config: OAuthServerConfig,
 ): Promise<OAuthTokenResponse> {
   const signed = await signProgressAccessToken(input, config)
+
+  return {
+    access_token: signed.token,
+    token_type: "Bearer",
+    expires_in: config.accessTokenTtlSeconds,
+    ...(input.issueRefreshToken
+      ? { refresh_token: input.refreshToken }
+      : {}),
+    scope: input.scope,
+  }
+}
+
+async function createTokenResponse(
+  transaction: Prisma.TransactionClient,
+  input: TokenResponseInput,
+  config: OAuthServerConfig,
+): Promise<OAuthTokenResponse> {
+  const response = await createSignedTokenResponse(input, config)
   if (input.issueRefreshToken) {
     await transaction.oauthRefreshToken.create({
       data: {
@@ -156,16 +181,7 @@ async function createTokenResponse(
       },
     })
   }
-
-  return {
-    access_token: signed.token,
-    token_type: "Bearer",
-    expires_in: config.accessTokenTtlSeconds,
-    ...(input.issueRefreshToken
-      ? { refresh_token: input.refreshToken }
-      : {}),
-    scope: input.scope,
-  }
+  return response
 }
 
 export async function exchangeAuthorizationCode(
@@ -244,28 +260,73 @@ export async function exchangeRefreshToken(
   config: OAuthServerConfig,
 ): Promise<OAuthTokenResponse> {
   const replacementToken = createOpaqueToken("progress_rt_")
+  const signingKey = readOAuthSigningKeys().privateKey
+  const replacementTokenCiphertext = protectRefreshTokenForReplay(
+    replacementToken,
+    signingKey,
+  )
   const outcome = await prisma.$transaction(async (transaction) => {
+    const request = {
+      clientId: input.clientId,
+      resource: input.resource,
+    }
+    const revokeFamily = async (familyId: string, revokedAt: Date) => {
+      await transaction.oauthRefreshToken.updateMany({
+        where: {
+          familyId,
+          revokedAt: null,
+        },
+        data: { revokedAt },
+      })
+    }
+    const replayRotation = async (
+      current: OauthRefreshToken,
+    ) => {
+      if (!current.replacementTokenCiphertext) return null
+      const replayedRefreshToken = recoverRefreshTokenForReplay(
+        current.replacementTokenCiphertext,
+        signingKey,
+      )
+      if (!replayedRefreshToken) return null
+
+      return createSignedTokenResponse(
+        {
+          userId: current.userId,
+          clientId: current.clientId,
+          resource: current.resource,
+          scope: current.scope,
+          familyId: current.familyId,
+          refreshExpiresAt: current.expiresAt,
+          refreshToken: replayedRefreshToken,
+          issueRefreshToken: true,
+        },
+        config,
+      )
+    }
+
     const current = await transaction.oauthRefreshToken.findUnique({
       where: { tokenHash: hashOpaqueToken(input.refreshToken) },
     })
     if (!current) return { kind: "invalid" as const }
 
-    if (current.consumedAt) {
-      await transaction.oauthRefreshToken.updateMany({
-        where: {
-          familyId: current.familyId,
-          revokedAt: null,
-        },
-        data: { revokedAt: new Date() },
-      })
+    const now = new Date()
+    const tokenUse = classifyRefreshTokenUse(
+      current,
+      request,
+      now,
+      config.refreshTokenReuseGraceSeconds,
+    )
+    if (tokenUse === "invalid") return { kind: "invalid" as const }
+    if (tokenUse === "retry") {
+      const tokens = await replayRotation(current)
+      if (tokens) return { kind: "success" as const, tokens }
+      await revokeFamily(current.familyId, now)
       return { kind: "reused" as const }
     }
-
-    const valid = current.revokedAt === null
-      && current.expiresAt > new Date()
-      && current.clientId === input.clientId
-      && current.resource === input.resource
-    if (!valid) return { kind: "invalid" as const }
+    if (tokenUse === "reused") {
+      await revokeFamily(current.familyId, now)
+      return { kind: "reused" as const }
+    }
 
     const consumed = await transaction.oauthRefreshToken.updateMany({
       where: {
@@ -274,17 +335,32 @@ export async function exchangeRefreshToken(
         revokedAt: null,
         expiresAt: { gt: new Date() },
       },
-      data: { consumedAt: new Date() },
+      data: {
+        consumedAt: now,
+        replacementTokenCiphertext,
+      },
     })
     if (consumed.count !== 1) {
-      await transaction.oauthRefreshToken.updateMany({
-        where: {
-          familyId: current.familyId,
-          revokedAt: null,
-        },
-        data: { revokedAt: new Date() },
+      const refreshed = await transaction.oauthRefreshToken.findUnique({
+        where: { id: current.id },
       })
-      return { kind: "reused" as const }
+      if (!refreshed) return { kind: "invalid" as const }
+
+      const refreshedUse = classifyRefreshTokenUse(
+        refreshed,
+        request,
+        new Date(),
+        config.refreshTokenReuseGraceSeconds,
+      )
+      if (refreshedUse === "retry") {
+        const tokens = await replayRotation(refreshed)
+        if (tokens) return { kind: "success" as const, tokens }
+      }
+      if (refreshedUse === "reused" || refreshedUse === "retry") {
+        await revokeFamily(refreshed.familyId, new Date())
+        return { kind: "reused" as const }
+      }
+      return { kind: "invalid" as const }
     }
 
     const tokens = await createTokenResponse(
@@ -295,7 +371,7 @@ export async function exchangeRefreshToken(
         resource: current.resource,
         scope: current.scope,
         familyId: current.familyId,
-        refreshExpiresAt: current.expiresAt,
+        refreshExpiresAt: expiresAt(config.refreshTokenTtlSeconds),
         refreshToken: replacementToken,
         issueRefreshToken: true,
       },
