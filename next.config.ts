@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Enable standalone output for Docker deployment
-  output: 'standalone',
+  // Vercel owns output tracing; self-hosted Docker builds use standalone output.
+  output: process.env.VERCEL ? undefined : "standalone",
   experimental: {
     turbopackPluginRuntimeStrategy: "workerThreads",
   },
